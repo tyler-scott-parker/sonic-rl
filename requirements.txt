@@ -1,0 +1,26 @@
+# Direct dependencies for sonic-rl (Python 3.12.9 — see .python-version).
+#
+# torch here is a CUDA 13.0 build. On a CUDA machine install it from the
+# PyTorch index first, otherwise pip will pull the default (CPU or cu12) wheel:
+#
+#   pip install torch==2.12.0 --index-url https://download.pytorch.org/whl/cu130
+#   pip install -r requirements.txt
+#
+# stable-retro needs the Sonic ROM imported separately; it is not redistributable
+# and is deliberately absent from this repo:
+#
+#   python -m retro.import /path/to/roms/
+#
+# For a byte-exact rebuild of the environment these runs were trained in, use
+# requirements-lock.txt instead (full pip freeze, transitive deps pinned).
+
+gymnasium==1.2.3
+numpy==2.4.6
+opencv-python==4.13.0.92
+pillow==12.2.0
+pygame==2.6.1
+sb3_contrib==2.8.0
+stable_baselines3==2.8.0
+stable-retro==1.0.0
+tensorboard==2.20.0
+torch==2.12.0
