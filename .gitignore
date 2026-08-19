@@ -1,0 +1,23 @@
+# ── Model artifacts (100-400 MB each) — never in git ──────────────────────────
+*.zip
+*.pkl
+checkpoints*/
+archive_v1/
+contaminated_v2_attempt/
+
+# ── Run outputs ───────────────────────────────────────────────────────────────
+ss_log*.jsonl
+logs/
+logs_ss/
+*.ram.bin
+
+# ── Emulator savestates (binary, large; states/ is the capture archive) ───────
+states/
+
+# ── Sentinels the trainer/watchdog create at runtime ──────────────────────────
+STOP_*
+WATCHDOG_OFF
+
+venv/
+__pycache__/
+*.pyc

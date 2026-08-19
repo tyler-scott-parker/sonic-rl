@@ -1,0 +1,16 @@
+{
+    "description": "Angel Island Act 1 — x coordinate landmarks. Edit this file as you discover what's at each location.",
+    "landmarks": {
+        "5200": "Spawn area",
+        "5300": "First ramp/rock",
+        "6300": "Wall section",
+        "7100": "Underground area / giant ring location",
+        "7300": "Spike section",
+        "7700": "Unknown obstacle (dominant death cluster)",
+        "7800": "Unknown obstacle (dominant death cluster)",
+        "8300": "Loop section",
+        "8900": "Near boss area",
+        "9000": "Boss / act end"
+    },
+    "notes": "Add or update entries as you explore the level. x values are approximate pixel positions."
+}

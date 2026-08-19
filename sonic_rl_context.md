@@ -1,0 +1,550 @@
+# Sonic 3 & Knuckles Special Stage RL — Full Project Context
+*Last updated: 2026-07-27*
+
+---
+
+# ⚑ START HERE — orientation for a fresh chat
+
+**Read this block first.** This doc lives in the Project knowledge base; you are
+probably reading it cold. Below is what you need to be useful immediately without
+re-asking Tyler things he's already answered.
+
+### What this project is
+Training an RL agent (RecurrentPPO / sb3-contrib, stable_retro) to play the Blue
+Spheres special stages in Sonic 3 & Knuckles. Long arc: one agent that plays all
+14 special stages. Runs locally on Tyler's RTX 2070 Super.
+
+### How we work together (important — don't get this wrong)
+- **Everything runs on Tyler's machine. You have NO access to his filesystem.**
+  You have your own sandbox only. Deliver code via `present_files`; he downloads
+  and moves files into `~/sonic-rl/` himself.
+- **After any file swap, confirm it landed** before launching:
+  `grep -n "<new symbol>" ~/sonic-rl/<file>.py`. This has bitten repeatedly —
+  running stale code and then debugging a bug that was already fixed.
+- **For small edits, prefer an in-place heredoc patch** he can paste into the
+  terminal over a full-file download. Much less friction, no file-move step.
+- **File attachments from Tyler often arrive EMPTY** in this interface. If an
+  upload has no content, ask him to paste the text directly into chat. Plain-text
+  paste has been 100% reliable; attachments have not.
+- He is technically strong and wants **honest tradeoffs, not agreement.** Push
+  back when a plan is expensive or uninterpretable; propose the cheap test first.
+  That discipline has repeatedly saved days of wasted compute.
+
+### Current state (2026-07-23)
+- **v3 14-board run is LAUNCHED and training.** All 14 stages captured + verified
+  distinct. Training on all 14 (no holdout — deliberate, see below).
+- Config: `SS_DROP_POSITION=1`, `SS_STAGES=1..14`, `SS_RESTART_PROB=0`,
+  `SS_LOG=~/sonic-rl/ss_log_v3.jsonl`, fresh from random weights, 512-hidden
+  2-layer LSTM, gamma 0.997, lr 3e-4.
+- **Analyzer for this run: `ms_analyze.py`** (NOT analyze_ss/ss_brief — those pool
+  incomparable boards, 37–155 spheres). Always pass `--log ~/sonic-rl/ss_log_v3.jsonl`.
+- See **`COMMANDS_v3.md`** in the knowledge base for launch/stop/resume/monitor.
+
+### What to expect / what to watch
+14 boards split episodes 14 ways, so per-stage numbers come SLOWLY.
+**Don't over-read early results** — wait for 20,000+ episodes, ideally 40,000,
+before trend arrows mean anything. Key metrics: `ratio(min/max)` (near 1.0 =
+uniform competence across boards), `stages covered: N/14`, and
+`X climbing / Y flat / Z regressing`.
+
+### Solved problems — DO NOT re-derive these
+1. **Win detection** — board-clear latch (`blue_spheres_remaining == 0`), not the
+   laggy emerald counter. Completion reward now actually pays out.
+2. **Warp to any zone** — set zone/act → game mode `0xFFF600` = `0x0C` →
+   pit-death (`y` = 60000). Semi-manual form is the reliable one.
+3. **Grant 7 Chaos Emeralds** — count at `0xFFFFB0` = 7 **AND** the per-stage
+   array `0xFFFFB2`–`0xFFFFB8` each = 1. **Count alone does NOT work.**
+4. **Addressing** — full `0xFFFFxx` via `env.data.set_variable(...)` then
+   `set_value`/`lookup_value`. **Never** `env.get_ram()[addr & 0xFFFF]` — that
+   raw indexing reads wrong bytes and caused multiple false trails.
+5. **All 14 stages captured** and backed up in `states/backup_captures/`.
+   No further capture work needed.
+
+### The open research question
+The v2 5-board run **memorized the training set** (zero-shot on held-out boards
+= 0.09). Position-drop forces generalization at 2 boards but not at 5. Tyler
+decided memorize-all-14 is an acceptable *product* — the game has exactly 14 fixed
+stages, so a perfect memorizer is behaviorally identical to a generalist here —
+hence no holdout in v3. **But the generalization question remains open and
+interesting.** Untested hypothesis: a *smaller* network (less capacity to
+memorize) might force a general skill. If a proper generalization test is ever
+wanted, S&K's standalone Blue Spheres mode procedurally generates effectively
+unlimited boards — a far stronger test set than holding out 2 of 14.
+
+### Likely next steps
+- Periodically read `ms_analyze.py`; judge whether all 14 climb together.
+- If boards stall near the floor → board-specific difficulty; investigate what
+  they share (v2 had this with stage 7).
+- Possible follow-ups: smaller-network capacity experiment; handoff integration
+  with the main-game agent; eventually a main-game (non-special-stage) generalist —
+  a much harder problem Tyler has been thinking ahead about.
+
+### ⧉ OBSERVATION AUDIT — queued for AFTER the LR-cool result (do NOT touch mid-run)
+Evidence found 2026-07-26 that the observation stack carries fat. Do these ONE
+AT A TIME on a fresh run, measuring each — never bundle (confounds attribution),
+never mid-experiment (changing obs shape breaks resume + confounds the cool).
+
+The observation is a 3-stream dict (line ~486 of the env):
+`{'pixels': 84x84x3, 'ram': 15 features, 'grid': 11x11x4 heading-rotated patch}`.
+
+1. **4 DEAD RAM features (confirmed).** RAM features 2,3,4,5 = `sx,cx,sy,cy` =
+   sin/cos of X,Y position. Under `SS_DROP_POSITION=1` the env hardcodes them to
+   `0.0` (env line ~462). So on the v3 run they are **constant zeros** — 4 dead
+   inputs the net must learn to ignore. Trivial fix on next fresh run: drop them,
+   set `NUM_RAM_FEATURES = 11`. Small but clean win.
+2. **Pixels vs. grid patch (THE big suspect — ablate).** Both are spatial views
+   of the same board. Pixels are ~21k input values (84x84x3), dwarfing everything.
+   If the grid patch already gives what the agent needs spatially, pixels may be a
+   large, expensive, mostly-redundant input eating capacity — directly relevant to
+   the shallow-plateau/capacity concern. Test: does the agent learn as well or
+   better on **grid-patch-only** (drop pixels)? Highest-value ablation. If pixels
+   are redundant, removing them frees real capacity.
+3. **Jumper/bumper perception is REACTIVE, not spatial.** RAM features 12,13,14 =
+   `bumper_lock, bumper_hit, jumping` — these are STATE flags ("am I hitting/
+   jumping NOW"), not lookahead ("a jumper is N cells ahead"). So the agent isn't
+   blind to jumpers, but only learns about one *after committing*. If jumpers prove
+   a wall (watch per-board plateaus on bounce-heavy boards): first check whether
+   the **grid patch already encodes jumper cells distinctly** (then spatial
+   perception exists, net just needs to use it); only if not, add a lookahead
+   feature. This reframes the earlier "add jumper perception" idea — the fix is
+   making the EXISTING signal anticipatory, not adding perception from scratch.
+
+Principle throughout: remove/add features in response to demonstrated need, not
+anticipation. Each unmotivated input is unpaid-down complexity that costs
+capacity AND interpretability. Ablation (drop a component, measure) is the only
+honest way to know what's load-bearing — intuition can't tell you.
+
+
+### Knowledge base contents (keep current!)
+`sonic_rl_context.md` (this file) · `COMMANDS_v3.md` · `special_stage_env.py` ·
+`data.json`. **These go stale** — when the env or context changes materially,
+re-upload, or a fresh chat will confidently reason from an old version.
+
+---
+
+## Project Overview
+
+Training a dedicated RL agent to complete Blue Spheres special stages in Sonic 3 & Knuckles using stable_retro. Immediate goal: complete Stage 1 (collect all 102 blue spheres) for handoff integration with the main game agent. Longer-term goal: generalize to all 14 special stages (the 7 Chaos Emerald stages from Sonic 3 + the 7 Super Emerald stages from S&K).
+
+**Current status (2026-07-27):** The story so far, newest first.
+- **v4 — observation redesign, LAUNCHED & training (fresh from random).** Tests whether a leaner, capacity-efficient observation gets 14 boards deeper than v3's pixel-heavy one. Changes vs v3: (1) **pixel stream DROPPED** — the 84x84x3 frame (~21k values, 99.99% of input volume) removed; (2) **grid patch WIDENED** PATCH_R 5→7 (11x11 → 15x15, clears the 5-cell jumper distance, keeps heading-rotation); (3) **4 dead RAM features removed** (sx,cx,sy,cy were constant 0 under DROP_POSITION) → NUM_RAM_FEATURES 15→11. Files: `special_stage_env_v4.py`, `train_ss_multistage_v4.py`, `smoke_v4.py`. Log: `ss_log_v4.jsonl`. Baseline to beat: v3's ~3.5% plateau.
+- **v3 — 14-board run, DONE (capacity-suspected plateau).** Trained all 14, fresh, 512-LSTM. Plateaued SHALLOW at ~3.0-3.5% mean %board. LR-cooled 3e-4→1e-4 (clip_fraction 0.41→0.25, small gain 3.0→3.5, re-plateaued as clip crept back up). Did NOT do the 2nd cool — Tyler's call: cooling is a squeeze, not a fix for a shallow plateau; the small cool-gain pointed at a capacity/representation ceiling, not an optimization one. → rebuilt as v4.
+- **v2 — 5-board run, DONE (memorization).** Zero-shot on held-out 5,6 = 0.09 → memorized the training set. Position-drop forces generalization at 2 boards, not 5.
+- **Specialist (`sonic_ss_model_v2`, PAUSED — control).** Single-board, ~326M steps, got deep (96/102) via curriculum + LR cooling. Memorized its board. The baseline that makes the generalization findings legible.
+
+### Why drop pixels — the conceptual rationale (not just "redundant")
+Pixel vision is **representationally unstable**: when Sonic turns, the camera rotates and the ENTIRE pixel field transforms — the same board configuration produces a totally different pixel array per viewing angle. The network must then spend capacity learning rotational/positional *invariance* from scratch (re-deriving "a sphere is a sphere regardless of facing"). The **heading-rotated grid patch eliminates this by construction**: the same local configuration always produces the same patch regardless of absolute heading — invariance is built INTO the representation, not learned. So dropping pixels removes not just redundant volume but a whole *category of learning burden* (invariance-learning) that was competing for the capacity the 14 boards need. "Grid vision is concrete because it's invariant; the same input always means the same thing, which pixels can't guarantee once the camera moves." This is the core reason to expect v4's leaner obs to fit 14 boards deeper.
+
+- **Specialist run (`sonic_ss_model_v2`, ~326M steps, PAUSED — baseline/control):** the single-stage Stage-1 agent. PROVED a single stage is winnable (fresh best 96/102 after the win-fix; `Wins from restarts` 0→3). Memorized its board. Preserved as control.
+- **Step 1 — 2-stage probe (`sonic_ss_multistage_v1`, DONE):** dropping absolute position encoding lifted stage-1↔stage-2 transfer from **~0.06 → ~0.75**. Position encoding = the memorization handle, at 2 boards.
+- **Step 2 — 5-stage run (`sonic_ss_multistage_v2`, DONE — negative result):** trained 1,2,3,4,7 / held out 5,6. Among-trained boards converged nicely (~0.76 ratio, S1 best ~24%), BUT **zero-shot on held-out 5,6 = 0.09 → the policy MEMORIZED the 5-board set, did not generalize.** Position-drop is insufficient at 5 boards; the network has capacity to memorize the set. Untested cheaper hypothesis: a smaller network might force generalization.
+- **Back-seven capture: UNBLOCKED this session.** The warp + emerald-array recipes (see 2026-07-19 section) let us reach Mushroom Hill and grant true 7-emerald state; confirmed the Super Emerald special stages load. Decision: pursue all-14 (memorize-all-14 is an acceptable product for a fixed finite game). Next: recapture lost stage 2, capture the back-seven, run a 14-board trainer (train ~12 / hold out ~2).
+
+---
+
+## What Changed This Session (2026-07-19) — back-seven capture UNLOCKED (warp + emerald recipes)
+
+Goal: capture the back-seven Super Emerald special stages to enable a 14-stage generalist run. Blocker: those stages require reaching Mushroom Hill Zone with 7 collected Chaos Emeralds, then entering a rainbow ring → Hidden Palace. Both sub-problems SOLVED this session via memory pokes. (Also: Step-2 5-stage result came back — see below.)
+
+### CRITICAL addressing gotcha (cost us hours)
+`data.json` addresses are FULL Genesis addresses `0xFFFFxx` (work-RAM base `0xFF0000`), e.g. `chaos_emeralds` = `0xFFFFB0`, `zone` = `0xFFFE10`, `act` = `0xFFFE11`, game mode = `0xFFF600`.
+- **`env.data.set_variable('name', {'address':0xFFFFB0, 'type':'|u1'})` then `set_value`/`lookup_value`** is the ONLY reliable poke/read interface. Register any address this way.
+- **Do NOT** index `env.get_ram()[addr & 0xFFFF]` and trust it — that raw indexing read garbage/wrong bytes all session and sent us down false trails (`$F600=0`, bogus emerald neighborhood). Always go through `set_variable`.
+
+### WARP TO ANY ZONE (clean full load) — SOLVED
+Poking `zone` alone is inert (game only reads it on a level *load*). Pit-death alone reloads the *current* level, skipping the VRAM art DMA → corrupted/garbled tiles. The working recipe forces a real load:
+1. Set `zone` + `act`.
+2. Set game mode `0xFFF600` = `0x0C` (commits the zone as current level; Sonic spawns corrupted-but-alive).
+3. Trigger a pit-death: set `y` (`0xFFB014`) = 60000 → the reload now does a FULL load (art included) → clean level.
+- **Reliability quirk:** the fully-scripted version (mode-poke + scripted death in one process) is flaky — Sonic sometimes never spawns. The RELIABLE method is semi-manual: script step 1-2 and save a "commit" state (`states/mh_commit.state`), then in the capture tool LOAD it, run into a hazard to die, and respawn clean. One manual death per zone; then savestate that clean state as a permanent waypoint.
+- Zone IDs (from SCHG doc): 00 AIZ, 01 HCZ, 02 MGZ, 03 CNZ, 04 FBZ, 05 ICZ, 06 LBZ, **07 Mushroom Hill**, 08 SOZ, 09 LRZ, 0A SSZ, 0B DEZ, 0C Doomsday, **16 Hidden Palace, 17 Hidden Palace (entered from giant ring)**.
+
+### GRANT ALL 7 CHAOS EMERALDS (true collection state) — SOLVED
+The count byte alone is NOT enough. Hidden Palace pedestals read a per-stage collection ARRAY, not the count. Poking only `chaos_emeralds=7` opened the door (cutscene/transition fire on the count) but left pedestals EMPTY (array was zero → zero real emeralds to display). The true state needs BOTH:
+- `chaos_emeralds` (`0xFFFFB0`) = 7
+- **`0xFFFFB2`–`0xFFFFB8` array, each byte = 1** ("chaos emerald collected"). Values: 0=not done, 1=chaos collected, 2=super grayed, 3=super activated.
+- (`0xFFFFB1` = super_emeralds count; `0xFFFFBB` = 0 runs S3 special stages / 1 runs S&K special stages; `0xFFFFBA` = "exchanged" flag that disables super transform.)
+- **CONFIRMED WORKING:** set count=7 + array all-1, warp to Mushroom Hill, enter rainbow ring → Knuckles cutscene played, all 7 gray Super Emeralds spawned on pedestals, and a Super Emerald special stage loaded correctly. Back-seven capture is now unblocked.
+
+### Source that cracked it
+The SCHG (Sonic Community Hacking Guide) "RAM Editing" page — Main System Memory Locations. It names `$FFB0` (chaos count), `$FFB1` (super count), `$FFB2-$FFB8` (the finished-special-stage array), `$FFBA`, `$FFBB`. Also the Save-slot format: `$06-$07` word = 2-bits-per-emerald collection state in SRAM (the persistent copy). Level ID table gives all zone/act hex including Hidden Palace = 16/17.
+
+### New capture tooling this session
+- `capture_stages.py` gained: `G` (grant 7 chaos emeralds — NOTE: count only, does NOT set the $FFB2-B8 array; for full state use the script recipe), `V` (warp to zone=target index via pit-death), plus earlier `T`/`W`. **FOOTGUN:** the `S` save key writes `curriculum_stage_<target>.state` — it silently OVERWROTE `curriculum_stage_2.state` when the index sat at 2. Habit: bump index to 20+ for any non-capture work. Stage 2 (127-sphere board) was lost, needs recapture; other 6 captures backed up to `states/backup_captures/`.
+- Discovery/warp scripts (in outputs): `zone_probe.py`, `find_reload_trigger.py`, `trace_reload.py`, `diff_load_paths.py`, `diff_art_region.py`, `check_stages.py`.
+
+### Step-2 (5-stage) RESULT — memorization, not generalization
+The v2 run (train 1,2,3,4,7 / hold out 5,6) trained up: four boards (1,2,3,4) converged to a tight ~15-24% band (S1 best ~24%), S7 the laggard climbing slowly (~6%). Among-trained transfer ratio looked healthy (~0.75-0.87). **BUT `zeroshot_test.py` on held-out 5,6 = 0.09** — the policy MEMORIZED the training set, did not generalize to unseen boards. Same signature as the specialist. Position-drop forces generalization at 2 boards but NOT at 5 (network has enough capacity to memorize the set). Open question: does a SMALLER network (less capacity to memorize) force generalization? That's a cheaper next experiment than the 14-board run — worth testing before committing to it. But decision was to push for 14 anyway (memorize-all-14 is a legitimate product: one agent, all fixed stages, no observable difference from a true generalist for this finite game).
+
+---
+
+## What Changed the Session Before That (2026-07-02) — Step 2: capture all 7, scale to 5 stages
+
+### Captured the full front-seven (Chaos Emerald stages)
+Using `capture_stages.py` booted from `curriculum_stage_3.state` (rings-entered counter baked in, so no full replay) + the fail-forward loop (die on each stage → land in main game → walk to next giant ring → counter advances → capture). Added an **auto-reload-on-death toggle (`T`, default OFF)** so death falls through to the main game instead of snapping back — the front-seven do NOT require winning (dying still advances the ring counter). Added a **`blue_spheres` HUD line** to confirm each capture is a distinct board. `check_stages.py` verified all 7 distinct (unique RAM fingerprints + blue counts):
+
+| stage | blue | | stage | blue |
+|---|---|---|---|---|
+| 1 | 102 | | 5 | 58 |
+| 2 | 127 | | 6 | 128 |
+| 3 | 118 | | 7 | 60 |
+| 4 | 115 | | | |
+
+NOTE: sphere count ≠ difficulty. Small boards (5,7) may demand MORE precise navigation. Web search confirmed the real difficulty driver is the **speed ramp** (speed rises ~every 25s; late-stage high-speed navigation is the wall), and that difficulty rankings online are for the *back-seven Super Emerald* stages (not yet captured), not these.
+
+### Back-seven require a different capture strategy (NOT yet done)
+The back-seven (Super Emerald stages) only unlock after collecting all 7 Chaos Emeralds — meaning you must **genuinely CLEAR the front-seven, not fail them.** Fail-forward can't reach them. Deferred until the architecture is proven worth the manual-clear grind. Possible shortcut to test: poke `chaos_emeralds`=7 and see if the Super-Emerald rings become reachable without legit clears. Efficiency tip when doing it for real: savestate after each clear (main-game state at N emeralds) so a botched stage costs one retry, not the whole run.
+
+### Step 2 launched — and a contamination bug caught + fixed
+`train_ss_multistage_v2.py` (derived from v1 via sed): train on 1,2,3,4,7 / hold out 5,6, fresh from random, 50M nominal but open-ended. **First launch was contaminated:** a stale `sonic_ss_multistage_v2.zip` on disk (from a partial earlier attempt) caused the trainer to RESUME instead of start fresh — the per-stage curve showed stages 1,2 healthy then COLLAPSING when 3,4,7 entered the mix (looked like catastrophic interference; was actually a resumed 1M-step partial). Fixed by moving the stale checkpoint aside (`contaminated_v2_attempt/`) so `os.path.exists` returns False → fresh launch. **Footgun compounded:** sed replaced checkpoint *filenames* but left the log print strings saying "v1" — the misleading `"Resuming multistage v1"` message sent debugging down the wrong path. Fixed the strings. **Lesson: always confirm the startup line says `Starting FRESH ... (random weights)` before trusting a "fresh" run, and read the per-1000 `--curve`, not the cumulative ratio — the cumulative averaged over the dead run's history and hid the collapse.**
+
+### Step 2 clean-run result so far (~16k+ fresh episodes into the clean run)
+Generalization HOLDING at 5 boards. Per-stage avg (as % of each board), trending up every chunk:
+- **S1 ~13% (17 recent), S2 ~8% (14), S3 ~8% (13)** — climbing together and CONVERGING (the generalization signature; memorization would diverge). S3 closed the gap to S2 across the last few reads.
+- **S4 ~7% — PLATEAUED at ~7.5 across ~8 consecutive per-1000 chunks** while others climbed past it. Led early, now 2nd-hardest.
+- **S7 ~2-4% — the floor**, crawling (0.6→2.4 across the run so far). Slowest by far. Matches the "small board = precise navigation = hard" hypothesis.
+- Transfer ratio ~0.76 (same as the 2-stage run — generalization scaling cleanly for the cooperating boards).
+
+**Read:** core test passing (3/5 boards prove generalization decisively). Secondary finding emerging: stages 4 and 7 resist — likely a shared board property the local-patch obs doesn't capture well. That "which boards resist and what they share" is the most interesting open question and would motivate Step 3 / the Option-B encoding decision. Depth is low everywhere (best 13%) but ON PACE for random-weights/5-board/position-blind — the specialist needed ~12.5k eps to hit avg 30 on ONE board WITH position.
+
+### Specialist vs generalist framing (important for reading eventual results)
+The generalist will almost certainly play each individual board WORSE than the 96-sphere specialist — that's the specialist/generalist tradeoff, not failure. "Stronger" = breadth/transfer, NOT peak depth on one memorized board. Success metric is the transfer ratio staying high as boards are added + the held-out zero-shot number, NOT raw per-board depth. A 14-stage agent at 60% each >> a 1-stage agent at 94%.
+
+### New tools this session
+- `check_stages.py` — load each captured state, report blue count + RAM fingerprint, flag duplicates.
+- `train_ss_multistage_v2.py` — 5-stage trainer (train 1,2,3,4,7 / holdout 5,6; new ckpt names; log strings fixed to say v2).
+- `zeroshot_test.py` — evaluates the HELD-OUT stages 5,6 vs the trained stages (true unseen-board transfer). DEFERRED until trained boards firm up (leaders in the 20s+).
+- `capture_stages.py` — added `T` auto-reload toggle + `blue_spheres` HUD.
+
+---
+
+## What Changed the Session Before (2026-06-30) — win-fix → transfer probe → multistage validation
+
+Three findings, in order. Each gated the next.
+
+### 1. The win-detection bug (found + fixed) — completion reward was dark the entire run
+`_compute_reward` decided win-vs-death **solely by whether the emerald counter incremented**, inside the `special==0` (left-stage) termination block. But a board-clear leaves the stage the same way a death does, and the emerald award LAGS several frames behind the board emptying (the fly-off animation) — and may not credit at all on warped-in restart states. So **every board-clear was misclassified as a death** (`death_at_sphere=N`, −2500 penalty), and the completion reward (`SS_COMPLETION_BASE + time_bonus`) **never paid out once across the entire ~300M-step run.** `success` was true in 0 of ~96k episodes.
+
+**Fix (stage-agnostic, restart-safe):** key the win on the **board emptying** (`blue_spheres_remaining == 0`) instead of the laggy emerald. Latch `self._board_cleared = True` when `blue_spheres == 0 and self._spheres_collected > 0`; win condition became `if self._board_cleared or emerald_gained:`. Verified deterministically (`verify_win_fix.py`: synthetic 2→0 clear with emerald held flat → success=True, completion reward paid). Post-fix on the specialist: fresh best 93→96, `Wins from restarts` 0→3, critic re-fit cleanly (value_loss spikes to ~0.11 and recover, explained_variance stayed 0.97-0.99).
+
+### 2. Zero-shot transfer probe — the specialist MEMORIZED Stage 1
+`transfer_probe.py`: load the specialist, run fresh episodes (no training, CPU) on each stage. Result: **Stage 1 avg 34 / Stage 2 avg 2.2 / Stage 3 avg 3.0** — a ~15x gap, all stage-2/3 episodes dying by sphere 2-8. Confirmed NOT a probe artifact (diagnostic showed stage 2 reads blue=127, stage 3 blue=118, grids have real content). Conclusion: the Stage-1 policy learned a **memorized route**, not a general skill — and even red-avoidance didn't transfer, because avoidance was FUSED into the memorized route via the absolute position encoding rather than learned as a standalone reactive skill.
+
+### 3. Multistage architecture probe — dropping position FORCES generalization (VALIDATED)
+Hypothesis: the sin/cos absolute position encoding (ram features 2-5, full-resolution `ss_x`/`ss_y` fingerprint) is the memorization handle. Test (Option A, the clean diagnostic): zero those features, train fresh-from-scratch on stages 1+2 mixed 50/50, restart curriculum OFF.
+
+**Result at ~16M steps (last 5000 labeled episodes):**
+- Stage 1: avg 31.6 (31% of 102), Stage 2: avg 24.7 (19% of 127)
+- **Transfer ratio ~0.75-0.78** (vs specialist's ~0.06). Both stages climbing together over the `--curve` trend.
+
+Interpretation: **position was the memorization handle.** Removing it produced a >10x jump in cross-stage transfer and a policy that reads the local grid patch and applies it to both boards. Caveats: (a) absolute depth is much lower than the specialist (generalist plays shallower — expected tradeoff); (b) stage 2 lags stage 1 (~19% vs 31%), a small real gap to watch (harder layout? longer board? mild residual specialization?). Neither undercuts the verdict.
+
+### Env changes made this session (all in `special_stage_env.py`)
+- **Win fix:** `_board_cleared` latch + win condition (see #1).
+- **Position drop:** `SS_DROP_POSITION=1` zeroes ram features 2-5, keeps vector length 15 (obs space unchanged, so it's a config flag not an arch change — but it BREAKS warm-start from v2, so multistage is fresh-from-random).
+- **Stage sampling:** `SS_STAGES=1,2` makes fresh resets `random.choice` between stage state files.
+- **Per-stage normalization:** features 0 and 8 now use `self._stage_total` (captured from RAM at reset) instead of hardcoded 102 — required so stage 2's 127-sphere board isn't mis-normalized.
+- **Per-stage logging:** `_log_episode` now emits `stage` (parsed from the loaded state filename) and `stage_total`. NOTE the ordering footgun that bit us: `_cur_stage` must be defaulted at the TOP of `reset()` and set during stage-pick — do NOT init it in `_reset_state()`, which runs AFTER the stage-pick and would clobber it back to 0.
+
+### The disciplined staircase (committed plan — validate one variable at a time)
+- **Step 1 (DONE, passed):** position-drop, 2 stages, short run → does transfer improve? YES (0.06→0.75).
+- **Step 2 (NEXT):** scale to 4-5 stages (capture 2-3 more Angel Island ones, hold 1 out as zero-shot test), medium run → does generalization HOLD across more boards? Two stages could be a fluke.
+- **Step 3 (if Step 2 holds):** full run, decide target 7 vs 14. Back-7 (Super Emerald) stages require a full playthrough to Mushroom Hill w/ 7 emeralds to capture — expensive, deferred until the architecture is proven.
+- **Open design question with evidence behind it:** keep position fully dropped (max generalization, shallow play) vs Option B (coarse/region position added back, trying to recover depth while keeping transfer). 0.75 ratio suggests full-drop works; ride it into Step 2 as-is, add coarse position only if depth becomes the blocker.
+
+---
+
+## What Changed the Prior Session (2026-06-27) — the "push for the win" arc
+
+The prior run was stuck: frontier frozen at 94, fresh-avg eroding, entropy floored. The earlier read had been "both parametric levers (lr, gamma) tested, horizon ruled out, this is a pure exploration-frontier problem." Reading the actual code overturned that. Three levers, only one of which had really been pulled:
+
+1. **lr — already done, was the real prior win.** Cooled 3e-4 → 1e-4 → **5e-5**. The 5e-5 cut (applied via `custom_objects`) produced a clean, durable step-up: fresh-start average jumped ~35 → ~50 around ep 43,200 and held. This is the change that got the run to a stable high-80s/low-90s frontier in the first place.
+
+2. **gamma — NEVER ACTUALLY APPLIED until this session.** The earlier gamma change (0.99 → 0.997) was edited in the *constructor*, which does not run on a resume — `RecurrentPPO.load()` restores gamma from the pickle, and `custom_objects` only carried `learning_rate`. Confirmed by reading it off the model: `gamma 0.99`. So the past "horizon ruled out" conclusion was unsound; horizon was never tested. gamma=0.99 → effective horizon ≈ 1/(1−γ) ≈ 100 steps ≈ **~1 sphere of lookahead**, far too myopic for endgame route-planning through a board that's mostly red trail. Now correctly set to **0.997** (≈333 steps, 3–4 spheres) via both `custom_objects` AND an explicit `model.gamma = RESUME_GAMMA` assignment, with gamma added to the resume print line so it's verifiable from the live log. Verified live: `gamma 0.997`.
+
+3. **curriculum (restart pool) — the real fix for the wall.** See the dedicated section below. Short version: the pool was seeding restarts at avg depth **52**, nowhere near the 88–94 wall, for two compounding reasons — (a) uniform `random.choice(files)` over a pool dominated by well-stocked shallow buckets, and (b) `CAPTURE_AT` topped out at 90, so the final 12 cells were never snapshotted and the Go-Explore ratchet had no top rung. Fixed both. After the surgery the frontier ratcheted **94 → 96 → 98 → 99 → 101** over ~3,000 restart episodes.
+
+**Result signature (confirms the mechanism):** as the frontier climbed, restart `gained_avg` collapsed from ~13 to ~1.6–2.1. Low gain + climbing frontier = restarts now land *at* the wall, make a small push, bank the new deep state, and relaunch from it. That's the ratchet working exactly as the sim predicted.
+
+**Things deliberately NOT done (and why):**
+- No more lr/gamma/penalty fiddling — parametric levers are ruled out for *this* wall (it's an exploration-frontier problem, now correctly targeted by the curriculum).
+- **Red channel was considered and rejected.** Earlier claim that "the agent can't see red" was WRONG and was corrected. In `_grid_patch`, red (code 1) and transitional (code 10) fall through the `~known` catch-all into channel 1 ("unknown"), so the agent *does* have a danger signal — it's just mislabeled and conflated with transitional. A dedicated red channel is a marginal disambiguation, not a fix for blindness, and it would break clean resume (GRID_CHANNELS 4→5). The 37% trail-death rate is therefore more likely a control/reaction-distance problem at high speed than a perception one. If a perception lever is ever justified, the better experiment is a **wider patch** (more lookahead cells at Speed 4–8), not a new channel — and only if the frontier genuinely plateaus.
+- **Bouncer-penalty experiment (VERY EARLY, pre-grid-patch, minimal RAM) — superseded, do NOT re-add.** Long ago, before the grid patch existed and before we had much RAM data, we experimented with giving a **negative reward when the agent hit a bouncer sphere**. Theory: if the policy is memorizing the whole board as a route, one bouncer bump scrambles that memorized map, and any blue/red spheres grabbed after the bump become noise that harms the memorization — so penalize bouncers to discourage the disruption. This was an early, indirect swing at memorization *before* we understood the mechanism. **Superseded:** Step 1 later traced memorization to the **absolute position encoding**, which the multistage runs drop directly (`SS_DROP_POSITION=1`) — the root-cause fix, vs. the bouncer penalty's symptom-level one. The blind-agent conditions that made bouncers so catastrophic (no local layout view) also no longer hold now that the grid patch feeds a heading-rotated local patch. **Live version of the concern still valid:** bouncers (yellow/white) are a plausible *memorization-fragility point* on specific boards — a bounce is a high-variance transition that's hard to memorize a route through. Right response is NOT to re-add the penalty; it's to watch for per-board plateaus (esp. bouncer-heavy boards) and, if one stalls, prefer a wider perception patch / curriculum concentration over a reward hack. (Note: `speed_level` logging traces back to this era of hazard/speed diagnosis.)
+- **WHY the bouncer penalty actively BACKFIRED (the concrete failure, not just "it didn't help"):** bumper corridors exist across many maps. When Sonic enters one he **oscillates rapidly back and forth between the bumpers**, and a per-bump negative reward **stacks a penalty on every bounce** — so one entry into a corridor produced a *cascade* of tens of penalties from essentially a single event Sonic couldn't easily control. Two failure effects: (1) reward-magnitude explosion uncorrelated with any single decision (penalty ∝ corridor length / bounce-loop duration = noise, not signal — wrecks credit assignment); (2) the safest learnable response became "avoid the whole bumper region," which on dense boards means refusing to traverse areas needed to collect spheres. The hack meant to improve bumper *handling* instead taught bumper *avoidance* of large playfield regions.
+- **General lesson (design principle):** **per-EVENT penalties are dangerous when the event can repeat rapidly from a single situation** (bumper oscillation, wall-grinding, any bounce loop). A per-contact penalty becomes an uncontrolled cascade. Prefer penalizing the **outcome** (death, net progress lost) over the **contact** — which is what the current reward structure already does by leaning on the death penalty rather than hazard-contact penalties. Keep it that way.
+
+---
+
+## Prior-Session Specialist Training State (2026-06-27 snapshot, ~262M)
+*Superseded — the specialist later reached ~326M with the win-fix (fresh best 96, 3 restart wins) and is now PAUSED as baseline. Table kept for the mid-run picture.*
+
+| Metric | Value |
+|--------|-------|
+| Total steps | ~262.7M |
+| learning_rate | 5e-5 |
+| gamma | 0.997 (applied this session; was 0.99 the entire prior run) |
+| Frontier (deepest total ever) | **101 / 102** |
+| Fresh-start best | 93 (was 91 for the whole prior run) |
+| Fresh-start avg (recent 500) | ~38–45 |
+| Wins | 0 |
+| entropy_loss | ~-1.1 to -1.35 (floored, intentionally not fought) |
+| explained_variance | 0.98–0.999 (critic healthy; re-fit cleanly after gamma change) |
+| approx_kl | 0.05–0.09 (slightly warm but stable) |
+| Trail-death rate | 37.0% (flat through everything — untouched lever) |
+| Speed levels seen | now up to 7–8 (didn't exist pre-curriculum; deep endgame at max speed) |
+| fps | ~440–540, 8 envs |
+
+Frontier climb is **decelerating** at the top (gained_avg ~1.6–2.1, three buckets hovering at 101). This is expected — the last cell is the hardest in the stage (max speed, board ~entirely red trail, zero-margin final sphere). NOT yet a confirmed plateau; needs 10–15M more before that call.
+
+---
+
+## Pre-Committed Criteria / Open Decisions
+
+Written down *before* the data, to read the same way later:
+
+- **First win** will come from a **restart** episode (`success: true`) → that's the *scaffolded* win + emerald. Proves the endgame is solvable.
+- **Handoff-real solve** = a **fresh-start** completion (the main game drops the agent in at sphere 0). This lags the scaffolded win — a cold run must survive 0→90 (rare) *and* close 90→102. Fresh ceiling is 93, so there's real distance between "won from a restart" and "can win from zero."
+- **If the frontier sits genuinely flat at 101 for 10–15M more steps** → THEN the patch-width experiment (wider lookahead, breaks clean resume) becomes evidence-justified. Not before.
+- **Do NOT touch the run while mid-ratchet.** Breaking clean resume torches the banked near-finish states, which are the most expensive states in the pool to regenerate.
+- Watch: explained_variance dip-and-recover (the gamma signal — already observed and recovered), deep pool buckets (`s92`/`s94`/`s97`) populating, frontier moving off 101.
+
+---
+
+## Architecture — PPO (Active)
+
+**Framework:** RecurrentPPO + MultiInputLstmPolicy (sb3-contrib)
+**LSTM:** lstm_hidden_size=512, n_lstm_layers=2, shared_lstm=False, enable_critic_lstm=True
+**n_steps=1024, batch_size=256, n_epochs=4, clip_range=0.1, gae_lambda=0.95**
+**Observations (Dict):**
+- `pixels` — 84×84 RGB (NatureCNN)
+- `ram` — RAM feature vector (sin/cos toroidal position encoding for x,y, sphere counts, speed, angle, corner/bumper signals)
+- `grid` — local heading-rotated patch, PATCH_SIZE=11 (11×11), GRID_CHANNELS=4:
+  - ch0 = blue (code 2)
+  - ch1 = "unknown" = `~known` — **also where red (1) and transitional (10) land**; functionally a danger channel, mislabeled
+  - ch2 = bumper (code 3)
+  - ch3 = ring (code 4)
+
+**Action space:** Discrete (all button combinations)
+
+### Cell codes (special-stage grid)
+`0=empty  1=red  2=blue  3=bumper  4=ring  10=transitional(→red)`
+
+### Reward Structure
+- Per step: small time penalty
+- Blue sphere: large positive (≈ +2000-scale)
+- Death: scaled on *this-episode* collections so net death ≈ **−2500 regardless of depth** (the net-negative-death invariant). Because the penalty scales on this-episode spheres only and restarts grant zero reward for handed-in spheres, a restart-from-88 that dies at 94 gets the same clean "collect more before dying" gradient as a fresh death. Reward plumbing is already correct for restarts — no change needed.
+- Chaos emerald / completion: large bonus + time bonus
+
+---
+
+## Curriculum System (self Go-Explore restart pool) — v4
+
+**Mechanism:** on `reset()`, with probability `RESTART_PROB=0.25`, restore a saved emulator savestate from the pool instead of starting fresh. ~78% of episodes are honest from-scratch starts (forgetting guard). On a deep run, `_maybe_capture` snapshots the emulator at sphere-count thresholds; restart episodes that push past the frontier bank the new deeper states automatically (the ratchet runs through restart episodes).
+
+**v4 changes (this session, both in `special_stage_env.py`):**
+1. **Extended capture ladder:** `CAPTURE_AT = [30, 40, 50, 60, 70, 80, 84, 88, 90, 92, 94, 97, 100]` — adds rungs past 90 so the final cells finally get snapshotted (gives the ratchet a top).
+2. **Depth-weighted restart sampling:** replaced uniform `random.choice(files)` with `_weighted_pick`, sampling a bucket by `RESTART_DEPTH_WEIGHTS` (skewed deep) then a uniform file within it. Renormalizes over buckets that actually have files, so empty deep buckets cost nothing and the realized mean depth self-advances as the agent banks deeper states.
+   ```python
+   RESTART_DEPTH_WEIGHTS = {30:1,40:1,50:1,60:1,70:2,80:4,84:6,88:9,90:11,92:13,94:14,97:14,100:14}
+   ```
+3. `RESTART_PROB` left at 0.25 (forgetting guard + restart volume already ample at ~10 eps/sec).
+
+**Why it works (Monte-Carlo confirmed before running):** on a pool shaped like the real one (shallow buckets saturated, deep ones sparse), uniform sampling gives mean restart depth ~55.8 (matches the real ~52); depth-weighting pulls it to ~81 on day one (renormalizing onto the deepest populated buckets) and climbs toward ~90 as deep buckets fill. `POOL_PER_BUCKET=40`, `POOL_DIR=~/sonic-rl/states/curriculum_pool`.
+
+**Restart-pool stats trajectory:** avg restart depth 52 → 57 (climbing); frontier 94 (frozen 13k+ eps) → 96 → 98 → 99 → 101.
+
+---
+
+## Entropy
+
+Entropy is floored (~-1.1 to -1.35) and we are **deliberately not fighting it.** A global `ent_coef` bump would inject noise across the whole trajectory, degrading the mastered early game to buy exploration that's mostly wasted on solved cells. The curriculum relocates *where* the agent spends episodes (at the wall) instead — so even a low-entropy policy gets its attempts concentrated where they're needed. The entropy floor is a non-issue under the restart approach.
+
+---
+
+## Verification Lessons / Footguns (learned this session)
+
+- **Verify hyperparameters off the LIVE process, not a disk file.** A `RecurrentPPO.load('model')` readback reads the *on-disk* pickle, which lags the running process until the next AutoSave. A gamma readback printed `0.99` mid-boot only because the new process hadn't re-saved yet; the live model already had 0.997 (proven by the resume print line showing the matching lr). Fix applied: gamma is now in the resume print line, so `grep Resuming logs/ss_trainer.log` shows the live value.
+- **`custom_objects` applies on resume; constructor edits do NOT.** Editing `gamma=` in the constructor is a no-op on a resumed run. Use `custom_objects` (and/or explicit attribute assignment after load).
+- **`env.data.set_value()` silently no-ops on unknown keys.** It printed "set ... worked" while writing to a name not in `data.json` (wrote nowhere useful). Always confirm the write landed by reading back.
+- **A stale on-disk checkpoint makes a "fresh" trainer silently RESUME.** `if os.path.exists(f'{ZIP}.zip'): load` is correct logic but bites when a partial run left a checkpoint behind. Before any fresh run, confirm no `{ZIP}.zip`/`.pkl` exists (move them aside), and **check the startup line says `Starting FRESH ... (random weights)`, not `Resuming`.** (2026-07-02: v2 resumed a 1M-step partial, looked like catastrophic interference in the curve.)
+- **sed-deriving a script leaves stale print strings.** Replacing `v1→v2` in filenames doesn't touch log messages like `"Resuming multistage v1"` — which then actively misleads debugging. After a sed-derive, grep the print strings too.
+- **The `--curve` (per-1000) view is truth; the cumulative ratio can lie.** `stage_split.py`'s top-line ratio averages over the whole window — during a config change (or a resumed/contaminated run) it reports the ghost of earlier episodes and hides a current collapse. Always read the per-1000 trend rows.
+- **All runs shared one `ss_log.jsonl` → analyzers read the GHOST of previous runs.** Bit us twice (v2 launch, v3 launch). FIXED: env now honors `SS_LOG` env var, so each run gets its own log (`SS_LOG=~/sonic-rl/ss_log_v3.jsonl`). Always pass `--log` to `ms_analyze.py`.
+- **`_cur_stage` ordering footgun (fixed):** init it at the TOP of `reset()` and set during stage-pick — do NOT init in `_reset_state()`, which runs AFTER the stage-pick and clobbers it back to 0. (Symptom: log showed `stage:0` with correct `stage_total`.)
+
+---
+
+## Multi-Stage Groundwork (generalization plan)
+
+**The tension:** the machinery that cracked Stage 1 — sin/cos absolute position encoding + LSTM stage-region memory — is layout-*memorizing*, which is perfect for one stage and partly counterproductive for generalization. Past a point, more Stage-1 training deepens the overfit you'll then have to overcome.
+
+**Plan (gated on the win):**
+1. Gate on the **scaffolded (restart) 102 win**, NOT the fresh-start win (which bottlenecks on a clean 0→90, a tail event). Snapshot that model as a known-good Stage-1 solver to fall back to.
+2. **Zero-shot transfer probe first:** load the solved model, point env at Stage 2, run with NO training, read fresh-start average. Near zero → memorization, architecture problem (lean on local patch, add stage-ID input). 20–40 → local perception generalizes, multi-stage plan is cheap.
+3. **Drip-feed, NOT all-at-once.** Add one stage at a time as a minority share (Stage1 ~70% / Stage2 ~30%), always keeping prior stages represented (cross-task version of the 78% fresh-start guard). Dumping 13 unfamiliar stages = catastrophic forgetting (the NNUE-run ghost). Drip-feed also lets you *measure per-stage transfer*.
+4. **Hold a few stages out entirely** as a zero-shot test set — the portfolio-piece generalization experiment.
+5. `reset(stage=N)` would weighted-sample which `curriculum_stage_N.state` to warp into, exactly like the restart pool picks depth. You assign the stage label by filename index at load time (see below — there's no RAM stage-number byte to read).
+
+### Special-Stage Selection Mechanism (reverse-engineered this session)
+
+From the disassembly/wiki research + direct RAM probing:
+- The game **cycles through stages in fixed order on each Giant-Ring ENTRY, advancing regardless of win/fail.** The selector is a hidden "rings-entered / next-SS-index" counter, **NOT** emerald count.
+- `special_stage` ($FFFE48, `|i1`) reads **0 in the main game, 1 in ANY special stage** — it's a FLAG, not a stage-number label. (Initially mis-identified as the stage number; a 3-stage diff disproved it — reads 1 for stages 1/2/3.)
+- `chaos_emeralds` ($FFB0): writable but **not the selector** (poking it didn't change the layout). `super_emeralds` ($FFB1).
+- **No clean stage-number byte exists in RAM** — `find_stage_byte.py` EXACT filter found 0 hits across 3 stages. Stage identity lives in a large layout data block (~$A800+ region), not a scalar. So: **label stages by filename index at load time, feed N to the policy as a one-hot from the loader** (no RAM read).
+- A candidate 0-indexed counter showed up in the LINEAR hunt ($F152-ish region, reading [0,1,2] across 3 stages) — possible "next-SS index" but unconfirmed; needs a 4th stage to distinguish from coincidence.
+- **Debug mode:** PAR code `FFFFE2:0101`. A one-shot poke doesn't stick — PAR re-applies every frame; replicating it needs a frame-by-frame hold in the step loop. Debug level-select *can* warp to a chosen special stage directly, BUT requires the level-select menu, which the integration cannot reach (boots mid-Angel-Island, not the title screen). **Net: no clean spawn-any-stage shortcut on this setup.** Capturing stages = playing the game and savestating, which is fine.
+- The back 7 (Super Emerald) stages need a full playthrough to Mushroom Hill with 7 Chaos Emeralds — a real grind, deferred.
+
+### Captured Stages — ALL 14 COMPLETE (verified 2026-07-23)
+
+All 14 special stages captured + confirmed distinct via `check_stages.py`: **14 unique RAM fingerprints, 14 distinct blue counts, all `special=1`.** Each has `.state` + `.ram.bin` in `states/`. Backups in `states/backup_captures/`.
+
+| Stage | Spheres | Set | Note |
+|-------|---------|-----|------|
+| 1 | 102 | front-7 (Chaos) | original |
+| 2 | 127 | front-7 | **recaptured 07-23** after accidental overwrite |
+| 3 | 118 | front-7 | |
+| 4 | 115 | front-7 | Step-2: plateaued ~7.5 |
+| 5 | 58  | front-7 | Step-2 held-out |
+| 6 | 128 | front-7 | Step-2 held-out |
+| 7 | 60  | front-7 | Step-2: the floor, ~2.4 |
+| 8 | 64  | BACK-7 (Super Emerald) | |
+| 9 | 155 | BACK-7 | **largest board** |
+| 10 | 37 | BACK-7 | **smallest board** |
+| 11 | 67 | BACK-7 | |
+| 12 | 72 | BACK-7 | |
+| 13 | 54 | BACK-7 | |
+| 14 | 71 | BACK-7 | |
+
+Capture phase COMPLETE. Note the wide size range (37–155 spheres): per-stage normalization (`_stage_total`, captured at reset) is essential, and episode lengths will vary a lot across boards — factor that into per-stage result reading.
+
+**How the back-7 were captured:** grant true emerald state (count=7 + `$FFFFB2-B8` array all=1) → warp to Mushroom Hill (zone `$07`) → die once for clean load → enter rainbow ring in the secret room → Knuckles cutscene → Hidden Palace with 7 gray pedestals → jump each pedestal → Super Emerald special stage → `S` to capture. Hidden Palace is also directly warpable (zone `$16`, or `$17` when entered from a giant ring).
+
+**Important:** sphere counts differ per stage (102/127/118) — the "all stages have 102" assumption was wrong; that's a Stage-1-specific number. Transfer probe needs only 2 stages, so 3 is already enough; the rest waits for the win.
+
+**Capture method:** fresh boot always starts Angel Island with progress 0, so the *first* Giant Ring serves stage 1. To get stage N you enter and *fail* (don't press S) through the earlier stages to advance the cycle, then capture the target. Wait for the sphere count to settle before pressing S (a mid-load capture once read a bad/transient count).
+
+---
+
+## File Locations
+
+### PPO Project (active)
+- `~/sonic-rl/special_stage_env.py` — SS environment **(v4 curriculum + win-fix `_board_cleared` latch + `SS_DROP_POSITION`/`SS_STAGES` env flags + per-stage-total normalization + per-stage `stage`/`stage_total` logging)**
+- `~/sonic-rl/train_ss.py` — specialist PPO trainer (gamma=0.997, RESUME_LR=5e-5)
+- `~/sonic-rl/train_ss_multistage.py` — **NEW** fresh-from-scratch multistage trainer (new ckpt names `sonic_ss_multistage_v1`, restart OFF, lr 3e-4 warm, gamma 0.997; NEVER touches v2)
+- `~/sonic-rl/analyze_ss.py` — fresh-start episode analyzer (separates restart episodes)
+- `~/sonic-rl/analyze_curriculum.py` — curriculum/restart-pool analyzer
+- `~/sonic-rl/ss_brief.py` — **NEW** wrapper: runs an analyzer and condenses output (hides per-bucket dumps; `RECENT=N` env var; fixes terminal overflow)
+- `~/sonic-rl/stage_split.py` — **NEW** per-stage split reader for the multistage log (avg/median/max/distribution + transfer ratio + `--curve` trend)
+- `~/sonic-rl/verify_win_fix.py` — **NEW** deterministic unit test of the board-clear win fix
+- `~/sonic-rl/transfer_probe.py` — **NEW** zero-shot transfer probe (loads a checkpoint on CPU, runs fresh episodes per stage, no training/log writes)
+- `~/sonic-rl/ss_monitor.py` — RAM address monitor (pygame, discovery tool)
+- `~/sonic-rl/capture_stages.py` — play-and-tap savestate minter (S=save+ram, E=emerald poke, [/]=index, R=reload, Q=quit)
+- `~/sonic-rl/find_stage_byte.py` — RAM-diff hunt across `curriculum_stage_*.ram.bin`
+- `~/sonic-rl/coordinator.py` — main game coordinator (SS reward synced)
+- `~/sonic-rl/data.json` — retro integration RAM map (ss_x/y, blue_spheres_remaining, special_stage, chaos_emeralds, etc.)
+- `~/sonic-rl/sonic_ss_model_v2.zip` (+ `_vecnormalize_v2.pkl`) — **specialist baseline/control, ~326M steps, PRESERVE.** Backups: `.pre_win_fix.zip`, `.pre_win_fix.pkl`
+- `~/sonic-rl/sonic_ss_multistage_v1.zip` (+ `_vecnormalize.pkl`) — **active multistage run** (fresh, position-dropped, stages 1+2)
+- `~/sonic-rl/checkpoints_ss_multistage/` — rolling multistage checkpoints (keep 5)
+- `~/sonic-rl/states/curriculum_pool/` — restart-pool savestates (`s30_*`…`s100_*`; stale Stage-1-only, unused by multistage run)
+- `~/sonic-rl/states/curriculum_stage_{1,2,3}.state` (+ `.ram.bin`) — special-stage entry states (102/127/118 spheres respectively)
+- `~/sonic-rl/ss_log.jsonl` — episode log (SHARED: contains both specialist AND multistage episodes; multistage ones are recent + carry `stage`/`stage_total` fields. Cumulative totals are blended/meaningless — read recent windows only, or filter with stage_split.py)
+- `~/sonic-rl/logs/ss_trainer.log`, `~/sonic-rl/logs/ss_multistage.log` — training logs
+
+### Main Game Model (paused)
+- `~/sonic-rl/` via `coordinator.py` / `train.py`, paused ~208M steps (v10_emerald_priority). Has shield reward, screen_shake boss-hit detection, water flags as info-only.
+
+---
+
+## Resume / Key Commands
+
+### Step 2 — 5-stage run (CURRENT active run)
+```bash
+cd ~/sonic-rl && source venv/bin/activate
+# ensure no stale v2 checkpoint (else it RESUMES instead of starting fresh):
+ls sonic_ss_multistage_v2* 2>/dev/null && echo "MOVE THESE ASIDE FIRST"
+SS_DROP_POSITION=1 SS_STAGES=1,2,3,4,7 SS_RESTART_PROB=0 \
+  nohup python3 train_ss_multistage_v2.py > logs/ss_multistage_v2.log 2>&1 &
+grep -E "FRESH|Resuming|SS_STAGES" logs/ss_multistage_v2.log   # MUST say "Starting FRESH ... (random weights)"
+# pause safely: pkill -f train_ss_multistage_v2.py ; sleep 5 && pgrep -f train_ss_multistage_v2.py
+# resume: identical launch command (finds the v2 checkpoint, continues)
+```
+
+### Step 1 — 2-stage probe (DONE, kept for reference)
+```bash
+SS_DROP_POSITION=1 SS_STAGES=1,2 SS_RESTART_PROB=0 \
+  nohup python3 train_ss_multistage.py > logs/ss_multistage.log 2>&1 &
+# NOTE: env vars are read at process start; a running process won't pick up
+# file/flag changes — must restart to re-import.
+```
+
+### Per-stage split + zero-shot (the multistage verdict)
+```bash
+python3 stage_split.py 8000 --curve  # per-stage avg + per-1000 trend. READ THE CURVE, not the top ratio.
+                                     # Do trained stages climb together (generalizing)?
+python3 stage_split.py 500           # newest tail only (useful right after a relaunch, before window turns over)
+python3 zeroshot_test.py             # eval HELD-OUT stages 5,6 vs trained — TRUE unseen-board transfer.
+                                     # DEFER until trained leaders are in the 20s+.
+# transfer ratio: 0.06 (specialist, memorized) → 0.75 (2-stage) → ~0.76 (5-stage, holding).
+```
+
+### Condensed analyzer (terminal-overflow fix)
+```bash
+python3 ss_brief.py                  # runs analyze_ss.py, hides the giant per-bucket dumps
+RECENT=20 python3 ss_brief.py        # show last 20 learning-curve rows
+# NOTE: analyze_curriculum.py prints the same full report on this setup, so one ss_brief.py covers both.
+```
+
+### Specialist run (PAUSED — baseline/control, preserve sonic_ss_model_v2)
+```bash
+cd ~/sonic-rl && source venv/bin/activate
+nohup python3 train_ss.py > logs/ss_trainer.log 2>&1 &
+grep -m1 "Resuming" logs/ss_trainer.log     # shows live lr AND gamma
+```
+
+### Verify hyperparameters off disk (lags live until an AutoSave)
+```bash
+python3 -c "from sb3_contrib import RecurrentPPO; m=RecurrentPPO.load('sonic_ss_model_v2'); print('gamma',m.gamma,'lr',m.learning_rate)"
+```
+
+### Analyzers
+```bash
+python3 ~/sonic-rl/analyze_ss.py            # fresh-start stats
+python3 ~/sonic-rl/analyze_curriculum.py    # restart-pool stats / frontier
+ls states/curriculum_pool/ | sed 's/_.*//' | sort | uniq -c   # watch the ratchet climb
+```
+
+### Stage capture (multi-stage prep)
+```bash
+python3 capture_stages.py                   # play to a stage, tap S; [/] sets index
+python3 find_stage_byte.py 1 2 3            # diff RAM across captured stages
+```
+
+---
+
+## Key Learnings
+
+1. **The wall at 94 was a curriculum-targeting failure, not an exploration ceiling.** The restart pool was seeding at depth 52 (uniform sampling over shallow-dominated buckets + no captures above 90), so it never actually practiced the wall. Targeting it (deep captures + depth-weighted sampling) broke a wall frozen for the entire prior run within ~3,000 restart episodes.
+
+2. **Verify, don't assume, that an intervention applied.** The gamma change was believed-done for an entire prior run but never actually took (constructor edit on a resumed model = no-op). One unverified `sed` cost a wrong "horizon ruled out" conclusion. Always read the hyperparameter off the live model.
+
+3. **gamma=0.99 was too myopic for endgame planning** (~1-sphere lookahead). 0.997 (~3–4 spheres) is appropriate for threading the final cells through a red-trail-saturated board.
+
+4. **The agent CAN see red** (red/transitional → grid channel 1). Earlier "it's blind" claim was wrong. Trail deaths (37%, flat) are more likely control/reaction-distance at high speed than perception. The candidate perception lever, if ever needed, is a wider patch, not a red channel — and both break clean resume, so neither fires without a confirmed plateau.
+
+5. **Two LSTM layers + sin/cos absolute position encoding was the right backbone for a SINGLE stage — but the position encoding is the MEMORIZATION HANDLE, and it must be dropped for multi-stage.** VALIDATED 2026-06-30: the specialist's cross-stage transfer ratio was ~0.06 (pure memorization); zeroing ram features 2-5 (`SS_DROP_POSITION=1`) lifted it to ~0.75 (generalizing). The full-resolution absolute `ss_x`/`ss_y` fingerprint let the LSTM map position→action per-board instead of reading the stage-agnostic local grid patch. For any multi-stage run: position dropped (or coarsened — Option B, untested).
+
+6. **Restart-from-frontier (Go-Explore) makes the entropy floor irrelevant** by relocating where episodes are spent, rather than injecting global exploration noise.
+
+7. **Special-stage selection has no clean RAM hook** on this setup — cycle-by-entry counter, menu-gated warps unreachable from a mid-level boot, debug flag needs frame-by-frame holding. Capturing stages = playing + savestating. Stages are labeled by filename index at load time.
+
+8. **Checkpoint resume preserves VecNormalize + policy perfectly** — no warmup on resume.
+
+---
+
+## DreamerV3 Attempt (abandoned — reference)
+
+World-model approach abandoned on the 2070 Super (8GB). World model used ~6.8GB, leaving no room for `imag_horizon > 15`; with horizon 15, sphere collections (every ~85–120 steps) almost never appear in imagined rollouts, so the actor learned to die quickly to minimize imagined negative reward. At 695K steps avg was 2.9 and declining. DreamerV3 needs 16GB+ for this task at scale. Key fixes that worked along the way (for reference if revisited on better hardware): lazy emulator init for stable_retro's one-emulator-per-process restriction, 64×64 frame resize, 256 DiscDist buckets (so zero doesn't sit on a bucket boundary), dropped time penalty, dense per-sphere bonus, reward scaling /2000.
+
+**Takeaway:** PPO + LSTM + position encoding + self-curriculum is genuinely competitive on this task and is the chosen architecture. The curriculum (Go-Explore restart pool) is what addresses PPO's sample-efficiency gap on the sparse deep-endgame region.

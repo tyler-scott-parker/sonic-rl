@@ -1,0 +1,144 @@
+{
+  "info": {
+    "act": {
+      "address": 16776721,
+      "type": "|u1"
+    },
+    "blue_spheres_remaining": {
+      "address": 16770104,
+      "type": ">u2",
+      "comment": "$E438 \u2014 blue spheres left to collect in special stage"
+    },
+    "boss_flag": {
+      "address": 16775082,
+      "type": "|u1",
+      "comment": "$F7AA \u2014 set when boss is active"
+    },
+    "chaos_emeralds": {
+      "address": 16777136,
+      "type": "|u1",
+      "comment": "$FFB0 \u2014 chaos emeralds count (confirmed per RAM map)"
+    },
+    "super_emeralds": {
+      "address": 16777137,
+      "type": "|u1",
+      "comment": "$FFB1 \u2014 super emeralds count (confirmed per RAM map \u2014 setting to 7 gives Hyper Sonic)"
+    },
+    "combo_counter": {
+      "address": 16775120,
+      "type": ">u2",
+      "comment": "$F7D0 \u2014 consecutive enemy hit counter"
+    },
+    "level_end_bonus": {
+      "address": 16775848,
+      "type": "|u1",
+      "comment": "$FAA8 \u2014 set when boss/act is completed"
+    },
+    "level_started": {
+      "address": 16774929,
+      "type": "|u1",
+      "comment": "$F711 \u2014 set to 1 when player first gets control"
+    },
+    "level_timer": {
+      "address": 16776708,
+      "type": ">u2",
+      "comment": "$FE04 \u2014 level frame timer"
+    },
+    "lives": {
+      "address": 16776722,
+      "type": "|u1"
+    },
+    "rings": {
+      "address": 16776736,
+      "type": ">u2"
+    },
+    "score": {
+      "address": 16776742,
+      "type": ">u4"
+    },
+    "screen_x": {
+      "address": 16772728,
+      "type": ">u2"
+    },
+    "screen_x_end": {
+      "address": 16772630,
+      "type": ">u2"
+    },
+    "screen_y": {
+      "address": 16772732,
+      "type": ">u2",
+      "comment": "$EE7C \u2014 camera vertical position"
+    },
+    "shield": {
+      "address": 16776775,
+      "type": "|u1",
+      "comment": "$FE47 \u2014 shield state bitfield"
+    },
+    "special_stage": {
+      "address": 16776776,
+      "type": "|i1"
+    },
+    "ss_rings_collected": {
+      "address": 16770106,
+      "type": ">u2",
+      "comment": "$E43A \u2014 rings collected inside special stage"
+    },
+    "ss_speed_timer": {
+      "address": 16770110,
+      "type": ">u2",
+      "comment": "$E43E \u2014 frames until speed increase in special stage"
+    },
+    "super_sonic": {
+      "address": 16776729,
+      "type": "|u1",
+      "comment": "$FE19 \u2014 0=normal, 1=Super, 255=Hyper"
+    },
+    "x": {
+      "address": 16756752,
+      "type": ">u2"
+    },
+    "y": {
+      "address": 16756756,
+      "type": ">u2"
+    },
+    "zone": {
+      "address": 16776720,
+      "type": "|u1"
+    },
+    "ss_angle": {
+      "address": 16770094,
+      "type": ">i2",
+      "comment": "$E42E — Sonic rotation/heading angle in special stage (signed 16-bit, changes direction with left/right steering)"
+    },
+    "ss_x": {
+      "address": 16770082,
+      "type": ">u2",
+      "comment": "$E422 — Player X position in Special Stage (checkerboard units, $100 per field)"
+    },
+    "ss_y": {
+      "address": 16770084,
+      "type": ">u2",
+      "comment": "$E424 — Player Y position in Special Stage (checkerboard units, $100 per field)"
+    },
+    "ss_direction": {
+      "address": 16770086,
+      "type": ">u2",
+      "comment": "$E426 — Player direction in Special Stage"
+    },
+    "ss_move_speed": {
+      "address": 16770088,
+      "type": ">i2",
+      "comment": "$E428 — Current player movement speed in Special Stage (negative = walking backwards)"
+    },
+    "bumper_contact": {
+      "address": 16770091,
+      "type": "|u1",
+      "comment": "$E42B — 1 while Sonic is touching a bumper, 0 otherwise (confirmed via ss_monitor.py)"
+    },
+    "ss_next_corner": {
+      "address": 16770090,
+      "type": "|i1",
+      "comment": "$E42A — direction change at next checkerboard corner: -4=turn left, 0=straight, 4=turn right"
+    }
+  }
+}
