@@ -1,5 +1,5 @@
 # Sonic 3 & Knuckles Special Stage RL — Full Project Context
-*Last updated: 2026-07-27*
+*Last updated: 2026-08-19 (consolidation pass — see "Project layout" below)*
 
 ---
 
@@ -15,9 +15,11 @@ Spheres special stages in Sonic 3 & Knuckles. Long arc: one agent that plays all
 14 special stages. Runs locally on Tyler's RTX 2070 Super.
 
 ### How we work together (important — don't get this wrong)
-- **Everything runs on Tyler's machine. You have NO access to his filesystem.**
-  You have your own sandbox only. Deliver code via `present_files`; he downloads
-  and moves files into `~/sonic-rl/` himself.
+- **Two channels, and they differ.** In the *web chat* you have NO filesystem
+  access: deliver code via `present_files`, he downloads and moves it into
+  `~/sonic-rl/` himself. In **Claude Code** you are running *on* his machine
+  in `~/sonic-rl` with real tools — read and edit files directly, and run things
+  in `venv`. Everything below about file swaps applies to the web-chat channel.
 - **After any file swap, confirm it landed** before launching:
   `grep -n "<new symbol>" ~/sonic-rl/<file>.py`. This has bitten repeatedly —
   running stale code and then debugging a bug that was already fixed.
@@ -30,15 +32,18 @@ Spheres special stages in Sonic 3 & Knuckles. Long arc: one agent that plays all
   back when a plan is expensive or uninterpretable; propose the cheap test first.
   That discipline has repeatedly saved days of wasted compute.
 
-### Current state (2026-07-23)
-- **v3 14-board run is LAUNCHED and training.** All 14 stages captured + verified
-  distinct. Training on all 14 (no holdout — deliberate, see below).
-- Config: `SS_DROP_POSITION=1`, `SS_STAGES=1..14`, `SS_RESTART_PROB=0`,
-  `SS_LOG=~/sonic-rl/ss_log_v3.jsonl`, fresh from random weights, 512-hidden
-  2-layer LSTM, gamma 0.997, lr 3e-4.
-- **Analyzer for this run: `ms_analyze.py`** (NOT analyze_ss/ss_brief — those pool
-  incomparable boards, 37–155 spheres). Always pass `--log ~/sonic-rl/ss_log_v3.jsonl`.
-- See **`COMMANDS_v3.md`** in the knowledge base for launch/stop/resume/monitor.
+### Current state (2026-08-19)
+- **Nothing is training right now.** v5 (1024-LSTM capacity test, all 14 boards)
+  ran to **19.5M steps on 2026-07-30** and is stopped, not finished. Resume with
+  `python3 train_ss_multistage.py v5 --resume`.
+- v5 at 19.5M: mean 2.6% of board, spread 0.8–4.8%, ratio(min/max) 0.16,
+  3 climbing / 8 flat / 3 regressing, 0 wins. Far too early to read against
+  v3's ~3.5% plateau — that took far more than 19M steps to reach.
+- **The project was consolidated on 2026-08-19** (see "Project layout"). One env,
+  one multistage trainer, one of each tool; `attic/` holds what was retired;
+  the repo is now under **git**, so no more `_v4` / `.pre_win_fix` filenames.
+- Analyzer: **`ms_analyze.py --run v5`** (the `--run` shortcut resolves the
+  per-run log, so it can no longer read the ghost of a previous run).
 
 ### What to expect / what to watch
 14 boards split episodes 14 ways, so per-stage numbers come SLOWLY.
@@ -79,10 +84,18 @@ unlimited boards — a far stronger test set than holding out 2 of 14.
   with the main-game agent; eventually a main-game (non-special-stage) generalist —
   a much harder problem Tyler has been thinking ahead about.
 
-### ⧉ OBSERVATION AUDIT — queued for AFTER the LR-cool result (do NOT touch mid-run)
+### ⧉ OBSERVATION AUDIT — items 1 & 2 SHIPPED in v4; item 3 still open
 Evidence found 2026-07-26 that the observation stack carries fat. Do these ONE
 AT A TIME on a fresh run, measuring each — never bundle (confounds attribution),
 never mid-experiment (changing obs shape breaks resume + confounds the cool).
+
+**STATUS: v4 shipped items 1 and 2 TOGETHER** (dead RAM features dropped AND
+pixels dropped AND patch widened, in one change) — which violates the one-at-a-
+time rule above and means a v4-vs-v3 difference cannot be attributed to any
+single one of them. Worth knowing when reading the v4/v5 numbers. Item 3 (jumper
+lookahead) is untouched. All three are now one-line config changes
+(`SS_USE_PIXELS`, `SS_PATCH_R`) rather than a forked env file, so a clean
+one-variable ablation is cheap to run properly.
 
 The observation is a 3-stream dict (line ~486 of the env):
 `{'pixels': 84x84x3, 'ram': 15 features, 'grid': 11x11x4 heading-rotated patch}`.
@@ -116,9 +129,11 @@ honest way to know what's load-bearing — intuition can't tell you.
 
 
 ### Knowledge base contents (keep current!)
-`sonic_rl_context.md` (this file) · `COMMANDS_v3.md` · `special_stage_env.py` ·
-`data.json`. **These go stale** — when the env or context changes materially,
-re-upload, or a fresh chat will confidently reason from an old version.
+`sonic_rl_context.md` (this file) · `special_stage_env.py` · `data.json`.
+**These go stale** — when the env or context changes materially, re-upload, or a
+fresh chat will confidently reason from an old version.
+(`COMMANDS_v3.md` is retired: the launch/stop/resume commands now live in the
+docstring of `train_ss_multistage.py`, which cannot drift away from the code.)
 
 ---
 
@@ -315,10 +330,18 @@ Written down *before* the data, to read the same way later:
 **Framework:** RecurrentPPO + MultiInputLstmPolicy (sb3-contrib)
 **LSTM:** lstm_hidden_size=512, n_lstm_layers=2, shared_lstm=False, enable_critic_lstm=True
 **n_steps=1024, batch_size=256, n_epochs=4, clip_range=0.1, gae_lambda=0.95**
-**Observations (Dict):**
-- `pixels` — 84×84 RGB (NatureCNN)
-- `ram` — RAM feature vector (sin/cos toroidal position encoding for x,y, sphere counts, speed, angle, corner/bumper signals)
-- `grid` — local heading-rotated patch, PATCH_SIZE=11 (11×11), GRID_CHANNELS=4:
+**LSTM hidden size is per-run:** 512 through v4, **1024 in v5** (the capacity test).
+
+**Observations (Dict) — shape is per-run, set by `SS_USE_PIXELS` / `SS_PATCH_R` /
+`SS_DROP_POSITION`. Current default (v4/v5) is `{ram: 11, grid: 15×15×4}` — NO
+pixels.** The pre-v4 shape, described below, is what the specialist still uses:
+- `pixels` — 84×84 RGB (NatureCNN). **Dropped from v4 on** (see "Why drop pixels").
+- `ram` — 11 stage-agnostic features; +4 sin/cos absolute-position features at
+  indices **2-5** when `SS_DROP_POSITION=0` (specialist only) → 15 total.
+  Position keeps that historical slot deliberately: a reordered vector would let
+  an old checkpoint load with matching shapes but permuted inputs — a silent
+  failure, unlike a shape mismatch.
+- `grid` — local heading-rotated patch, PATCH_SIZE=11 pre-v4 / **15 from v4**, GRID_CHANNELS=4:
   - ch0 = blue (code 2)
   - ch1 = "unknown" = `~known` — **also where red (1) and transitional (10) land**; functionally a danger channel, mislabeled
   - ch2 = bumper (code 3)
@@ -349,6 +372,11 @@ Written down *before* the data, to read the same way later:
    ```
 3. `RESTART_PROB` left at 0.25 (forgetting guard + restart volume already ample at ~10 eps/sec).
 
+**DELETED 2026-08-19:** `states/curriculum_pool/` (515 MB) was removed in the
+consolidation pass. It was Stage-1-only and unused by every multistage run
+(`SS_RESTART_PROB=0` throughout). The mechanism below is intact in the env — a
+future curriculum run just rebuilds the pool from scratch.
+
 **Why it works (Monte-Carlo confirmed before running):** on a pool shaped like the real one (shallow buckets saturated, deep ones sparse), uniform sampling gives mean restart depth ~55.8 (matches the real ~52); depth-weighting pulls it to ~81 on day one (renormalizing onto the deepest populated buckets) and climbs toward ~90 as deep buckets fill. `POOL_PER_BUCKET=40`, `POOL_DIR=~/sonic-rl/states/curriculum_pool`.
 
 **Restart-pool stats trajectory:** avg restart depth 52 → 57 (climbing); frontier 94 (frozen 13k+ eps) → 96 → 98 → 99 → 101.
@@ -371,6 +399,13 @@ Entropy is floored (~-1.1 to -1.35) and we are **deliberately not fighting it.**
 - **The `--curve` (per-1000) view is truth; the cumulative ratio can lie.** `stage_split.py`'s top-line ratio averages over the whole window — during a config change (or a resumed/contaminated run) it reports the ghost of earlier episodes and hides a current collapse. Always read the per-1000 trend rows.
 - **All runs shared one `ss_log.jsonl` → analyzers read the GHOST of previous runs.** Bit us twice (v2 launch, v3 launch). FIXED: env now honors `SS_LOG` env var, so each run gets its own log (`SS_LOG=~/sonic-rl/ss_log_v3.jsonl`). Always pass `--log` to `ms_analyze.py`.
 - **`_cur_stage` ordering footgun (fixed):** init it at the TOP of `reset()` and set during stage-pick — do NOT init in `_reset_state()`, which runs AFTER the stage-pick and clobbers it back to 0. (Symptom: log showed `stage:0` with correct `stage_total`.)
+
+### Found in the 2026-08-19 consolidation pass
+- **The sed-derive footgun had already fired, undetected.** `train_ss_multistage_v5.py`'s docstring instructed you to launch `train_ss_multistage_v3.py` and to `pkill -f train_ss_multistage_v3.py`. Following its own instructions would have trained the v3 network on the v3 env while writing to v5's log. The doc listed the footgun; the file still had it. **Root cause: no version control.** Fixed by `git init` + one parameterized trainer.
+- **A "config flag" that only zeroes a feature still costs you.** `SS_DROP_POSITION=1` kept the 4 position slots as constant zeros to preserve the obs shape. That convenience shipped 4 dead inputs into v1/v2/v3 and cost those checkpoints their resumability once v4 removed them properly. If a flag makes a feature meaningless, remove the feature.
+- **Two probes that silently ran unnormalized.** `transfer_probe.py` and `zeroshot_test.py` both wrapped their `VecNormalize.load()` in a bare `except: pass`. It was ALWAYS failing — stable_retro allows one emulator per process, and the load built a second one. Harmless here only because every trainer sets `norm_obs=False`. `eval_transfer.py` now reads the pickle directly and says which case applies.
+- **`transfer_probe.py` set `env.state_path` but not `STAGE_FILES`.** With `SS_STAGES` set, the env would still random-pick a stage on reset, so "run 60 episodes on stage 2" could silently sample other boards. `eval_transfer.py` pins both.
+- **There is no main-game trainer on disk.** `train.py` was a stale copy of the SS specialist trainer. The main-game model and `coordinator.py` survive; the training script does not.
 
 ---
 
@@ -427,98 +462,131 @@ Capture phase COMPLETE. Note the wide size range (37–155 spheres): per-stage n
 
 ---
 
-## File Locations
+## Project layout (after the 2026-08-19 consolidation)
 
-### PPO Project (active)
-- `~/sonic-rl/special_stage_env.py` — SS environment **(v4 curriculum + win-fix `_board_cleared` latch + `SS_DROP_POSITION`/`SS_STAGES` env flags + per-stage-total normalization + per-stage `stage`/`stage_total` logging)**
-- `~/sonic-rl/train_ss.py` — specialist PPO trainer (gamma=0.997, RESUME_LR=5e-5)
-- `~/sonic-rl/train_ss_multistage.py` — **NEW** fresh-from-scratch multistage trainer (new ckpt names `sonic_ss_multistage_v1`, restart OFF, lr 3e-4 warm, gamma 0.997; NEVER touches v2)
-- `~/sonic-rl/analyze_ss.py` — fresh-start episode analyzer (separates restart episodes)
-- `~/sonic-rl/analyze_curriculum.py` — curriculum/restart-pool analyzer
-- `~/sonic-rl/ss_brief.py` — **NEW** wrapper: runs an analyzer and condenses output (hides per-bucket dumps; `RECENT=N` env var; fixes terminal overflow)
-- `~/sonic-rl/stage_split.py` — **NEW** per-stage split reader for the multistage log (avg/median/max/distribution + transfer ratio + `--curve` trend)
-- `~/sonic-rl/verify_win_fix.py` — **NEW** deterministic unit test of the board-clear win fix
-- `~/sonic-rl/transfer_probe.py` — **NEW** zero-shot transfer probe (loads a checkpoint on CPU, runs fresh episodes per stage, no training/log writes)
-- `~/sonic-rl/ss_monitor.py` — RAM address monitor (pygame, discovery tool)
-- `~/sonic-rl/capture_stages.py` — play-and-tap savestate minter (S=save+ram, E=emerald poke, [/]=index, R=reload, Q=quit)
-- `~/sonic-rl/find_stage_byte.py` — RAM-diff hunt across `curriculum_stage_*.ram.bin`
-- `~/sonic-rl/coordinator.py` — main game coordinator (SS reward synced)
-- `~/sonic-rl/data.json` — retro integration RAM map (ss_x/y, blue_spheres_remaining, special_stage, chaos_emeralds, etc.)
-- `~/sonic-rl/sonic_ss_model_v2.zip` (+ `_vecnormalize_v2.pkl`) — **specialist baseline/control, ~326M steps, PRESERVE.** Backups: `.pre_win_fix.zip`, `.pre_win_fix.pkl`
-- `~/sonic-rl/sonic_ss_multistage_v1.zip` (+ `_vecnormalize.pkl`) — **active multistage run** (fresh, position-dropped, stages 1+2)
-- `~/sonic-rl/checkpoints_ss_multistage/` — rolling multistage checkpoints (keep 5)
-- `~/sonic-rl/states/curriculum_pool/` — restart-pool savestates (`s30_*`…`s100_*`; stale Stage-1-only, unused by multistage run)
-- `~/sonic-rl/states/curriculum_stage_{1,2,3}.state` (+ `.ram.bin`) — special-stage entry states (102/127/118 spheres respectively)
-- `~/sonic-rl/ss_log.jsonl` — episode log (SHARED: contains both specialist AND multistage episodes; multistage ones are recent + carry `stage`/`stage_total` fields. Cumulative totals are blended/meaningless — read recent windows only, or filter with stage_split.py)
-- `~/sonic-rl/logs/ss_trainer.log`, `~/sonic-rl/logs/ss_multistage.log` — training logs
+The project used **filenames as version control**: `special_stage_env{,_v4,
+.pre_win_fix,.pre_multistage,.pre_stagelog}.py` and
+`train_ss_multistage{,_v2,_v3,_v4,_v5}.py`, each sed-derived from the last.
+That had already produced a live bug — **v5's own docstring told you to launch
+`train_ss_multistage_v3.py` and to `pkill -f train_ss_multistage_v3.py`**, i.e.
+run the wrong network against the wrong env while writing to v5's log. The doc
+already listed "sed-deriving a script leaves stale print strings" as a footgun;
+the fix is to stop sed-deriving scripts.
 
-### Main Game Model (paused)
-- `~/sonic-rl/` via `coordinator.py` / `train.py`, paused ~208M steps (v10_emerald_priority). Has shield reward, screen_shake boss-hit detection, water flags as info-only.
+**The repo is now under git.** Never create a `_v6` or `.pre_x` file again —
+branch or commit instead.
+
+### Active files
+| file | what it is |
+|---|---|
+| `special_stage_env.py` | THE env. Observation shape is env-var driven: `SS_USE_PIXELS`, `SS_PATCH_R`, `SS_DROP_POSITION`. Absorbed `special_stage_env_v4.py`. |
+| `train_ss_multistage.py` | THE multistage trainer. Takes a **run name**; `RUNS` holds every run's stages, obs preset, hyperparameters and result. |
+| `train_ss.py` | The single-board specialist trainer (`sonic_ss_model_v2`, PAUSED, control). Pins the specialist obs preset itself. |
+| `smoke_stages.py` | Pre-launch check that the env reads each stage. Asserts against the **live** obs shape, so it covers every preset. Absorbed `smoke_all14.py` + `smoke_v4.py`. |
+| `eval_transfer.py` | Transfer / zero-shot evaluation. Absorbed `transfer_probe.py` + `zeroshot_test.py`. |
+| `ms_analyze.py` | THE multistage analyzer. `--run v5` resolves the per-run log. |
+| `analyze_ss.py`, `ss_brief.py` | Specialist (single-board) analyzer + its terminal-friendly wrapper. |
+| `capture_stages.py`, `check_stages.py` | Stage capture + distinctness verification. Capture phase is COMPLETE; kept for re-capture. |
+| `watch_ss.py` | Watch a checkpoint play. Takes a run name (or `specialist`) so the preset always matches. |
+| `watchdog.sh <run>` | Keep a run alive across crashes. Was `watchdog_v3.sh`. |
+| `coordinator.py`, `watch_agent.py`, `watch_checkpoint.py` | Main-game (paused) env + watchers. |
+| `data.json` | retro integration RAM map. |
+
+### Model artifacts
+- `sonic_ss_model_v2.zip` + `sonic_ss_vecnormalize_v2.pkl` — **specialist baseline/control, ~326M steps, PRESERVE.**
+- `sonic_ss_multistage_v{1,2,3,4,5}.zip` + `_vecnormalize.pkl` — one final checkpoint per multistage run. **v1/v2/v3 are NOT resumable** against the current env (they used the old 15-feature vector with 4 dead zeros); they are kept as records.
+- `checkpoints_ss_multistage_v5/` — rolling checkpoints for the live run only.
+- `sonic_ppo_v10_emerald_priority.zip` — main-game model, paused ~208M steps.
+- `ss_log_v{3,4,5}.jsonl` — per-run episode logs. `ss_log.jsonl` is the old SHARED log (specialist + v1/v2 blended; totals are meaningless, read recent windows only).
+- `states/curriculum_stage_{1..14}.state` — all 14 captured entry states, backups in `states/backup_captures/`.
+
+### `attic/`
+Retired, not deleted. `superseded/` = the old per-version env/trainer copies and
+the scripts folded into the consolidated ones. `one_off_tools/` = tools for
+problems now SOLVED and written down above (win-fix appliers/verifiers, the RAM
+address hunts, the warp/reload discovery scripts). `main_game/` = the map-overlay
+tooling and its assets.
+
+**Note found during the pass:** there is **no main-game trainer on disk.** The
+old `train.py` is a stale copy of the SS specialist trainer (its docstring even
+says "train_ss.py") pointing at the superseded `sonic_ss_model`. The main-game
+model `sonic_ppo_v10_emerald_priority.zip` and `coordinator.py` survive, but the
+script that trained them does not. Resuming the main game needs that rebuilt.
+
+### Deleted in the pass (5.5 GB)
+Rolling checkpoints of finished runs (their final state is preserved as the
+top-level `.zip`), `archive_v1/`, `contaminated_v2_attempt/`, the v1 specialist
+model, the `.pre_win_fix` backups, and `states/curriculum_pool/` (the Stage-1-only
+Go-Explore pool, unused by any multistage run).
 
 ---
 
 ## Resume / Key Commands
 
-### Step 2 — 5-stage run (CURRENT active run)
+Commands live in the trainer's docstring too, where they cannot drift from the code.
+
+### Multistage runs
 ```bash
 cd ~/sonic-rl && source venv/bin/activate
-# ensure no stale v2 checkpoint (else it RESUMES instead of starting fresh):
-ls sonic_ss_multistage_v2* 2>/dev/null && echo "MOVE THESE ASIDE FIRST"
-SS_DROP_POSITION=1 SS_STAGES=1,2,3,4,7 SS_RESTART_PROB=0 \
-  nohup python3 train_ss_multistage_v2.py > logs/ss_multistage_v2.log 2>&1 &
-grep -E "FRESH|Resuming|SS_STAGES" logs/ss_multistage_v2.log   # MUST say "Starting FRESH ... (random weights)"
-# pause safely: pkill -f train_ss_multistage_v2.py ; sleep 5 && pgrep -f train_ss_multistage_v2.py
-# resume: identical launch command (finds the v2 checkpoint, continues)
+
+python3 train_ss_multistage.py --list          # every run: config, result, checkpoint status
+
+# resume the stopped v5 run (19.5M steps)
+nohup python3 train_ss_multistage.py v5 --resume > logs/ss_multistage_v5.log 2>&1 &
+
+# a NEW experiment: add an entry to RUNS, then
+nohup python3 train_ss_multistage.py v6 > logs/ss_multistage_v6.log 2>&1 &
+grep -E "FRESH|Resuming|preset" logs/ss_multistage_v6.log   # MUST say "Starting FRESH"
+
+# --resume is REQUIRED whenever a checkpoint exists, so a "fresh" launch can
+# never silently resume a partial (the bug that faked catastrophic interference
+# on the v2 launch). Launching without it refuses, loudly.
+
+# stop gracefully (loses nothing):
+touch ~/sonic-rl/STOP_v5
+
+# keep it alive across crashes:
+nohup ./watchdog.sh v5 > logs/watchdog_v5.log 2>&1 &
 ```
 
-### Step 1 — 2-stage probe (DONE, kept for reference)
+### Before launching — verify the env reads every board
 ```bash
-SS_DROP_POSITION=1 SS_STAGES=1,2 SS_RESTART_PROB=0 \
-  nohup python3 train_ss_multistage.py > logs/ss_multistage.log 2>&1 &
-# NOTE: env vars are read at process start; a running process won't pick up
-# file/flag changes — must restart to re-import.
+python3 smoke_stages.py v6              # all 14 under that run's obs preset
+python3 smoke_stages.py v6 --stages 1,2 # quick check
 ```
 
-### Per-stage split + zero-shot (the multistage verdict)
+### Reading results
 ```bash
-python3 stage_split.py 8000 --curve  # per-stage avg + per-1000 trend. READ THE CURVE, not the top ratio.
-                                     # Do trained stages climb together (generalizing)?
-python3 stage_split.py 500           # newest tail only (useful right after a relaunch, before window turns over)
-python3 zeroshot_test.py             # eval HELD-OUT stages 5,6 vs trained — TRUE unseen-board transfer.
-                                     # DEFER until trained leaders are in the 20s+.
-# transfer ratio: 0.06 (specialist, memorized) → 0.75 (2-stage) → ~0.76 (5-stage, holding).
+python3 ms_analyze.py 20000 --run v5    # one row per board, sorted hardest-first
+python3 ms_analyze.py 40000 --run v5 --chunks 8
+# Watch: ratio(min/max) near 1.0 = uniform competence; "N climbing / M flat";
+# stages covered. Don't over-read before ~20,000 episodes.
 ```
 
-### Condensed analyzer (terminal-overflow fix)
+### Transfer / zero-shot (the generalization question)
 ```bash
-python3 ss_brief.py                  # runs analyze_ss.py, hides the giant per-bucket dumps
-RECENT=20 python3 ss_brief.py        # show last 20 learning-curve rows
-# NOTE: analyze_curriculum.py prints the same full report on this setup, so one ss_brief.py covers both.
+python3 eval_transfer.py v5 --holdout 5,6 -n 80        # zero-shot on unseen boards
+python3 eval_transfer.py --model sonic_ss_model_v2 \
+        --preset specialist --stages 1,2,3             # the specialist probe
+# transfer ratio: 0.06 (specialist, memorized) -> 0.75 (2-stage) -> 0.09 (5-stage holdout)
 ```
 
 ### Specialist run (PAUSED — baseline/control, preserve sonic_ss_model_v2)
 ```bash
-cd ~/sonic-rl && source venv/bin/activate
 nohup python3 train_ss.py > logs/ss_trainer.log 2>&1 &
-grep -m1 "Resuming" logs/ss_trainer.log     # shows live lr AND gamma
+grep -m1 "Resuming" logs/ss_trainer.log     # shows the LIVE lr AND gamma
+python3 ss_brief.py                          # condensed specialist analyzer
 ```
 
-### Verify hyperparameters off disk (lags live until an AutoSave)
+### Watch it play
 ```bash
-python3 -c "from sb3_contrib import RecurrentPPO; m=RecurrentPPO.load('sonic_ss_model_v2'); print('gamma',m.gamma,'lr',m.learning_rate)"
+python3 watch_ss.py v5           # or: python3 watch_ss.py specialist
 ```
 
-### Analyzers
+### Stage capture (complete — kept for re-capture)
 ```bash
-python3 ~/sonic-rl/analyze_ss.py            # fresh-start stats
-python3 ~/sonic-rl/analyze_curriculum.py    # restart-pool stats / frontier
-ls states/curriculum_pool/ | sed 's/_.*//' | sort | uniq -c   # watch the ratchet climb
-```
-
-### Stage capture (multi-stage prep)
-```bash
-python3 capture_stages.py                   # play to a stage, tap S; [/] sets index
-python3 find_stage_byte.py 1 2 3            # diff RAM across captured stages
+python3 capture_stages.py        # play to a stage, tap S; [/] sets index
+python3 check_stages.py          # verify all 14 distinct
 ```
 
 ---
