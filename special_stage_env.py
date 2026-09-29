@@ -13,6 +13,40 @@ from gymnasium import spaces
 # Button order: B, A, MODE, START, UP, DOWN, LEFT, RIGHT, C, Y, X, Z
 
 # ─────────────────────────────────────────────────────────────────────────────
+# env v2 (2026-09-29) — logic-error fixes, every one checked in the emulator.
+# SS_ENV_VERSION picks them (see "Env version" below); v1 reproduces the old
+# env exactly, for the checkpoints trained on it.
+#   - grid read from the real layout at $F100. v1 read $F000 and added 8 to
+#     the row: the same bytes for board rows 0-23, but rows 24-31 wrapped onto
+#     zeroed RAM — 284 of the 1328 blue spheres on the 14 boards (and whole
+#     red walls) were invisible, and boards 2, 10, 11, 14 start inside them
+#   - patch centre = the NEAREST cell. A sphere is collected as Sonic crosses
+#     its half-cell boundary (x = ..80); v1 floored, which put the centre a
+#     cell behind on S/E headings and a cell ahead on N/W for half of every
+#     cell. The heading quadrant is rounded too, so the patch turns halfway
+#     through a turn instead of at the start of a right / end of a left one
+#   - springs (code 5) get their own grid channel; v1 lumped them in with red
+#   - the episode ends ON red contact ($E433 starts) or ON the board clear.
+#     v1 waited for special_stage to drop, 651-678 frames later for a death
+#     (~1000 for a clear): ~44% of all v4/v5 steps were dead animation, and
+#     the death penalty reached the fatal action discounted by gamma^675
+#   - a clear pays its emerald reward. v1 compared the emerald count only on
+#     the final frame, ~660 frames after it had changed, so it never paid
+#   - speed feature scaled by the max speed 8192 (v1: /4096, flat at base)
+#   - total_progress dropped (v1 feature 4/8; it is exactly 1 - feature 0)
+#
+# Verified facts (re-checked 2026-09-29; the old "buffer $F000,
+# row=(y+8)%32" only held for board rows 0-23):
+#   layout $F100-$F4FF, 32x32 row-major; raw RAM byte-swapped
+#   cell of a position: row=((y+$80)>>8)%32, col=((x+$80)>>8)%32
+#   codes 0=empty 1=red 2=blue 3=bumper 4=ring 5=spring 10=transitional(->red)
+#   heading $E426: $00=N $40=W $80=S $C0=E; a left turn raises it, and
+#     ss_next_corner reads +4 for a queued left turn, -4 for a right
+#   $E432 jump: $80 = jump, $81 = spring launch
+#   $E433 exit-animation timer: starts on red contact, or ~347 frames after a
+#     board clear (when the emerald is awarded); special_stage stays 1 until
+#     ~650 (death) / ~1000 (clear) frames after the triggering event
+#
 # v4 — wall-targeted curriculum, on top of v3:
 #   - CAPTURE_AT extended past 90 (84/88/90/92/94/97/100) so the final
 #     ~12 cells finally get snapshotted; the Go-Explore ratchet gets a top.
@@ -25,11 +59,6 @@ from gymnasium import spaces
 #     skill (forgetting guard) and restart volume at the wall is already ample.
 #
 # v3 — self-curriculum restart pool (Go-Explore-lite), on top of v2.x
-#
-# Verified facts (see v2 header history):
-#   buffer $F000 row-major 32x32; raw RAM byte-swapped; row=(y+8)%32 col=x
-#   codes 0=empty 1=red 2=blue 3=bumper 4=ring, 10=transitional(->red)
-#   heading $E426 N/W/S/E quadrants; rot k=(4-(h>>6))&3; fade gate $E433
 #
 # Curriculum:
 #   - Crossing 30/40/.../90 TOTAL spheres snapshots emulator state into
@@ -52,7 +81,24 @@ CHAOS_EMERALD_REWARD    = 10000.0
 SUPER_EMERALD_REWARD    = 15000.0
 TIME_PENALTY            = 0.1
 
-SS_LOG_FILE = os.path.expanduser(os.environ.get("SS_LOG", "~/sonic-rl/ss_log.jsonl"))
+# Paths are relative to this file. The repo moved ~/sonic-rl -> ~/Projects/
+# sonic-rl, and every hardcoded ~/sonic-rl path broke without an error.
+PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+STATES_DIR  = os.path.join(PROJECT_DIR, 'states')
+SS_LOG_FILE = os.path.expanduser(
+    os.environ.get("SS_LOG", os.path.join(PROJECT_DIR, "ss_log.jsonl")))
+
+# ── Env version ──────────────────────────────────────────────────────────────
+#   SS_ENV_VERSION=2 (default) -> the 2026-09-29 fixes listed in the header.
+#   SS_ENV_VERSION=1           -> the pre-fix env, reproduced exactly. Every
+#                                 checkpoint trained before 2026-09-29
+#                                 (specialist, multistage v1-v5) saw v1 and
+#                                 must be run on v1: the shapes differ, and so
+#                                 would what a matching shape contains.
+ENV_VERSION = int(os.environ.get('SS_ENV_VERSION', '2'))
+if ENV_VERSION not in (1, 2):
+    raise ValueError(f'SS_ENV_VERSION must be 1 or 2, got {ENV_VERSION}')
+V2 = ENV_VERSION == 2
 
 # ── Observation shape (env-var driven; see OBSERVATION PRESETS below) ───────
 #   SS_USE_PIXELS=1  -> include the 84x84x3 pixel stream (pre-v4 obs).
@@ -66,9 +112,13 @@ SS_LOG_FILE = os.path.expanduser(os.environ.get("SS_LOG", "~/sonic-rl/ss_log.jso
 #                       (they are THE memorization handle). Default 1.
 #                       Set 0 to restore them (specialist / pre-multistage obs).
 #
-# OBSERVATION PRESETS (see PRESETS in train_ss_multistage.py):
-#   specialist  : SS_USE_PIXELS=1 SS_PATCH_R=5 SS_DROP_POSITION=0  -> 15 feats + pixels
-#   v4 / v5     : SS_USE_PIXELS=0 SS_PATCH_R=7 SS_DROP_POSITION=1  -> 11 feats, no pixels
+# OBSERVATION PRESETS (see RUNS in train_ss_multistage.py):
+#   specialist : SS_ENV_VERSION=1 SS_USE_PIXELS=1 SS_PATCH_R=5 SS_DROP_POSITION=0
+#                -> 15 feats, 4-channel grid, pixels
+#   v4 / v5    : SS_ENV_VERSION=1 SS_USE_PIXELS=0 SS_PATCH_R=7 SS_DROP_POSITION=1
+#                -> 11 feats, 4-channel grid
+#   v6         : SS_ENV_VERSION=2 SS_USE_PIXELS=0 SS_PATCH_R=7 SS_DROP_POSITION=1
+#                -> 10 feats, 5-channel grid
 #
 # NOT reproducible here (deliberate): the dead v1/v2/v3 multistage runs used
 # DROP_POSITION=1 with the position slots still present as CONSTANT ZEROS, i.e.
@@ -83,31 +133,45 @@ SS_LOG_FILE = os.path.expanduser(os.environ.get("SS_LOG", "~/sonic-rl/ss_log.jso
 USE_PIXELS    = os.environ.get('SS_USE_PIXELS', '0') == '1'
 IMG_SIZE      = 84
 
-GRID_BASE     = 0xF000
+# The layout lives at $F100-$F4FF. v1 read $F000-$F3FF with the row shifted by
+# 8: the same bytes for board rows 0-23, but rows 24-31 wrap onto $F000-$F0FF,
+# which is always zero. Kept only so v1 checkpoints see what they were fed.
+GRID_BASE     = 0xF100 if V2 else 0xF000
+GRID_ROW_OFF  = 0 if V2 else 8
 PATCH_R       = int(os.environ.get('SS_PATCH_R', '7'))
 PATCH_SIZE    = 2 * PATCH_R + 1
-GRID_CHANNELS = 4
+GRID_CHANNELS = 5 if V2 else 4      # v2 adds ch4 = spring
 
-ADDR_SPHERES  = 0xE438
-ADDR_X        = 0xE422
-ADDR_HEADING  = 0xE426
-ADDR_JUMPING  = 0xE432
-ADDR_FADE     = 0xE433
+ADDR_SPHERES    = 0xE438
+ADDR_X          = 0xE422
+ADDR_HEADING    = 0xE426
+ADDR_JUMPING    = 0xE432
+ADDR_EXIT_TIMER = 0xE433    # was ADDR_FADE: the death / clear exit animation
 
 HEADING_DELTA = {0: (0, -1), 1: (-1, 0), 2: (0, 1), 3: (1, 0)}  # (dx, dy)
+
+# ss_move_speed runs 4096 at the start to 8192 at top speed; v1 divided by
+# 4096 and clipped, so the feature read 1.0 for all normal running.
+SPEED_SCALE   = 8192.0 if V2 else 4096.0
 
 #   SS_STAGES=1,2        -> comma list of stage state files to sample on fresh
 #                           starts (default: single stage_1).
 DROP_POSITION = os.environ.get('SS_DROP_POSITION', '1') == '1'
-# 11 core features; +4 (sin/cos of x,y) at indices 2-5 only when position is kept.
-NUM_RAM_FEATURES = 11 if DROP_POSITION else 15
+# 11 core features (10 in v2, which drops total_progress); +4 (sin/cos of x,y)
+# at indices 2-5 only when position is kept.
+NUM_RAM_FEATURES = (11 if DROP_POSITION else 15) - (1 if V2 else 0)
 _STAGE_IDS    = [s for s in os.environ.get('SS_STAGES', '').split(',') if s.strip()]
-STAGE_FILES   = [os.path.expanduser(f'~/sonic-rl/states/curriculum_stage_{s.strip()}.state')
-                 for s in _STAGE_IDS]
+
+
+def stage_file(stage):
+    return os.path.join(STATES_DIR, f'curriculum_stage_{stage}.state')
+
+
+STAGE_FILES   = [stage_file(s.strip()) for s in _STAGE_IDS]
 
 # Curriculum config
 RESTART_PROB    = float(os.environ.get('SS_RESTART_PROB', '0.25'))
-POOL_DIR        = os.path.expanduser('~/sonic-rl/states/curriculum_pool')
+POOL_DIR        = os.path.join(STATES_DIR, 'curriculum_pool')
 CAPTURE_AT      = [30, 40, 50, 60, 70, 80, 84, 88, 90, 92, 94, 97, 100]
 POOL_PER_BUCKET = 40
 
@@ -123,20 +187,25 @@ _BUCKET_RE = re.compile(r's(\d+)_')
 
 
 class SpecialStageEnv(gym.Env):
-    """Special stage environment v3 — grid obs + self-curriculum restarts."""
+    """Special stage environment — grid obs + self-curriculum restarts."""
 
     metadata = {'render_modes': ['human', 'rgb_array']}
 
     def __init__(self, state_path=None):
         super().__init__()
 
+        self.state_path = state_path or stage_file(1)
+        # A missing state file used to fall through to the game's default
+        # start (Angel Island): 11-frame "deaths", no error, nothing learned.
+        missing = [f for f in (STAGE_FILES or [self.state_path])
+                   if not os.path.exists(f)]
+        if missing:
+            raise FileNotFoundError(
+                f'special-stage state file(s) not found: {missing}')
+
         self.base_env = stable_retro.make(
             game='SonicAndKnuckles3-Genesis-v0',
             use_restricted_actions=stable_retro.Actions.FILTERED
-        )
-
-        self.state_path = state_path or os.path.expanduser(
-            '~/sonic-rl/states/curriculum_stage_1.state'
         )
 
         self.action_space = spaces.Discrete(7)
@@ -165,7 +234,8 @@ class SpecialStageEnv(gym.Env):
         self.observation_space = spaces.Dict(obs_spaces)
 
         self._ram_swapped = None
-        self._original_grid = None
+        self._original_grids = {}     # stage -> its layout at a fresh start
+        self._cur_stage = 0
         self._reset_state()
 
     # ── RAM access ───────────────────────────────────────────────────────
@@ -201,6 +271,24 @@ class SpecialStageEnv(gym.Env):
     def _read_grid(self):
         return self._ram()[GRID_BASE: GRID_BASE + 0x400].reshape(32, 32)
 
+    @staticmethod
+    def _cell(x_raw, y_raw):
+        """(row, col) of a special-stage position in the _read_grid() array.
+        v2 rounds: a sphere is collected as Sonic crosses its half-cell
+        boundary, so the nearest cell is the one he is on. v1 floored."""
+        if V2:
+            return ((y_raw + 0x80) >> 8) % 32, ((x_raw + 0x80) >> 8) % 32
+        return ((y_raw >> 8) + GRID_ROW_OFF) % 32, (x_raw >> 8) % 32
+
+    @staticmethod
+    def _quadrant(heading):
+        """0=N 1=W 2=S 3=E. v2 rounds to the nearest quadrant, so a turn
+        flips it halfway through either way; v1 floored, which flipped at the
+        start of a right turn and at the end of a left one."""
+        if V2:
+            return ((heading + 0x20) >> 6) & 3
+        return (heading >> 6) & 3
+
     # ── Curriculum pool ──────────────────────────────────────────────────
 
     def _save_snapshot(self, bucket, total):
@@ -208,11 +296,16 @@ class SpecialStageEnv(gym.Env):
             os.makedirs(POOL_DIR, exist_ok=True)
             name = f"s{bucket:02d}_{os.getpid()}_{int(time.time()*1000) % 10**9}"
             path = os.path.join(POOL_DIR, name + '.state')
-            with open(path, 'wb') as f:
-                f.write(self.base_env.em.get_state())
+            # Meta first: restarts glob *.state, so a visible state always has
+            # its meta. stage/stage_total let a restart on a multistage run
+            # restore the right board, not assume stage 1's 102 spheres.
             with open(path + '.json', 'w') as f:
                 json.dump({'spheres': int(total),
-                           'speed_level': int(self.speed_level)}, f)
+                           'speed_level': int(self.speed_level),
+                           'stage': int(self._cur_stage),
+                           'stage_total': int(self._stage_total)}, f)
+            with open(path, 'wb') as f:
+                f.write(self.base_env.em.get_state())
             files = sorted(
                 glob.glob(os.path.join(POOL_DIR, f's{bucket:02d}_*.state')),
                 key=os.path.getmtime)
@@ -226,7 +319,13 @@ class SpecialStageEnv(gym.Env):
             pass
 
     def _maybe_capture(self, info):
-        total = 102 - int(info.get('blue_spheres_remaining', 102))
+        if RESTART_PROB <= 0:
+            return      # nothing reads the pool with restarts off
+        # Spheres collected on this board so far, restart-banked ones included.
+        # Was `102 - remaining`: on the 37-sphere board that read 65 at sphere 0
+        # and filed four junk snapshots at the start of every fresh episode.
+        remaining = int(info.get('blue_spheres_remaining', self._stage_total))
+        total = int(self._stage_total) - remaining
         while (self._capture_idx < len(CAPTURE_AT)
                and total >= CAPTURE_AT[self._capture_idx]):
             self._save_snapshot(CAPTURE_AT[self._capture_idx], total)
@@ -235,10 +334,11 @@ class SpecialStageEnv(gym.Env):
     def _rebuild_converted(self):
         """After a pool restore: cells originally blue that are now neither
         blue nor ring were converted to red by play before the snapshot."""
-        if self._original_grid is None or self._ram_swapped is None:
+        original = self._original_grids.get(self._cur_stage)
+        if original is None or self._ram_swapped is None:
             return
         grid = self._read_grid()
-        mask = ((self._original_grid == 2) & (grid != 2) & (grid != 4))
+        mask = ((original == 2) & (grid != 2) & (grid != 4))
         self._converted = set(
             (int(r), int(c)) for r, c in np.argwhere(mask))
 
@@ -263,7 +363,7 @@ class SpecialStageEnv(gym.Env):
 
     def _track_grid(self, info):
         ram = self._ram()
-        if int(ram[ADDR_FADE]) != 0:
+        if int(ram[ADDR_EXIT_TIMER]) != 0:
             self._prev_grid = None
             return
 
@@ -272,9 +372,7 @@ class SpecialStageEnv(gym.Env):
 
         x_raw = int(info.get('ss_x', 0))
         y_raw = int(info.get('ss_y', 0))
-        br = ((y_raw >> 8) + 8) % 32
-        bc = (x_raw >> 8) % 32
-        self._visited.add((br, bc))
+        self._visited.add(self._cell(x_raw, y_raw))
 
         heading = int(ram[ADDR_HEADING])
         speed = int(info.get('ss_move_speed', 0))
@@ -305,14 +403,15 @@ class SpecialStageEnv(gym.Env):
         if self._last_pose is None:
             return None
         x_raw, y_raw, heading, speed = self._last_pose
-        dx, dy = HEADING_DELTA[(heading >> 6) & 3]
+        dx, dy = HEADING_DELTA[self._quadrant(heading)]
         if speed < 0:
             dx, dy = -dx, -dy
-        br = ((y_raw >> 8) + 8) % 32
-        bc = (x_raw >> 8) % 32
-        ahead = (((y_raw + 128 * dy) >> 8) % 32 + 8) % 32, \
-                ((x_raw + 128 * dx) >> 8) % 32
-        return ((br, bc) in self._converted) or (ahead in self._converted)
+        here = self._cell(x_raw, y_raw)
+        if V2:
+            ahead = ((here[0] + dy) % 32, (here[1] + dx) % 32)
+        else:
+            ahead = self._cell(x_raw + 128 * dx, y_raw + 128 * dy)
+        return (here in self._converted) or (ahead in self._converted)
 
     # ── Grid observation ─────────────────────────────────────────────────
 
@@ -320,15 +419,14 @@ class SpecialStageEnv(gym.Env):
         grid = self._cur_grid if self._cur_grid is not None \
             else self._read_grid()
 
-        cx = (int(info.get('ss_x', 0)) >> 8) % 32
-        cr = ((int(info.get('ss_y', 0)) >> 8) + 8) % 32
+        cr, cx = self._cell(int(info.get('ss_x', 0)), int(info.get('ss_y', 0)))
 
         rows = np.arange(cr - PATCH_R, cr + PATCH_R + 1) % 32
         cols = np.arange(cx - PATCH_R, cx + PATCH_R + 1) % 32
         patch = grid[np.ix_(rows, cols)]
 
         heading = int(self._ram()[ADDR_HEADING])
-        k = (4 - (heading >> 6)) & 3
+        k = (4 - self._quadrant(heading)) & 3
         patch = np.rot90(patch, k)
 
         out = np.zeros((PATCH_SIZE, PATCH_SIZE, GRID_CHANNELS),
@@ -337,6 +435,11 @@ class SpecialStageEnv(gym.Env):
         out[..., 2] = (patch == 3)
         out[..., 3] = (patch == 4)
         known = (patch == 0) | (patch == 2) | (patch == 3) | (patch == 4)
+        if V2:
+            # springs are safe — they launch Sonic over several cells — and v1
+            # showed them in ch1 alongside red
+            out[..., 4] = (patch == 5)
+            known |= (patch == 5)
         out[..., 1] = ~known
         return out, heading
 
@@ -374,10 +477,10 @@ class SpecialStageEnv(gym.Env):
         super().reset(seed=seed)
         self.base_env.reset()
 
-        self._cur_stage = 0   # 0 = restart/single-state; fresh stage-pick sets 1/2/…
+        self._cur_stage = 0   # 0 = unknown; the stage pick / restart meta set it
 
         restart_file = None
-        if self._original_grid is not None and random.random() < RESTART_PROB:
+        if self._original_grids and random.random() < RESTART_PROB:
             files = glob.glob(os.path.join(POOL_DIR, '*.state'))
             if files:
                 restart_file = self._weighted_pick(files)
@@ -402,9 +505,9 @@ class SpecialStageEnv(gym.Env):
             # remember which stage this fresh episode is on, for per-stage logging
             m = re.search(r'curriculum_stage_(\d+)', load_path)
             self._cur_stage = int(m.group(1)) if m else 0
-            if os.path.exists(load_path):
-                with open(load_path, 'rb') as f:
-                    self.base_env.em.set_state(f.read())
+            # no exists() guard: a missing file must raise, not play Angel Island
+            with open(load_path, 'rb') as f:
+                self.base_env.em.set_state(f.read())
 
         self._reset_state()
 
@@ -412,22 +515,29 @@ class SpecialStageEnv(gym.Env):
         if self._ram_swapped is None:
             self._detect_swap(info)
 
+        rem = int(info.get('blue_spheres_remaining', 102))
         if restart_file:
             self._from_restart = True
-            rem = int(info.get('blue_spheres_remaining', 102))
-            self._restart_from = int(meta.get('spheres', max(0, 102 - rem)))
+            self._cur_stage = int(meta.get('stage', 0))
+            if 'stage_total' in meta:
+                # board size and banked depth, as recorded with the snapshot
+                self._stage_total = float(meta['stage_total'])
+                self._restart_from = max(0, int(meta['stage_total']) - rem)
+            else:
+                # pre-2026-09-29 snapshot: stage 1 only, a 102-sphere board
+                self._restart_from = int(meta.get('spheres', max(0, 102 - rem)))
+                # full board size = banked depth + what's left on the restored board
+                self._stage_total = float(self._restart_from + rem)
             self.speed_level = int(meta.get('speed_level', 0))
             self._capture_idx = sum(
                 1 for t in CAPTURE_AT if t <= self._restart_from)
             self._rebuild_converted()
-            # full board size = banked depth + what's left on the restored board
-            self._stage_total = float(self._restart_from + rem)
-        elif self._ram_swapped is not None and self._original_grid is None:
-            self._original_grid = self._read_grid().copy()
-
-        if not restart_file:
+        else:
             # fresh start: the first observed remaining IS this stage's total
-            self._stage_total = float(info.get('blue_spheres_remaining', 102))
+            self._stage_total = float(rem)
+            if (self._ram_swapped is not None
+                    and self._cur_stage not in self._original_grids):
+                self._original_grids[self._cur_stage] = self._read_grid().copy()
 
         return self._get_obs(frame, info), {}
 
@@ -476,9 +586,9 @@ class SpecialStageEnv(gym.Env):
         h_angle = (heading / 256.0) * 2.0 * np.pi
 
         # Per-stage normalization (stage_total is 102/127/118… set at reset),
-        # so features 0 and 8 are correct on every stage, not just stage 1.
+        # so feature 0 is correct on every stage, not just stage 1.
         total = self._stage_total if self._stage_total > 0 else 102.0
-        total_progress = (total - blue_remaining) / total   # true, incl. restart
+        total_progress = (total - blue_remaining) / total   # v1 only: 1 - f0
 
         # Absolute sin/cos position. THIS IS THE MEMORIZATION HANDLE
         # (cross-stage transfer ratio 0.06 with it, 0.75 without), so it is
@@ -498,12 +608,12 @@ class SpecialStageEnv(gym.Env):
                         np.sin(y_angle), np.cos(y_angle)]   # 4, 5
 
         feats = [
-            blue_remaining / total,                       #  0
-            np.clip(ss_move_speed / 4096.0, -1.0, 1.0),   #  1
-        ] + position + [                                  # (2-5 if kept)
+            blue_remaining / total,                             #  0
+            np.clip(ss_move_speed / SPEED_SCALE, -1.0, 1.0),    #  1
+        ] + position + [                                        # (2-5 if kept)
             float(self.speed_level) / 3.0,
             min(ss_speed_timer / 1800.0, 1.0),
-            total_progress,
+        ] + ([] if V2 else [total_progress]) + [
             np.sin(h_angle),
             np.cos(h_angle),
             ss_next_corner / 4.0,
@@ -547,8 +657,50 @@ class SpecialStageEnv(gym.Env):
         try:
             with open(SS_LOG_FILE, "a") as f:
                 f.write(json.dumps(entry) + "\n")
-        except Exception:
-            pass
+        except Exception as e:
+            # say so once: a run with no episode log can't be analyzed
+            if not getattr(self, '_log_warned', False):
+                self._log_warned = True
+                print(f'[special_stage_env] WARNING: cannot write episode log '
+                      f'{SS_LOG_FILE}: {e!r}', flush=True)
+
+    def _stage_emerald(self):
+        """The emerald a clear of this board awards: stages 1-7 are the Sonic 3
+        (chaos) boards, 8-14 the S&K (super) boards."""
+        if 1 <= self._cur_stage <= 7:
+            return 'chaos', CHAOS_EMERALD_REWARD
+        if 8 <= self._cur_stage <= 14:
+            return 'super', SUPER_EMERALD_REWARD
+        return None, 0.0
+
+    def _terminal_v2(self, reward, special):
+        """End the episode on the event, not when special_stage drops ~650
+        (death) or ~1000 (clear) frames later. The clear is checked first:
+        $E433 also starts during the clear's own exit sequence."""
+        exiting = (self._ram_swapped is not None
+                   and int(self._ram()[ADDR_EXIT_TIMER]) != 0)
+        left = special == 0 and self.steps > 10    # fallback, not seen first
+
+        if self._board_cleared:
+            emerald_type, emerald_reward = self._stage_emerald()
+            time_bonus = max(0.0, (SS_MAX_STEPS - self.steps)
+                             / SS_MAX_STEPS) * SS_TIME_BONUS_MAX
+            reward += SS_COMPLETION_BASE + time_bonus + emerald_reward
+            self._log_episode(success=True,
+                              emerald_type=emerald_type or "cleared")
+            return reward, True
+
+        if exiting or left:
+            n = self._spheres_collected   # this-episode only
+            penalty = SS_RED_SPHERE_BASE + SS_RED_SPHERE_SCALE * n + 500
+            reward -= penalty
+            self.ss_current_streak = 0
+            self._log_episode(success=False, emerald_type=None,
+                              death_at_sphere=n,
+                              own_trail=self._death_on_trail())
+            return reward, True
+
+        return reward, False
 
     def _compute_reward(self, info, game_terminated):
         reward = -TIME_PENALTY
@@ -587,7 +739,13 @@ class SpecialStageEnv(gym.Env):
         if blue_spheres == 0 and self._spheres_collected > 0:
             self._board_cleared = True
 
-        if special == 0 and self.steps > 10:
+        if V2:
+            reward, done = self._terminal_v2(reward, special)
+
+        elif special == 0 and self.steps > 10:
+            # v1: waits for the stage to exit, and compares the emerald count
+            # against LAST frame's — it changed ~660 frames earlier, so the
+            # emerald reward never paid. Kept verbatim for v1 checkpoints.
             emerald_gained = False
             emerald_type = None
             if chaos_em > self.prev_chaos_em:

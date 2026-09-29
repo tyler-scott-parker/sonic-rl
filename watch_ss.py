@@ -18,21 +18,24 @@ import time
 import traceback
 
 SCALE = 3
+HERE = os.path.dirname(os.path.abspath(__file__))
 
 _which = sys.argv[1] if len(sys.argv) > 1 else 'v5'
 if _which == 'specialist':
-    os.environ.update(SS_USE_PIXELS='1', SS_PATCH_R='5', SS_DROP_POSITION='0')
-    MODEL_PATH = './sonic_ss_model_v2.zip'
-    PKL_PATH = './sonic_ss_vecnormalize_v2.pkl'
+    # env v1: the specialist was trained before the 2026-09-29 env fixes
+    os.environ.update(SS_ENV_VERSION='1',
+                      SS_USE_PIXELS='1', SS_PATCH_R='5', SS_DROP_POSITION='0')
+    MODEL_PATH = os.path.join(HERE, 'sonic_ss_model_v2.zip')
+    PKL_PATH = os.path.join(HERE, 'sonic_ss_vecnormalize_v2.pkl')
 else:
-    _src = open('train_ss_multistage.py').read()
+    _src = open(os.path.join(HERE, 'train_ss_multistage.py')).read()
     _ns = {}
     exec(_src[_src.index('ALL_14 ='):_src.index('# ── Shared config')], _ns)
     if _which not in _ns['RUNS']:
         sys.exit(f"unknown run {_which!r}. Known: specialist, {', '.join(_ns['RUNS'])}")
     os.environ.update(_ns['RUNS'][_which]['obs'])
-    MODEL_PATH = f'./sonic_ss_multistage_{_which}.zip'
-    PKL_PATH = f'./sonic_ss_multistage_{_which}_vecnormalize.pkl'
+    MODEL_PATH = os.path.join(HERE, f'sonic_ss_multistage_{_which}.zip')
+    PKL_PATH = os.path.join(HERE, f'sonic_ss_multistage_{_which}_vecnormalize.pkl')
 
 import numpy as np                                            # noqa: E402
 import pygame                                                 # noqa: E402

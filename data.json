@@ -138,7 +138,7 @@
     "ss_next_corner": {
       "address": 16770090,
       "type": "|i1",
-      "comment": "$E42A — direction change at next checkerboard corner: -4=turn left, 0=straight, 4=turn right"
+      "comment": "$E42A — direction change queued for the next checkerboard corner: 4=turn left, 0=straight, -4=turn right (sign re-checked in the emulator 2026-09-29)"
     }
   }
 }

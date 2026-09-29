@@ -4,7 +4,7 @@ capture_stages.py — Mint special-stage entry savestates by hand.
 
 Navigate to each special stage (level-select cheat, or just play the giant
 rings), and tap S to dump the current frame to the next numbered
-~/sonic-rl/states/curriculum_stage_<N>.state. A full RAM snapshot
+states/curriculum_stage_<N>.state in this repo. A full RAM snapshot
 curriculum_stage_<N>.ram.bin is written alongside so find_stage_byte.py can
 later locate the stage-number address by diffing across captures.
 
@@ -31,7 +31,7 @@ import sys
 import pygame
 import stable_retro
 
-STATES_DIR  = os.path.expanduser('~/sonic-rl/states')
+STATES_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'states')
 GAME        = 'SonicAndKnuckles3-Genesis-v0'
 SCALE       = 3
 

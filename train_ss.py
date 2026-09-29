@@ -10,12 +10,12 @@ legible. Multistage runs live in train_ss_multistage.py.
     (the optimizer was running hot: approx_kl 0.05-0.09, clip_fraction ~0.5)
   - gamma 0.99 -> 0.997 the same way; a constructor edit is a NO-OP on resume
 
-Runs the pre-v4 observation (pixels + 11x11 patch + absolute position), which is
-what this checkpoint was trained on. The preset is pinned below — do NOT rely on
-the env defaults, which are the multistage ones.
+Runs the pre-v4 observation (pixels + 11x11 patch + absolute position) on env
+v1, which is what this checkpoint was trained on. The preset is pinned below —
+do NOT rely on the env defaults, which are the multistage ones (env v2).
 
 LAUNCH:
-  cd ~/sonic-rl && source venv/bin/activate
+  cd ~/Projects/sonic-rl && source venv/bin/activate
   nohup python3 train_ss.py > logs/ss_trainer.log 2>&1 &
   grep -m1 "Resuming" logs/ss_trainer.log     # shows the LIVE lr AND gamma
 """
@@ -24,6 +24,7 @@ import os
 
 # The specialist's observation preset. Must be set before special_stage_env is
 # imported (it reads its obs shape at import) and before SubprocVecEnv forks.
+os.environ.setdefault('SS_ENV_VERSION', '1')   # pre-2026-09-29 env, as trained
 os.environ.setdefault('SS_USE_PIXELS', '1')
 os.environ.setdefault('SS_PATCH_R', '5')
 os.environ.setdefault('SS_DROP_POSITION', '0')
@@ -44,9 +45,12 @@ except ImportError:
 from special_stage_env import SpecialStageEnv
 
 # ── Config ────────────────────────────────────────────────────────────────────
+HERE            = os.path.dirname(os.path.abspath(__file__))
 NUM_ENVS        = 8
-PKL             = 'sonic_ss_vecnormalize_v2.pkl'
-ZIP             = 'sonic_ss_model_v2'
+PKL             = os.path.join(HERE, 'sonic_ss_vecnormalize_v2.pkl')
+ZIP             = os.path.join(HERE, 'sonic_ss_model_v2')
+LOG_DIR         = os.path.join(HERE, 'logs_ss')
+CKPT_DIR        = os.path.join(HERE, 'checkpoints_ss')
 SAVE_FREQ       = 500_000
 TOTAL_STEPS     = 200_000_000
 RESUME_LR       = 5e-5          # cooled from 3e-4 for the mature phase
@@ -108,8 +112,8 @@ def make_env():
 if __name__ == '__main__':
     print(f'CUDA available: {torch.cuda.is_available()}')
 
-    os.makedirs('./logs_ss/', exist_ok=True)
-    os.makedirs('./checkpoints_ss/', exist_ok=True)
+    os.makedirs(LOG_DIR, exist_ok=True)
+    os.makedirs(CKPT_DIR, exist_ok=True)
 
     env = SubprocVecEnv([make_env() for _ in range(NUM_ENVS)])
 
@@ -128,7 +132,7 @@ if __name__ == '__main__':
             custom_objects={'learning_rate': RESUME_LR, 'gamma': RESUME_GAMMA},
         )
         print(f'Resuming from {ZIP} at {model.num_timesteps} steps, '
-              f'lr={model.learning_rate}')
+              f'lr={model.learning_rate} gamma={model.gamma}')
     else:
         model = RecurrentPPO(
             policy='MultiInputLstmPolicy',
@@ -148,20 +152,20 @@ if __name__ == '__main__':
                 enable_critic_lstm=True,
             ),
             verbose=1,
-            tensorboard_log='./logs_ss/',
+            tensorboard_log=LOG_DIR,
             device='auto'
         )
         print('Starting fresh SS model')
 
     checkpoint_callback = CheckpointCallback(
-        save_freq=100_000,
-        save_path='./checkpoints_ss/',
+        save_freq=100_000,      # callback calls: x NUM_ENVS = every 800K env steps
+        save_path=CKPT_DIR,
         name_prefix='sonic_ss',
         verbose=1,
     )
 
     autosave_callback = AutoSaveCallback(save_freq=SAVE_FREQ)
-    prune_callback = PruneCheckpointsCallback(checkpoint_dir='./checkpoints_ss/', keep=5)
+    prune_callback = PruneCheckpointsCallback(checkpoint_dir=CKPT_DIR, keep=5)
 
     from stable_baselines3.common.callbacks import CallbackList
     callbacks = CallbackList([checkpoint_callback, autosave_callback, prune_callback])

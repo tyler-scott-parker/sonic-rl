@@ -12,12 +12,19 @@ docstring told you to launch `train_ss_multistage_v3.py` and to
 env while writing to v5's log. A run is data, not a file.
 
 LAUNCH:
-  cd ~/sonic-rl && source venv/bin/activate
+  cd ~/Projects/sonic-rl && source venv/bin/activate
   python3 train_ss_multistage.py --list            # show runs + status
+  python3 smoke_stages.py v6                       # every board reads right?
   nohup python3 train_ss_multistage.py v6 > logs/ss_multistage_v6.log 2>&1 &
   nohup python3 train_ss_multistage.py v5 --resume > logs/ss_multistage_v5.log 2>&1 &
   grep -E "FRESH|Resuming|preset" logs/ss_multistage_v6.log
-  #   ^ MUST say "Starting FRESH ... (random weights)" for a new experiment.
+  #   ^ MUST say "Starting FRESH ... (random weights)" for a new experiment,
+  #     and the preset line shows the env version (v6 = env=v2).
+
+ENV VERSION: every run pins SS_ENV_VERSION in its preset. v1-v5 trained on
+env v1, which had the logic errors found 2026-09-29 (grid blind to board rows
+24-31, episodes ending ~670 frames after death, springs shown as red — see
+special_stage_env.py); they must stay on v1. v6 is the first run on env v2.
 
 RESUMING an existing run requires an explicit --resume. Without it the launcher
 REFUSES to start when a checkpoint for that name is already on disk — the exact
@@ -26,7 +33,7 @@ made the per-stage curve look like catastrophic interference.
 
 STOPPING — three ways, best first:
   1. GRACEFUL (recommended, loses NOTHING):
-         touch ~/sonic-rl/STOP_<run>
+         touch ~/Projects/sonic-rl/STOP_<run>
      The trainer notices within ~200 steps, saves model + VecNormalize, exits,
      then removes the sentinel so the next launch isn't instantly stopped.
   2. Ctrl-C / kill <parent PID>  -> signal handler saves, then exits.
@@ -58,20 +65,23 @@ ALL_14 = list(range(1, 15))
 RUNS = {
     'v1': dict(
         stages=[1, 2], lstm=512, lr=3e-4,
-        obs=dict(SS_USE_PIXELS='1', SS_PATCH_R='5', SS_DROP_POSITION='1'),
+        obs=dict(SS_ENV_VERSION='1',
+                 SS_USE_PIXELS='1', SS_PATCH_R='5', SS_DROP_POSITION='1'),
         result='DONE. Position-drop lifted transfer 0.06 -> 0.75 at 2 boards. '
                'NOT resumable: used the old 15-feat vector with 4 dead zeros.',
     ),
     'v2': dict(
         stages=[1, 2, 3, 4, 7], lstm=512, lr=3e-4,
-        obs=dict(SS_USE_PIXELS='1', SS_PATCH_R='5', SS_DROP_POSITION='1'),
+        obs=dict(SS_ENV_VERSION='1',
+                 SS_USE_PIXELS='1', SS_PATCH_R='5', SS_DROP_POSITION='1'),
         result='DONE, negative. Trained boards converged (~0.76 ratio) but '
                'zero-shot on held-out 5,6 = 0.09 -> MEMORIZED the 5-board set. '
                'NOT resumable (old 15-feat vector).',
     ),
     'v3': dict(
         stages=ALL_14, lstm=512, lr=3e-4,
-        obs=dict(SS_USE_PIXELS='1', SS_PATCH_R='5', SS_DROP_POSITION='1'),
+        obs=dict(SS_ENV_VERSION='1',
+                 SS_USE_PIXELS='1', SS_PATCH_R='5', SS_DROP_POSITION='1'),
         result='DONE. Plateaued SHALLOW at ~3.0-3.5% mean %board. LR cool '
                '3e-4->1e-4 bought 3.0->3.5 then re-plateaued -> read as a '
                'capacity/representation ceiling, not an optimization one. '
@@ -79,26 +89,43 @@ RUNS = {
     ),
     'v4': dict(
         stages=ALL_14, lstm=512, lr=3e-4,
-        obs=dict(SS_USE_PIXELS='0', SS_PATCH_R='7', SS_DROP_POSITION='1'),
+        obs=dict(SS_ENV_VERSION='1',
+                 SS_USE_PIXELS='0', SS_PATCH_R='7', SS_DROP_POSITION='1'),
         result='DONE (~64M steps). Observation redesign: pixels dropped, patch '
                'widened 11x11->15x15, 4 dead RAM feats removed. Baseline to '
-               "beat was v3's ~3.5% plateau.",
+               "beat was v3's ~3.5% plateau. Env v1: blind to board rows "
+               '24-31, ~43% of steps were post-death animation.',
     ),
     'v5': dict(
         stages=ALL_14, lstm=1024, lr=2e-4,
-        obs=dict(SS_USE_PIXELS='0', SS_PATCH_R='7', SS_DROP_POSITION='1'),
+        obs=dict(SS_ENV_VERSION='1',
+                 SS_USE_PIXELS='0', SS_PATCH_R='7', SS_DROP_POSITION='1'),
         result='Ran to ~19M steps (2026-07-30). 2x LSTM capacity vs v4 — THE '
-               'variable under test. lr trimmed 3e-4->2e-4 for the bigger net.',
+               'variable under test. lr trimmed 3e-4->2e-4 for the bigger net. '
+               'Env v1 (same bugs as v4); superseded by v6.',
+    ),
+    'v6': dict(
+        stages=ALL_14, lstm=512, lr=3e-4,
+        obs=dict(SS_ENV_VERSION='2',
+                 SS_USE_PIXELS='0', SS_PATCH_R='7', SS_DROP_POSITION='1'),
+        result='NOT STARTED. First run on env v2 (2026-09-29 fixes: whole '
+               'board visible, rounded patch centre, spring channel, episode '
+               'ends on contact, a clear pays its emerald). Hyperparameters = '
+               'v4 on purpose, so v6 vs v4 isolates the env fixes.',
     ),
 }
 
 # ── Shared config (identical across every run so far — keep it that way) ──────
 NUM_ENVS       = 8
 AUTOSAVE_STEPS = 100_000       # worst-case loss on a hard kill
-CKPT_EVERY     = 100_000       # rolling checkpoints (pruned to last KEEP_CKPTS)
+CKPT_EVERY     = 800_000       # rolling checkpoints, in env steps (pruned to
+                               # last KEEP_CKPTS). Was written as 100_000, but
+                               # CheckpointCallback counts calls (NUM_ENVS steps
+                               # each), so it was always 800K; now said so.
 KEEP_CKPTS     = 5
 TOTAL_STEPS    = 150_000_000   # nominal; autosaves + resumes cleanly
-HOME           = os.path.expanduser('~/sonic-rl')
+HOME           = os.path.dirname(os.path.abspath(__file__))   # the repo, wherever
+                                                              # it lives (it moved)
 
 PPO_KWARGS = dict(
     n_steps=1024, batch_size=256, n_epochs=4,
@@ -108,10 +135,12 @@ LSTM_KWARGS = dict(n_lstm_layers=2, shared_lstm=False, enable_critic_lstm=True)
 
 
 def paths(run):
+    # absolute, so launching from another directory can't miss an existing
+    # checkpoint and silently start "fresh"
     return dict(
-        zip=f'sonic_ss_multistage_{run}',
-        pkl=f'sonic_ss_multistage_{run}_vecnormalize.pkl',
-        ckpt_dir=f'./checkpoints_ss_multistage_{run}/',
+        zip=os.path.join(HOME, f'sonic_ss_multistage_{run}'),
+        pkl=os.path.join(HOME, f'sonic_ss_multistage_{run}_vecnormalize.pkl'),
+        ckpt_dir=os.path.join(HOME, f'checkpoints_ss_multistage_{run}'),
         stop=os.path.join(HOME, f'STOP_{run}'),
         log=os.path.join(HOME, f'ss_log_{run}.jsonl'),
         prefix=f'sonic_ss_ms_{run}',
@@ -119,18 +148,18 @@ def paths(run):
 
 
 def list_runs():
-    print(f'{"run":6} {"stages":8} {"lstm":6} {"lr":8} {"obs":34} status')
+    print(f'{"run":6} {"stages":8} {"lstm":6} {"lr":8} {"obs":41} status')
     for name, cfg in RUNS.items():
         p = paths(name)
         obs = cfg['obs']
-        obs_s = (f"pix={obs['SS_USE_PIXELS']} patch_r={obs['SS_PATCH_R']} "
-                 f"droppos={obs['SS_DROP_POSITION']}")
+        obs_s = (f"env=v{obs['SS_ENV_VERSION']} pix={obs['SS_USE_PIXELS']} "
+                 f"patch_r={obs['SS_PATCH_R']} droppos={obs['SS_DROP_POSITION']}")
         if os.path.exists(f"{p['zip']}.zip"):
             status = f"checkpoint on disk ({os.path.getsize(p['zip'] + '.zip') / 1e6:.0f} MB)"
         else:
             status = 'no checkpoint'
         print(f'{name:6} {len(cfg["stages"]):<8} {cfg["lstm"]:<6} '
-              f'{cfg["lr"]:<8.0e} {obs_s:34} {status}')
+              f'{cfg["lr"]:<8.0e} {obs_s:41} {status}')
         print(f'       {cfg["result"]}')
 
 
@@ -145,8 +174,9 @@ ap.add_argument('--resume', action='store_true',
                 help='continue an existing checkpoint. Required whenever one is '
                      'on disk, so a "fresh" launch can never silently resume.')
 ap.add_argument('--restart-prob', type=float, default=0.0,
-                help='Go-Explore restart probability. 0 for multistage runs — '
-                     'the pool is stale Stage-1-only states.')
+                help='Go-Explore restart probability. 0 for every multistage '
+                     'run so far. Snapshots now record their stage, so '
+                     'multistage restarts are possible — but untested.')
 args = ap.parse_args()
 
 if args.list or not args.run:
@@ -292,8 +322,10 @@ if __name__ == '__main__':
     print(f"  {CFG['result']}")
     print(f"  stages       : {CFG['stages']}")
     print(f"  lstm_hidden  : {CFG['lstm']}   lr: {CFG['lr']:.0e}")
-    print(f"  obs preset   : pixels={special_stage_env.USE_PIXELS} "
-          f"patch={special_stage_env.PATCH_SIZE}x{special_stage_env.PATCH_SIZE} "
+    print(f"  obs preset   : env=v{special_stage_env.ENV_VERSION} "
+          f"pixels={special_stage_env.USE_PIXELS} "
+          f"patch={special_stage_env.PATCH_SIZE}x{special_stage_env.PATCH_SIZE}"
+          f"x{special_stage_env.GRID_CHANNELS} "
           f"ram_feats={special_stage_env.NUM_RAM_FEATURES}")
     print(f"  restart_prob : {args.restart_prob}")
     print(f"  log          : {P['log']}")
@@ -315,7 +347,15 @@ if __name__ == '__main__':
         sys.exit(f"\n--resume passed but no {P['zip']}.zip exists. Drop --resume "
                  f"to start {args.run} fresh.\n")
 
-    os.makedirs('./logs_ss/', exist_ok=True)
+    # Checked here as well as in the env: a worker that dies on a missing file
+    # surfaces as an opaque SubprocVecEnv pipe error.
+    missing = [f for f in special_stage_env.STAGE_FILES if not os.path.exists(f)]
+    if missing:
+        sys.exit('\nREFUSING TO LAUNCH: stage state file(s) missing:\n  '
+                 + '\n  '.join(missing) + '\n')
+
+    tb_dir = os.path.join(HOME, 'logs_ss')
+    os.makedirs(tb_dir, exist_ok=True)
     os.makedirs(P['ckpt_dir'], exist_ok=True)
 
     # a stale sentinel from a previous stop would kill this run instantly
@@ -353,7 +393,7 @@ if __name__ == '__main__':
             learning_rate=CFG['lr'],
             policy_kwargs=dict(lstm_hidden_size=CFG['lstm'], **LSTM_KWARGS),
             verbose=1,
-            tensorboard_log='./logs_ss/',
+            tensorboard_log=tb_dir,
             device='auto',
             **PPO_KWARGS,
         )
@@ -361,7 +401,9 @@ if __name__ == '__main__':
 
     callbacks = CallbackList([
         GracefulStopCallback(P['stop']),              # checked first
-        CheckpointCallback(save_freq=CKPT_EVERY, save_path=P['ckpt_dir'],
+        # save_freq counts callback calls, and each call is NUM_ENVS env steps
+        CheckpointCallback(save_freq=max(CKPT_EVERY // NUM_ENVS, 1),
+                           save_path=P['ckpt_dir'],
                            name_prefix=P['prefix'], verbose=1),
         AutoSaveCallback(save_freq=AUTOSAVE_STEPS),
         PruneCheckpointsCallback(checkpoint_dir=P['ckpt_dir']),

@@ -13,26 +13,31 @@ Usage:
   python3 ms_analyze.py                 # last 20000 labeled fresh episodes
   python3 ms_analyze.py 40000           # bigger window
   python3 ms_analyze.py 20000 --chunks 8    # sparkline resolution
-  python3 ms_analyze.py 20000 --run v5       # resolves ~/sonic-rl/ss_log_v5.jsonl
+  python3 ms_analyze.py 20000 --run v5       # resolves ss_log_v5.jsonl in this repo
   python3 ms_analyze.py 20000 --log <path>  # explicit path
 """
 import os, sys, json
 from collections import defaultdict
 
+HERE = os.path.dirname(os.path.abspath(__file__))
 args = sys.argv[1:]
 
 # Every run writes its OWN log (SS_LOG, set by the trainer from the run name).
 # Forgetting --log made analyzers read the GHOST of a previous run — it bit the
 # v2 and v3 launches. `--run v5` resolves the path so there is nothing to forget.
-LOG = os.path.expanduser("~/sonic-rl/ss_log.jsonl")
+LOG = os.path.join(HERE, "ss_log.jsonl")
 if "--run" in args:
-    LOG = os.path.expanduser(f"~/sonic-rl/ss_log_{args[args.index('--run') + 1]}.jsonl")
+    LOG = os.path.join(HERE, f"ss_log_{args[args.index('--run') + 1]}.jsonl")
 if "--log" in args:
     LOG = os.path.expanduser(args[args.index("--log") + 1])
 if not os.path.exists(LOG):
     sys.exit(f"no such log: {LOG}\n"
              f"  pass --run <name> (e.g. --run v5) or --log <path>")
-N = next((int(a) for a in args if a.isdigit()), 20000)
+# the window is the first bare number that isn't a flag's value — `--chunks 8
+# 20000` used to analyze the last 8 episodes
+_flag_vals = {i + 1 for i, a in enumerate(args) if a in ("--run", "--log", "--chunks")}
+N = next((int(a) for i, a in enumerate(args) if a.isdigit() and i not in _flag_vals),
+         20000)
 CH = 6
 if "--chunks" in args:
     try:
@@ -140,7 +145,7 @@ flat = sum(1 for _, st, *_ in stats if trend_of(series.get(st, [])) == "flat")
 down = sum(1 for _, st, *_ in stats if trend_of(series.get(st, [])) == "DOWN")
 print(f"  mean %board: {sum(pcts)/len(pcts):5.1f}    "
       f"spread: {min(pcts):.1f}% – {max(pcts):.1f}%    "
-      f"ratio(min/max): {min(pcts)/max(pcts):.2f}")
+      f"ratio(min/max): {min(pcts)/max(pcts) if max(pcts) > 0 else 0.0:.2f}")
 print(f"  trend: {climbing} climbing / {flat} flat / {down} regressing "
       f"(of {len(stats)} stages)")
 print(f"  total wins: {sum(wins.values())}    "

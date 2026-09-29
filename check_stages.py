@@ -4,7 +4,7 @@ blue-sphere count + a RAM fingerprint, and flag any duplicates."""
 import os, sys, glob, hashlib
 import stable_retro
 
-STATES = os.path.expanduser('~/sonic-rl/states')
+STATES = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'states')
 GAME = 'SonicAndKnuckles3-Genesis-v0'
 
 env = stable_retro.make(game=GAME,

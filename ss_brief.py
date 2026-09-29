@@ -11,11 +11,13 @@ Usage:
   python3 ss_brief.py analyze_curriculum.py    # runs the curriculum analyzer
   RECENT=20 python3 ss_brief.py                # show last 20 curve rows
 
-Tip: alias it.   alias ssb='python3 ~/sonic-rl/ss_brief.py'
+Tip: alias it.   alias ssb='python3 ~/Projects/sonic-rl/ss_brief.py'
 """
 import os, re, sys, subprocess
 
 target = sys.argv[1] if len(sys.argv) > 1 else "analyze_ss.py"
+if not os.path.exists(target):          # a bare name means the one in this repo
+    target = os.path.join(os.path.dirname(os.path.abspath(__file__)), target)
 passthru = sys.argv[2:]
 RECENT = int(os.environ.get("RECENT", "10"))
 

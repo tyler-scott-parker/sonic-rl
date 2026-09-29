@@ -2,7 +2,7 @@
 """
 SS log analyzer v2 — tracks special stage training progress.
 Usage: python3 analyze_ss.py [logfile]
-Default: ~/sonic-rl/ss_log.jsonl
+Default: ss_log.jsonl in this repo
 
 New in v2 (sections appear only if the log contains the fields):
   - Recent form window (last 500 eps) vs all-time
@@ -19,7 +19,7 @@ import json
 import os
 import sys
 
-LOG_FILE = os.path.expanduser("~/sonic-rl/ss_log.jsonl")
+LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ss_log.jsonl")
 RECENT_N = 500
 
 

@@ -11,23 +11,26 @@
 #   - it's crash-looping (too many restarts too fast) -> bails loudly
 #
 # USAGE
-#   chmod +x ~/sonic-rl/watchdog.sh
-#   nohup ~/sonic-rl/watchdog.sh v5 > ~/sonic-rl/logs/watchdog_v5.log 2>&1 &
+#   chmod +x ~/Projects/sonic-rl/watchdog.sh
+#   nohup ~/Projects/sonic-rl/watchdog.sh v6 > ~/Projects/sonic-rl/logs/watchdog_v6.log 2>&1 &
 #
 #   # stop the watchdog (does NOT stop training):
-#   touch ~/sonic-rl/WATCHDOG_OFF
+#   touch ~/Projects/sonic-rl/WATCHDOG_OFF
 #
 #   # stop BOTH cleanly:
-#   touch ~/sonic-rl/WATCHDOG_OFF && touch ~/sonic-rl/STOP_v5
+#   touch ~/Projects/sonic-rl/WATCHDOG_OFF && touch ~/Projects/sonic-rl/STOP_v6
 #
 #   # see what it's been doing:
-#   cat ~/sonic-rl/logs/watchdog_v5.log
+#   cat ~/Projects/sonic-rl/logs/watchdog_v6.log
 #
 # Was watchdog_v3.sh, hardcoded to one run. The run name is now the argument —
 # the config drift that pattern caused is documented in train_ss_multistage.py.
 
 set -u
-cd "$HOME/sonic-rl" || exit 1
+# run from the repo this script lives in (it moved ~/sonic-rl -> ~/Projects/sonic-rl,
+# and a hardcoded path left this exiting on its first line)
+cd "$(dirname "$(readlink -f "$0")")" || exit 1
+REPO="$PWD"
 
 RUN="${1:-}"
 if [[ -z "$RUN" ]]; then
@@ -37,8 +40,8 @@ fi
 
 TRAINER="train_ss_multistage.py"
 TRAIN_LOG="logs/ss_multistage_${RUN}.log"
-WD_OFF="$HOME/sonic-rl/WATCHDOG_OFF"
-STOP_FILE="$HOME/sonic-rl/STOP_${RUN}"
+WD_OFF="$REPO/WATCHDOG_OFF"
+STOP_FILE="$REPO/STOP_${RUN}"
 
 POLL_SECS=120           # how often to check
 MAX_RESTARTS=20         # total restarts before giving up

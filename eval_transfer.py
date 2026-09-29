@@ -18,6 +18,9 @@ boards but not at 5.
 Safe: CPU inference (no VRAM contention), no training, no log writes, touches no
 checkpoints. Run it while training is stopped, or alongside it.
 
+Every checkpoint runs on the env version it was trained on (the run's preset,
+or --preset): the specialist and v1-v5 on env v1, v6 onward on env v2.
+
 Usage:
   python3 eval_transfer.py v5                      # v5's preset+stages, 40 eps
   python3 eval_transfer.py v5 --holdout 5,6 -n 80  # zero-shot on held-out boards
@@ -28,25 +31,33 @@ import os
 import sys
 import argparse
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+
 ap = argparse.ArgumentParser()
 ap.add_argument('run', nargs='?',
                 help='run name from train_ss_multistage.RUNS — supplies the '
                      'checkpoint, the obs preset and the trained stage list')
 ap.add_argument('--model', help='checkpoint basename (overrides the run\'s)')
 ap.add_argument('--preset', choices=['specialist', 'multistage'],
-                help='obs preset when not using a run name '
-                     '(specialist = pixels + 11x11 patch + position)')
+                help='obs preset when not using a run name (specialist = '
+                     'pixels + 11x11 patch + position; multistage = the v4/v5 '
+                     'obs; both env v1). For v6+ pass the run name.')
 ap.add_argument('--stages', help='comma list of stages to evaluate')
 ap.add_argument('--holdout', help='comma list of NEVER-TRAINED stages; reported '
                                   'separately as the zero-shot number')
 ap.add_argument('-n', '--episodes', type=int, default=40,
                 help='fresh episodes per stage (default 40)')
-ap.add_argument('--max-steps', type=int, default=6000)
+ap.add_argument('--max-steps', type=int, default=None,
+                help="per-episode cap (default: the env's own, 18000). The old "
+                     "default of 6000 cut off 45%% of the specialist's "
+                     "60+-sphere runs and understated its average.")
 args = ap.parse_args()
 
 PRESETS = {
-    'specialist': dict(SS_USE_PIXELS='1', SS_PATCH_R='5', SS_DROP_POSITION='0'),
-    'multistage': dict(SS_USE_PIXELS='0', SS_PATCH_R='7', SS_DROP_POSITION='1'),
+    'specialist': dict(SS_ENV_VERSION='1',
+                       SS_USE_PIXELS='1', SS_PATCH_R='5', SS_DROP_POSITION='0'),
+    'multistage': dict(SS_ENV_VERSION='1',
+                       SS_USE_PIXELS='0', SS_PATCH_R='7', SS_DROP_POSITION='1'),
 }
 
 # The obs preset must be set before special_stage_env is imported.
@@ -54,7 +65,7 @@ MODEL = args.model
 trained = [int(s) for s in args.stages.split(',')] if args.stages else None
 
 if args.run:
-    src = open('train_ss_multistage.py').read()
+    src = open(os.path.join(HERE, 'train_ss_multistage.py')).read()
     ns = {}
     exec(src[src.index('ALL_14 ='):src.index('# ── Shared config')], ns)
     if args.run not in ns['RUNS']:
@@ -70,19 +81,21 @@ if not MODEL:
     sys.exit('need a run name or --model')
 trained = trained or [1, 2, 3]
 holdout = [int(s) for s in args.holdout.split(',')] if args.holdout else []
-VECNORM = (f'{MODEL}_vecnormalize.pkl' if MODEL.startswith('sonic_ss_multistage')
-           else 'sonic_ss_vecnormalize_v2.pkl')
+VECNORM = os.path.join(HERE, f'{MODEL}_vecnormalize.pkl'
+                       if MODEL.startswith('sonic_ss_multistage')
+                       else 'sonic_ss_vecnormalize_v2.pkl')
 
 import pickle                                              # noqa: E402
 import numpy as np                                          # noqa: E402
 import special_stage_env as sse                             # noqa: E402
 from sb3_contrib import RecurrentPPO                        # noqa: E402
 
+MAX_STEPS = args.max_steps or sse.SS_MAX_STEPS
 sse.RESTART_PROB = 0.0          # honest fresh starts, no restart scaffolding
 env = sse.SpecialStageEnv()
 env._log_episode = lambda *a, **k: None      # never touch the training log
 
-model = RecurrentPPO.load(MODEL, device='cpu')
+model = RecurrentPPO.load(os.path.join(HERE, MODEL), device='cpu')
 
 
 def load_obs_normalizer(path):
@@ -108,14 +121,16 @@ def load_obs_normalizer(path):
 prep, norm_note = load_obs_normalizer(VECNORM)
 
 print(f'policy: {MODEL}  gamma={model.gamma}  obs_norm={norm_note}')
-print(f'preset: pixels={sse.USE_PIXELS} patch={sse.PATCH_SIZE}x{sse.PATCH_SIZE} '
+print(f'preset: env=v{sse.ENV_VERSION} pixels={sse.USE_PIXELS} '
+      f'patch={sse.PATCH_SIZE}x{sse.PATCH_SIZE}x{sse.GRID_CHANNELS} '
       f'ram_feats={sse.NUM_RAM_FEATURES}')
-print(f'{args.episodes} fresh episodes per stage, stochastic, no training\n')
+print(f'{args.episodes} fresh episodes per stage, stochastic, no training, '
+      f'cap {MAX_STEPS} steps\n')
 
 
 def run_stage(sid, n):
     """n honest fresh episodes on one board. Returns (collected[], board_total)."""
-    sf = os.path.expanduser(f'~/sonic-rl/states/curriculum_stage_{sid}.state')
+    sf = sse.stage_file(sid)
     if not os.path.exists(sf):
         return None, 0
     env.state_path = sf
@@ -125,7 +140,7 @@ def run_stage(sid, n):
         out = env.reset()
         obs = out[0] if isinstance(out, tuple) else out
         lstm, ep_start, done, steps = None, np.ones((1,), bool), False, 0
-        while not done and steps < args.max_steps:
+        while not done and steps < MAX_STEPS:
             a, lstm = model.predict(prep(obs), state=lstm,
                                     episode_start=ep_start, deterministic=False)
             ep_start = np.zeros((1,), bool)
