@@ -1,5 +1,5 @@
 # Sonic 3 & Knuckles Special Stage RL — Full Project Context
-*Last updated: 2026-08-19 (consolidation pass — see "Project layout" below)*
+*Last updated: 2026-09-29 (logic-error review → env v2, v6 defined — see "What Changed 2026-09-29")*
 
 ---
 
@@ -17,12 +17,14 @@ Spheres special stages in Sonic 3 & Knuckles. Long arc: one agent that plays all
 ### How we work together (important — don't get this wrong)
 - **Two channels, and they differ.** In the *web chat* you have NO filesystem
   access: deliver code via `present_files`, he downloads and moves it into
-  `~/sonic-rl/` himself. In **Claude Code** you are running *on* his machine
-  in `~/sonic-rl` with real tools — read and edit files directly, and run things
-  in `venv`. Everything below about file swaps applies to the web-chat channel.
+  `~/Projects/sonic-rl/` himself. In **Claude Code** you are running *on* his
+  machine in `~/Projects/sonic-rl` with real tools — read and edit files
+  directly, and run things in `venv`. Everything below about file swaps applies
+  to the web-chat channel. (The repo moved from `~/sonic-rl` on 2026-08-25;
+  every path in the code is now relative to the repo.)
 - **After any file swap, confirm it landed** before launching:
-  `grep -n "<new symbol>" ~/sonic-rl/<file>.py`. This has bitten repeatedly —
-  running stale code and then debugging a bug that was already fixed.
+  `grep -n "<new symbol>" ~/Projects/sonic-rl/<file>.py`. This has bitten
+  repeatedly — running stale code and then debugging a bug that was already fixed.
 - **For small edits, prefer an in-place heredoc patch** he can paste into the
   terminal over a full-file download. Much less friction, no file-move step.
 - **File attachments from Tyler often arrive EMPTY** in this interface. If an
@@ -32,17 +34,23 @@ Spheres special stages in Sonic 3 & Knuckles. Long arc: one agent that plays all
   back when a plan is expensive or uninterpretable; propose the cheap test first.
   That discipline has repeatedly saved days of wasted compute.
 
-### Current state (2026-08-19)
-- **Nothing is training right now.** v5 (1024-LSTM capacity test, all 14 boards)
-  ran to **19.5M steps on 2026-07-30** and is stopped, not finished. Resume with
-  `python3 train_ss_multistage.py v5 --resume`.
-- v5 at 19.5M: mean 2.6% of board, spread 0.8–4.8%, ratio(min/max) 0.16,
-  3 climbing / 8 flat / 3 regressing, 0 wins. Far too early to read against
-  v3's ~3.5% plateau — that took far more than 19M steps to reach.
-- **The project was consolidated on 2026-08-19** (see "Project layout"). One env,
-  one multistage trainer, one of each tool; `attic/` holds what was retired;
-  the repo is now under **git**, so no more `_v4` / `.pre_win_fix` filenames.
-- Analyzer: **`ms_analyze.py --run v5`** (the `--run` shortcut resolves the
+### Current state (2026-09-29)
+- **Nothing is training right now.** A logic-error review on 2026-09-29 found
+  bugs in the env that shaped EVERY run so far (specialist, v1–v5) — see
+  "What Changed 2026-09-29" right below this block. They are fixed as
+  **env v2** on git branch **`env-v2-fixes`** (not yet merged to master).
+- **v6 is defined but not started:** all 14 boards, v4's hyperparameters
+  (512 LSTM, lr 3e-4) on env v2, so v6 vs v4 isolates the env fixes. Launch:
+  `python3 smoke_stages.py v6` (must say ALL 14 READ CORRECTLY), then
+  `nohup python3 train_ss_multistage.py v6 > logs/ss_multistage_v6.log 2>&1 &`.
+- **Do not resume v5.** It trained on env v1; it is superseded by v6. v5 at
+  19.5M: mean 2.6% of board, spread 0.8–4.8%, 0 wins.
+- Every run pins `SS_ENV_VERSION` in its preset: v1–v5 and the specialist stay
+  on env v1 (bit-identical to the old env, so old checkpoints still evaluate
+  and watch correctly); v6 onward uses env v2.
+- The project was consolidated on 2026-08-19 (see "Project layout") and is
+  under **git**: branch or commit, never `_v6.py` copies.
+- Analyzer: **`ms_analyze.py --run v6`** (the `--run` shortcut resolves the
   per-run log, so it can no longer read the ghost of a previous run).
 
 ### What to expect / what to watch
@@ -64,6 +72,18 @@ uniform competence across boards), `stages covered: N/14`, and
    raw indexing reads wrong bytes and caused multiple false trails.
 5. **All 14 stages captured** and backed up in `states/backup_captures/`.
    No further capture work needed.
+6. **Board layout is `$F100–$F4FF`** (32x32, row-major). A position's cell is
+   `row=((y+$80)>>8)%32, col=((x+$80)>>8)%32` — ROUNDED, because a sphere is
+   collected as Sonic crosses its half-cell boundary. The old "buffer $F000,
+   row=(y+8)%32" was only right for board rows 0–23 (see 2026-09-29).
+7. **`$E433` is the exit-animation timer**, not a fade flag: it starts on the
+   frame Sonic touches red, or ~347 frames after a board clear (the frame the
+   emerald is awarded). `special_stage` only drops to 0 ~650 (death) / ~1000
+   (clear) frames later.
+8. **Cell code 5 = yellow spring** (safe; launches Sonic over several cells;
+   `$E432` reads `$81` during a spring launch, `$80` during a normal jump).
+9. **`ss_next_corner`**: +4 = left turn queued, −4 = right (data.json had it
+   backwards). Heading `$E426`: `$00`=N `$40`=W `$80`=S `$C0`=E; left raises it.
 
 ### The open research question
 The v2 5-board run **memorized the training set** (zero-shot on held-out boards
@@ -84,7 +104,11 @@ unlimited boards — a far stronger test set than holding out 2 of 14.
   with the main-game agent; eventually a main-game (non-special-stage) generalist —
   a much harder problem Tyler has been thinking ahead about.
 
-### ⧉ OBSERVATION AUDIT — items 1 & 2 SHIPPED in v4; item 3 still open
+### ⧉ OBSERVATION AUDIT — items 1 & 2 SHIPPED in v4; item 3 answered 2026-09-29
+**Item 3 answer:** the grid did NOT encode jumpers distinctly. Springs (code 5)
+fell into ch1 alongside red, so every spring looked like a death cell (292
+spring cells on boards 8–14, 171 on stage 9). Env v2 gives them ch4.
+
 Evidence found 2026-07-26 that the observation stack carries fat. Do these ONE
 AT A TIME on a fresh run, measuring each — never bundle (confounds attribution),
 never mid-experiment (changing obs shape breaks resume + confounds the cool).
@@ -134,6 +158,82 @@ honest way to know what's load-bearing — intuition can't tell you.
 fresh chat will confidently reason from an old version.
 (`COMMANDS_v3.md` is retired: the launch/stop/resume commands now live in the
 docstring of `train_ss_multistage.py`, which cannot drift away from the code.)
+
+---
+
+## What Changed 2026-09-29 — logic-error review → env v2 (branch `env-v2-fixes`)
+
+A full read of the code plus emulator probes against the 14 captured states.
+Every number below was measured, not inferred. Items 2–6 shaped the training
+signal of every run so far: the specialist and v1–v5 results above were all
+produced on a partly blind, late-terminating env.
+
+1. **The repo move broke every path, silently.** The project moved
+   `~/sonic-rl` → `~/Projects/sonic-rl` (2026-08-25) and ~20 hardcoded paths did
+   not follow. A missing stage file fell through to the game's default start
+   (Angel Island Act 1): 11-frame "deaths" at −2500 and no episode log (its
+   directory didn't exist). `train_ss_multistage.py v5 --resume` would have
+   trained on that and autosaved over v5. **Fixed:** paths are repo-relative, a
+   missing state file raises, the trainer refuses to launch without every stage
+   file, and a failing log write warns.
+2. **The grid read the wrong memory for 8 of 32 rows.** The layout is at
+   `$F100–$F4FF` (its blue count equals the game's counter on all 14 boards).
+   The env read `$F000–$F3FF` with `row=(y+8)%32` — right for board rows 0–23,
+   but rows 24–31 wrapped onto always-zero RAM. 284 of 1,328 blue spheres (39%
+   on stage 1) and whole red walls were invisible, and boards 2, 10, 11, 14
+   start Sonic inside the blind rows. With pixels and position dropped, v4/v5
+   had no other way to see them. (Hidden fraction vs v5 %board correlates only
+   +0.11, so how much of the plateau this explains is for v6 to show.)
+3. **Deaths registered ~11 s late.** The episode ended when `special_stage`
+   dropped, 651–678 frames after red contact (~1000 after a clear). **~44% of all
+   v4/v5 env steps were dead animation**, and the death penalty reached the fatal
+   action discounted by γ^675: 0.13 at γ=0.997 and **0.001 at 0.99**, so during
+   the specialist's long γ=0.99 phase the explicit death penalty was effectively
+   invisible. That is probably the real reason the 0.99→0.997 change helped
+   (~100× more visible penalty), more than the lookahead story.
+4. **Springs looked exactly like red** (code 5 in ch1). See audit item 3.
+5. **The emerald bonus never paid.** The emerald count rises ~347 frames after
+   the clear; v1 compared it with the previous frame's count only on the final
+   frame, ~660 frames later. All logged wins say `cleared`.
+6. **The patch centre floored instead of rounding.** Pickup happens at the
+   half-cell boundary (x = `..80`), so the centre sat a cell behind on S/E
+   headings and a cell ahead on N/W for half of every cell — breaking the "same
+   situation → same patch" invariance the pixel drop relied on. The heading
+   quadrant had the same flaw (a right turn rotated the patch at its start, a
+   left turn at its end).
+7. Smaller: `_maybe_capture` assumed 102 spheres (the 37-sphere board filed four
+   junk snapshots on its first step, even with restarts off, and snapshots
+   carried no stage); feature 1 `speed/4096` saturated at base speed (max is
+   8192); feature 4 `total_progress` is exactly `1 − feature 0`;
+   `eval_transfer --max-steps 6000` cut off 45% of the specialist's 60+-sphere
+   runs; `ms_analyze.py --chunks 8 …` took 8 as the window; rolling checkpoints
+   were every 800K steps, not the documented 100K.
+
+**What env v2 changes** (`SS_ENV_VERSION=2`, the default): grid from `$F100`;
+rounded cell and heading quadrant; 5-channel grid (ch4 = spring); the episode
+ends on the red-contact frame or the clear frame (a clear pays completion + time
+bonus + its emerald: chaos for stages 1–7, super for 8–14); speed feature /8192;
+`total_progress` dropped (10 RAM features). **`SS_ENV_VERSION=1` reproduces the
+old env bit-for-bit** (checked over 8,690 steps under both the v5 and the
+specialist presets: identical observations, rewards, dones and logs), and every
+pre-v6 preset pins it.
+
+**Verified:** `smoke_stages.py v6` now also checks that the board's blue count
+equals the game's counter and that the episode ends on the exact exit frame (all
+14 pass). On every pickup the sphere was directly ahead in the patch one frame
+earlier, on all four headings. One frame before a death the patch shows the red
+cell ahead (env v1 showed empty floor). A 4-minute v6 training smoke ran clean
+(median episode 380 steps, vs 1,102 for v5's first 104 episodes).
+
+**Still open — deliberately not in v6 (reward design, its own experiment):**
+`VecNormalize(clip_reward=10)` with the saved return std (~710) caps any raw
+reward above ~7,100. The death penalty `2500 + 2000n` passes that at n ≥ 3 (31% of
+v5 deaths; about a fifth of v5 episodes came out net positive), and in env v2 the
+clear step (last sphere + completion + emerald) is capped too. So the "net −2500
+death" invariant is not what PPO optimizes — and the invariant itself makes every
+death's undiscounted return identical no matter how many spheres were collected.
+Decide it on purpose: raise or remove the clip, pre-scale the rewards, or accept a
+fixed death penalty.
 
 ---
 
@@ -283,7 +383,7 @@ The prior run was stuck: frontier frozen at 94, fresh-avg eroding, entropy floor
 
 **Things deliberately NOT done (and why):**
 - No more lr/gamma/penalty fiddling — parametric levers are ruled out for *this* wall (it's an exploration-frontier problem, now correctly targeted by the curriculum).
-- **Red channel was considered and rejected.** Earlier claim that "the agent can't see red" was WRONG and was corrected. In `_grid_patch`, red (code 1) and transitional (code 10) fall through the `~known` catch-all into channel 1 ("unknown"), so the agent *does* have a danger signal — it's just mislabeled and conflated with transitional. A dedicated red channel is a marginal disambiguation, not a fix for blindness, and it would break clean resume (GRID_CHANNELS 4→5). The 37% trail-death rate is therefore more likely a control/reaction-distance problem at high speed than a perception one. If a perception lever is ever justified, the better experiment is a **wider patch** (more lookahead cells at Speed 4–8), not a new channel — and only if the frontier genuinely plateaus.
+- **Red channel was considered and rejected.** Earlier claim that "the agent can't see red" was WRONG and was corrected. In `_grid_patch`, red (code 1) and transitional (code 10) fall through the `~known` catch-all into channel 1 ("unknown"), so the agent *does* have a danger signal — it's just mislabeled and conflated with transitional. A dedicated red channel is a marginal disambiguation, not a fix for blindness, and it would break clean resume (GRID_CHANNELS 4→5). The 37% trail-death rate is therefore more likely a control/reaction-distance problem at high speed than a perception one. If a perception lever is ever justified, the better experiment is a **wider patch** (more lookahead cells at Speed 4–8), not a new channel — and only if the frontier genuinely plateaus. *[2026-09-29: two facts undercut this reasoning — springs (code 5) also landed in ch1, and env v1 read board rows 24–31 from the wrong memory, so red there was invisible and deaths there could never be classified as trail deaths (the 37% was measured blind). Both fixed in env v2.]*
 - **Bouncer-penalty experiment (VERY EARLY, pre-grid-patch, minimal RAM) — superseded, do NOT re-add.** Long ago, before the grid patch existed and before we had much RAM data, we experimented with giving a **negative reward when the agent hit a bouncer sphere**. Theory: if the policy is memorizing the whole board as a route, one bouncer bump scrambles that memorized map, and any blue/red spheres grabbed after the bump become noise that harms the memorization — so penalize bouncers to discourage the disruption. This was an early, indirect swing at memorization *before* we understood the mechanism. **Superseded:** Step 1 later traced memorization to the **absolute position encoding**, which the multistage runs drop directly (`SS_DROP_POSITION=1`) — the root-cause fix, vs. the bouncer penalty's symptom-level one. The blind-agent conditions that made bouncers so catastrophic (no local layout view) also no longer hold now that the grid patch feeds a heading-rotated local patch. **Live version of the concern still valid:** bouncers (yellow/white) are a plausible *memorization-fragility point* on specific boards — a bounce is a high-variance transition that's hard to memorize a route through. Right response is NOT to re-add the penalty; it's to watch for per-board plateaus (esp. bouncer-heavy boards) and, if one stalls, prefer a wider perception patch / curriculum concentration over a reward hack. (Note: `speed_level` logging traces back to this era of hazard/speed diagnosis.)
 - **WHY the bouncer penalty actively BACKFIRED (the concrete failure, not just "it didn't help"):** bumper corridors exist across many maps. When Sonic enters one he **oscillates rapidly back and forth between the bumpers**, and a per-bump negative reward **stacks a penalty on every bounce** — so one entry into a corridor produced a *cascade* of tens of penalties from essentially a single event Sonic couldn't easily control. Two failure effects: (1) reward-magnitude explosion uncorrelated with any single decision (penalty ∝ corridor length / bounce-loop duration = noise, not signal — wrecks credit assignment); (2) the safest learnable response became "avoid the whole bumper region," which on dense boards means refusing to traverse areas needed to collect spheres. The hack meant to improve bumper *handling* instead taught bumper *avoidance* of large playfield regions.
 - **General lesson (design principle):** **per-EVENT penalties are dangerous when the event can repeat rapidly from a single situation** (bumper oscillation, wall-grinding, any bounce loop). A per-contact penalty becomes an uncontrolled cascade. Prefer penalizing the **outcome** (death, net progress lost) over the **contact** — which is what the current reward structure already does by leaning on the death penalty rather than hazard-contact penalties. Keep it that way.
@@ -332,31 +432,37 @@ Written down *before* the data, to read the same way later:
 **n_steps=1024, batch_size=256, n_epochs=4, clip_range=0.1, gae_lambda=0.95**
 **LSTM hidden size is per-run:** 512 through v4, **1024 in v5** (the capacity test).
 
-**Observations (Dict) — shape is per-run, set by `SS_USE_PIXELS` / `SS_PATCH_R` /
-`SS_DROP_POSITION`. Current default (v4/v5) is `{ram: 11, grid: 15×15×4}` — NO
-pixels.** The pre-v4 shape, described below, is what the specialist still uses:
+**Observations (Dict) — shape is per-run, set by `SS_ENV_VERSION` / `SS_USE_PIXELS` /
+`SS_PATCH_R` / `SS_DROP_POSITION`. Current default (env v2, v6) is
+`{ram: 10, grid: 15×15×5}` — NO pixels. v4/v5 (env v1) are `{ram: 11, grid: 15×15×4}`.**
+The pre-v4 shape, described below, is what the specialist still uses (on env v1):
 - `pixels` — 84×84 RGB (NatureCNN). **Dropped from v4 on** (see "Why drop pixels").
-- `ram` — 11 stage-agnostic features; +4 sin/cos absolute-position features at
-  indices **2-5** when `SS_DROP_POSITION=0` (specialist only) → 15 total.
+- `ram` — 11 stage-agnostic features (10 in env v2, which drops `total_progress`
+  = 1 − feature 0); +4 sin/cos absolute-position features at indices **2-5**
+  when `SS_DROP_POSITION=0` (specialist only) → 15 total.
   Position keeps that historical slot deliberately: a reordered vector would let
   an old checkpoint load with matching shapes but permuted inputs — a silent
   failure, unlike a shape mismatch.
-- `grid` — local heading-rotated patch, PATCH_SIZE=11 pre-v4 / **15 from v4**, GRID_CHANNELS=4:
+- `grid` — local heading-rotated patch, PATCH_SIZE=11 pre-v4 / **15 from v4**,
+  GRID_CHANNELS=4 (env v1) / **5 (env v2)**. Env v1 reads it from the wrong
+  memory for board rows 24–31 and floors the centre; see 2026-09-29.
   - ch0 = blue (code 2)
-  - ch1 = "unknown" = `~known` — **also where red (1) and transitional (10) land**; functionally a danger channel, mislabeled
+  - ch1 = "unknown" = `~known` — **red (1) and transitional (10) land here**
+    (and in env v1 also springs, code 5); functionally a danger channel
   - ch2 = bumper (code 3)
   - ch3 = ring (code 4)
+  - ch4 = spring (code 5) — env v2 only
 
 **Action space:** Discrete (all button combinations)
 
 ### Cell codes (special-stage grid)
-`0=empty  1=red  2=blue  3=bumper  4=ring  10=transitional(→red)`
+`0=empty  1=red  2=blue  3=bumper  4=ring  5=spring  10=transitional(→red)`
 
 ### Reward Structure
 - Per step: small time penalty
 - Blue sphere: large positive (≈ +2000-scale)
-- Death: scaled on *this-episode* collections so net death ≈ **−2500 regardless of depth** (the net-negative-death invariant). Because the penalty scales on this-episode spheres only and restarts grant zero reward for handed-in spheres, a restart-from-88 that dies at 94 gets the same clean "collect more before dying" gradient as a fresh death. Reward plumbing is already correct for restarts — no change needed.
-- Chaos emerald / completion: large bonus + time bonus
+- Death: scaled on *this-episode* collections so net death ≈ **−2500 regardless of depth** (the net-negative-death invariant). Because the penalty scales on this-episode spheres only and restarts grant zero reward for handed-in spheres, a restart-from-88 that dies at 94 gets the same clean "collect more before dying" gradient as a fresh death. **Caveats found 2026-09-29:** env v1 paid it 651–678 frames after contact (discounted to 0.13 at γ=0.997); env v2 pays it on contact. And the `clip_reward=10` in VecNormalize caps it once n ≥ 3, so the invariant is not what PPO actually sees — open, see "What Changed 2026-09-29".
+- Chaos emerald / completion: large bonus + time bonus. Env v1 never paid the emerald part (see 2026-09-29); env v2 pays completion + time bonus + the stage's emerald on the clear frame.
 
 ---
 
@@ -377,7 +483,7 @@ consolidation pass. It was Stage-1-only and unused by every multistage run
 (`SS_RESTART_PROB=0` throughout). The mechanism below is intact in the env — a
 future curriculum run just rebuilds the pool from scratch.
 
-**Why it works (Monte-Carlo confirmed before running):** on a pool shaped like the real one (shallow buckets saturated, deep ones sparse), uniform sampling gives mean restart depth ~55.8 (matches the real ~52); depth-weighting pulls it to ~81 on day one (renormalizing onto the deepest populated buckets) and climbs toward ~90 as deep buckets fill. `POOL_PER_BUCKET=40`, `POOL_DIR=~/sonic-rl/states/curriculum_pool`.
+**Why it works (Monte-Carlo confirmed before running):** on a pool shaped like the real one (shallow buckets saturated, deep ones sparse), uniform sampling gives mean restart depth ~55.8 (matches the real ~52); depth-weighting pulls it to ~81 on day one (renormalizing onto the deepest populated buckets) and climbs toward ~90 as deep buckets fill. `POOL_PER_BUCKET=40`, `POOL_DIR=states/curriculum_pool` (in the repo).
 
 **Restart-pool stats trajectory:** avg restart depth 52 → 57 (climbing); frontier 94 (frozen 13k+ eps) → 96 → 98 → 99 → 101.
 
@@ -397,7 +503,7 @@ Entropy is floored (~-1.1 to -1.35) and we are **deliberately not fighting it.**
 - **A stale on-disk checkpoint makes a "fresh" trainer silently RESUME.** `if os.path.exists(f'{ZIP}.zip'): load` is correct logic but bites when a partial run left a checkpoint behind. Before any fresh run, confirm no `{ZIP}.zip`/`.pkl` exists (move them aside), and **check the startup line says `Starting FRESH ... (random weights)`, not `Resuming`.** (2026-07-02: v2 resumed a 1M-step partial, looked like catastrophic interference in the curve.)
 - **sed-deriving a script leaves stale print strings.** Replacing `v1→v2` in filenames doesn't touch log messages like `"Resuming multistage v1"` — which then actively misleads debugging. After a sed-derive, grep the print strings too.
 - **The `--curve` (per-1000) view is truth; the cumulative ratio can lie.** `stage_split.py`'s top-line ratio averages over the whole window — during a config change (or a resumed/contaminated run) it reports the ghost of earlier episodes and hides a current collapse. Always read the per-1000 trend rows.
-- **All runs shared one `ss_log.jsonl` → analyzers read the GHOST of previous runs.** Bit us twice (v2 launch, v3 launch). FIXED: env now honors `SS_LOG` env var, so each run gets its own log (`SS_LOG=~/sonic-rl/ss_log_v3.jsonl`). Always pass `--log` to `ms_analyze.py`.
+- **All runs shared one `ss_log.jsonl` → analyzers read the GHOST of previous runs.** Bit us twice (v2 launch, v3 launch). FIXED: env now honors `SS_LOG` env var, so each run gets its own log (the trainer sets `ss_log_<run>.jsonl` in the repo). Use `ms_analyze.py --run <name>`.
 - **`_cur_stage` ordering footgun (fixed):** init it at the TOP of `reset()` and set during stage-pick — do NOT init in `_reset_state()`, which runs AFTER the stage-pick and clobbers it back to 0. (Symptom: log showed `stage:0` with correct `stage_total`.)
 
 ### Found in the 2026-08-19 consolidation pass
@@ -406,6 +512,13 @@ Entropy is floored (~-1.1 to -1.35) and we are **deliberately not fighting it.**
 - **Two probes that silently ran unnormalized.** `transfer_probe.py` and `zeroshot_test.py` both wrapped their `VecNormalize.load()` in a bare `except: pass`. It was ALWAYS failing — stable_retro allows one emulator per process, and the load built a second one. Harmless here only because every trainer sets `norm_obs=False`. `eval_transfer.py` now reads the pickle directly and says which case applies.
 - **`transfer_probe.py` set `env.state_path` but not `STAGE_FILES`.** With `SS_STAGES` set, the env would still random-pick a stage on reset, so "run 60 episodes on stage 2" could silently sample other boards. `eval_transfer.py` pins both.
 - **There is no main-game trainer on disk.** `train.py` was a stale copy of the SS specialist trainer. The main-game model and `coordinator.py` survive; the training script does not.
+
+### Found in the 2026-09-29 review
+- **A "verified fact" can be half-verified.** The `$F000, row=(y+8)%32` grid mapping was checked where Sonic happened to be (board rows 0–23); the wrap for rows 24–31 was never tested, and for months a quarter of every board was invisible. Verify a mapping over its WHOLE range, against an independent count — `smoke_stages.py` now asserts the grid's blue count equals the game's counter.
+- **Silent fallbacks turn a broken setup into a "healthy" run.** A missing state file loaded Angel Island; a failing log write was swallowed. Both are loud now. After the repo move, `~/sonic-rl` paths failed exactly this way.
+- **Check when the episode actually ends, not just that it does.** Waiting for `special_stage` to drop added ~670 dead frames per death — 44% of all v4/v5 samples, and a γ^675 discount on the death penalty.
+- **Old checkpoints stay on the env they were trained on.** `SS_ENV_VERSION=1` reproduces the pre-fix env bit-for-bit; every pre-v6 preset pins it. Feeding a v1 checkpoint the fixed grid would load fine and silently change its inputs.
+- **`coordinator.py` (main game) cannot run as-is:** `SS_STREAK_MULTIPLIER` and `STUCK_SECONDS` are referenced but never defined, its special-stage failure penalty waits on a `terminated` that the scenario only raises at lives == 0, and its `CURRICULUM_STATES[2]` now points at special stage 2. Untouched — the main game is paused.
 
 ---
 
@@ -479,7 +592,7 @@ branch or commit instead.
 ### Active files
 | file | what it is |
 |---|---|
-| `special_stage_env.py` | THE env. Observation shape is env-var driven: `SS_USE_PIXELS`, `SS_PATCH_R`, `SS_DROP_POSITION`. Absorbed `special_stage_env_v4.py`. |
+| `special_stage_env.py` | THE env. Env-var driven: `SS_ENV_VERSION` (1 = the pre-2026-09-29 env, bit-identical, for old checkpoints; 2 = fixed, default), `SS_USE_PIXELS`, `SS_PATCH_R`, `SS_DROP_POSITION`. Absorbed `special_stage_env_v4.py`. |
 | `train_ss_multistage.py` | THE multistage trainer. Takes a **run name**; `RUNS` holds every run's stages, obs preset, hyperparameters and result. |
 | `train_ss.py` | The single-board specialist trainer (`sonic_ss_model_v2`, PAUSED, control). Pins the specialist obs preset itself. |
 | `smoke_stages.py` | Pre-launch check that the env reads each stage. Asserts against the **live** obs shape, so it covers every preset. Absorbed `smoke_all14.py` + `smoke_v4.py`. |
@@ -527,26 +640,29 @@ Commands live in the trainer's docstring too, where they cannot drift from the c
 
 ### Multistage runs
 ```bash
-cd ~/sonic-rl && source venv/bin/activate
+cd ~/Projects/sonic-rl && source venv/bin/activate
 
-python3 train_ss_multistage.py --list          # every run: config, result, checkpoint status
+python3 train_ss_multistage.py --list          # every run: config, env version, result, checkpoint
 
-# resume the stopped v5 run (19.5M steps)
-nohup python3 train_ss_multistage.py v5 --resume > logs/ss_multistage_v5.log 2>&1 &
-
-# a NEW experiment: add an entry to RUNS, then
+# launch v6 (env v2, v4's hyperparameters) — smoke it first
+python3 smoke_stages.py v6
 nohup python3 train_ss_multistage.py v6 > logs/ss_multistage_v6.log 2>&1 &
-grep -E "FRESH|Resuming|preset" logs/ss_multistage_v6.log   # MUST say "Starting FRESH"
+grep -E "FRESH|Resuming|preset" logs/ss_multistage_v6.log   # MUST say "Starting FRESH", preset env=v2
+
+# resume it later
+nohup python3 train_ss_multistage.py v6 --resume >> logs/ss_multistage_v6.log 2>&1 &
+
+# a NEW experiment: add an entry to RUNS (pin SS_ENV_VERSION in its obs preset)
 
 # --resume is REQUIRED whenever a checkpoint exists, so a "fresh" launch can
 # never silently resume a partial (the bug that faked catastrophic interference
 # on the v2 launch). Launching without it refuses, loudly.
 
 # stop gracefully (loses nothing):
-touch ~/sonic-rl/STOP_v5
+touch ~/Projects/sonic-rl/STOP_v6
 
 # keep it alive across crashes:
-nohup ./watchdog.sh v5 > logs/watchdog_v5.log 2>&1 &
+nohup ./watchdog.sh v6 > logs/watchdog_v6.log 2>&1 &
 ```
 
 ### Before launching — verify the env reads every board
@@ -557,18 +673,19 @@ python3 smoke_stages.py v6 --stages 1,2 # quick check
 
 ### Reading results
 ```bash
-python3 ms_analyze.py 20000 --run v5    # one row per board, sorted hardest-first
-python3 ms_analyze.py 40000 --run v5 --chunks 8
+python3 ms_analyze.py 20000 --run v6    # one row per board, sorted hardest-first
+python3 ms_analyze.py 40000 --run v6 --chunks 8
 # Watch: ratio(min/max) near 1.0 = uniform competence; "N climbing / M flat";
 # stages covered. Don't over-read before ~20,000 episodes.
 ```
 
 ### Transfer / zero-shot (the generalization question)
 ```bash
-python3 eval_transfer.py v5 --holdout 5,6 -n 80        # zero-shot on unseen boards
+python3 eval_transfer.py v6 --holdout 5,6 -n 80        # zero-shot (needs a run trained WITHOUT 5,6)
 python3 eval_transfer.py --model sonic_ss_model_v2 \
-        --preset specialist --stages 1,2,3             # the specialist probe
+        --preset specialist --stages 1,2,3             # the specialist probe (env v1)
 # transfer ratio: 0.06 (specialist, memorized) -> 0.75 (2-stage) -> 0.09 (5-stage holdout)
+# (all measured on env v1 with a 6000-step cap; the cap is now the env's own 18000)
 ```
 
 ### Specialist run (PAUSED — baseline/control, preserve sonic_ss_model_v2)
@@ -580,7 +697,7 @@ python3 ss_brief.py                          # condensed specialist analyzer
 
 ### Watch it play
 ```bash
-python3 watch_ss.py v5           # or: python3 watch_ss.py specialist
+python3 watch_ss.py v6           # or: v5 / specialist (each runs on its own env version)
 ```
 
 ### Stage capture (complete — kept for re-capture)
@@ -597,9 +714,9 @@ python3 check_stages.py          # verify all 14 distinct
 
 2. **Verify, don't assume, that an intervention applied.** The gamma change was believed-done for an entire prior run but never actually took (constructor edit on a resumed model = no-op). One unverified `sed` cost a wrong "horizon ruled out" conclusion. Always read the hyperparameter off the live model.
 
-3. **gamma=0.99 was too myopic for endgame planning** (~1-sphere lookahead). 0.997 (~3–4 spheres) is appropriate for threading the final cells through a red-trail-saturated board.
+3. **gamma=0.99 was too myopic for endgame planning** (~1-sphere lookahead). 0.997 (~3–4 spheres) is appropriate for threading the final cells through a red-trail-saturated board. *[2026-09-29 reinterpretation: env v1 paid the death penalty ~670 frames after contact, so at γ=0.99 it was discounted to 0.1% — effectively invisible — and at 0.997 to 13%. The change mostly made death visible.]*
 
-4. **The agent CAN see red** (red/transitional → grid channel 1). Earlier "it's blind" claim was wrong. Trail deaths (37%, flat) are more likely control/reaction-distance at high speed than perception. The candidate perception lever, if ever needed, is a wider patch, not a red channel — and both break clean resume, so neither fires without a confirmed plateau.
+4. **The agent CAN see red** (red/transitional → grid channel 1) — *except in board rows 24–31, which env v1 read from the wrong memory; and springs showed up as red too. Both fixed in env v2 (2026-09-29).* Earlier "it's blind" claim was wrong. Trail deaths (37%, flat) are more likely control/reaction-distance at high speed than perception. The candidate perception lever, if ever needed, is a wider patch, not a red channel — and both break clean resume, so neither fires without a confirmed plateau.
 
 5. **Two LSTM layers + sin/cos absolute position encoding was the right backbone for a SINGLE stage — but the position encoding is the MEMORIZATION HANDLE, and it must be dropped for multi-stage.** VALIDATED 2026-06-30: the specialist's cross-stage transfer ratio was ~0.06 (pure memorization); zeroing ram features 2-5 (`SS_DROP_POSITION=1`) lifted it to ~0.75 (generalizing). The full-resolution absolute `ss_x`/`ss_y` fingerprint let the LSTM map position→action per-board instead of reading the stage-agnostic local grid patch. For any multi-stage run: position dropped (or coarsened — Option B, untested).
 
