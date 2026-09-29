@@ -52,6 +52,9 @@ Spheres special stages in Sonic 3 & Knuckles. Long arc: one agent that plays all
   under **git**: branch or commit, never `_v6.py` copies.
 - Analyzer: **`ms_analyze.py --run v6`** (the `--run` shortcut resolves the
   per-run log, so it can no longer read the ghost of a previous run).
+- **Learning from Tyler's play** (branch **`demo-learning`**, stacked on
+  `env-v2-fixes`): record a run with `python3 record_demo.py 1`, then
+  `python3 train_ss_multistage.py d1`. See "Learning from Tyler's play" below.
 
 ### What to expect / what to watch
 14 boards split episodes 14 ways, so per-stage numbers come SLOWLY.
@@ -97,6 +100,9 @@ wanted, S&K's standalone Blue Spheres mode procedurally generates effectively
 unlimited boards — a far stronger test set than holding out 2 of 14.
 
 ### Likely next steps
+- Record a stage-1 demo and run `d1`; read `demo_progress.py --run d1`. The
+  question: fresh-start clears of stage 1 (the specialist never got one in
+  326M steps), and play that beats the demo.
 - Periodically read `ms_analyze.py`; judge whether all 14 climb together.
 - If boards stall near the floor → board-specific difficulty; investigate what
   they share (v2 had this with stage 7).
@@ -234,6 +240,51 @@ death" invariant is not what PPO optimizes — and the invariant itself makes ev
 death's undiscounted return identical no matter how many spheres were collected.
 Decide it on purpose: raise or remove the clip, pre-scale the rewards, or accept a
 fixed death penalty.
+
+---
+
+## Learning from Tyler's play (demos) — branch `demo-learning`
+
+**Goal:** the agent learns from Tyler's recorded runs AND improves on them, so it
+never copies his inputs. It only starts episodes from states his runs passed
+through; the game's reward decides what good play is. His routing gets reused
+where it works, his mistakes don't get learned, and it can find better routes.
+
+**Recording:** `python3 record_demo.py <stage>` (50% speed by default; `--speed 25`
+for hard boards). Arrows turn/advance, Z/X/C/Space jump, **Backspace rewinds ~2 s**
+(hold to keep going), P pause, 1–4 set speed, Enter saves, R restarts, Esc quits;
+a gamepad works too. He plays with exactly the agent's 7 actions, so every frame is
+a move the agent has. Slow motion and rewind don't change what's recorded: the demo
+is one clean full-speed input sequence. A run that dies is still useful. Saving
+replays the inputs through the training env and confirms they reproduce the run.
+Demos land in `demos/stageN_<timestamp>.npz` — inputs + metadata only, with the
+start state pinned by SHA1 (no ROM data, so they're safe to commit; re-capturing
+a stage makes its old demos refuse to load rather than replay wrong).
+
+**How training uses them — the backward curriculum (Salimans & Chen 2018):** a
+share of episodes (`demo_prob`) start from a checkpoint along a demo (one every
+30 frames, lazily rebuilt in each worker by replaying the demo — nothing on
+disk). The start point begins near the END of the demo and moves one checkpoint
+toward the stage start whenever ≥25% of the last 16–32 episodes from it collected
+at least as many spheres as the demo did from there (`DemoCurriculumCallback`).
+At 0% the agent plays the stage from the start, measured against the whole run.
+Verified: from any start point, replaying the demo's own remaining inputs
+reproduces its ending to the frame, so episodes really start on the demo's states.
+
+**Running it:** `python3 train_ss_multistage.py d1` — stage 1, demos `stage1_*`,
+75% of episodes from demos, env v2, v6's hyperparameters. It refuses to launch
+until a stage-1 demo exists, and re-verifies each demo before training. Progress:
+`python3 demo_progress.py --run d1` (start point, match rate and sphere margin
+vs. the demo, then fresh-start play vs. the whole run). The curriculum state
+persists in `sonic_ss_multistage_d1_demos.json`, so `--resume` keeps it. More
+boards: record them and add a RUNS entry with their `demos` patterns.
+
+**Improving beyond the demo:** the bar to move on is only "match", but the reward
+keeps paying for more spheres and faster clears; the margin column shows where the
+agent beats the run. For boards Tyler can't finish, a run that dies still works —
+episodes that start near his death point push the agent past it. In a 4-minute
+smoke test on a scripted 8-sphere demo, the start point walked 93% → 78% and the
+agent out-collected the demo from each start (margin +0.9 to +2.9).
 
 ---
 
@@ -698,6 +749,13 @@ python3 ss_brief.py                          # condensed specialist analyzer
 ### Watch it play
 ```bash
 python3 watch_ss.py v6           # or: v5 / specialist (each runs on its own env version)
+```
+
+### Learning from your play
+```bash
+python3 record_demo.py 1               # play stage 1 (slow-mo + rewind), Enter saves to demos/
+python3 train_ss_multistage.py d1      # backward curriculum from your stage-1 run(s)
+python3 demo_progress.py --run d1      # catching up with you? beating you?
 ```
 
 ### Stage capture (complete — kept for re-capture)

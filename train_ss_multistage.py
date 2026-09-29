@@ -26,6 +26,15 @@ env v1, which had the logic errors found 2026-09-29 (grid blind to board rows
 24-31, episodes ending ~670 frames after death, springs shown as red — see
 special_stage_env.py); they must stay on v1. v6 is the first run on env v2.
 
+LEARNING FROM YOUR PLAY: record a run with `python3 record_demo.py <stage>`
+(slow motion + rewind; it lands in demos/). A RUNS entry with `demos=[...]`
+starts a share of episodes (`demo_prob`) from states along those runs. The
+start point begins near the END of each demo and walks back to the stage start
+as the agent matches or beats the demo from it — the backward curriculum of
+Salimans & Chen 2018 (DemoCurriculumCallback). The agent never copies your
+inputs, only starts where you were, so it can end up better than the demo.
+Progress: python3 demo_progress.py --run d1
+
 RESUMING an existing run requires an explicit --resume. Without it the launcher
 REFUSES to start when a checkpoint for that name is already on disk — the exact
 contamination that silently resumed a 1M-step partial during the v2 launch and
@@ -51,8 +60,10 @@ custom_objects AND the live objects — a constructor edit is a no-op on resume)
 import os
 import sys
 import glob
+import json
 import signal
 import argparse
+import collections
 
 ALL_14 = list(range(1, 15))
 
@@ -113,6 +124,18 @@ RUNS = {
                'ends on contact, a clear pays its emerald). Hyperparameters = '
                'v4 on purpose, so v6 vs v4 isolates the env fixes.',
     ),
+    # Learning from Tyler's play. `demos` = patterns under demos/ (record with
+    # record_demo.py); `demo_prob` = share of episodes that start on a demo.
+    'd1': dict(
+        stages=[1], lstm=512, lr=3e-4,
+        obs=dict(SS_ENV_VERSION='2',
+                 SS_USE_PIXELS='0', SS_PATCH_R='7', SS_DROP_POSITION='1'),
+        demos=['stage1_*'], demo_prob=0.75,
+        result="NOT STARTED. Stage 1 from Tyler's recorded run(s), backward "
+               'curriculum. The question: does it reach fresh-start clears of '
+               'stage 1 — which the specialist never did in 326M steps — and '
+               'beat the demo?',
+    ),
 }
 
 # ── Shared config (identical across every run so far — keep it that way) ──────
@@ -133,6 +156,11 @@ PPO_KWARGS = dict(
 )
 LSTM_KWARGS = dict(n_lstm_layers=2, shared_lstm=False, enable_critic_lstm=True)
 
+# Demo curriculum (runs with `demos`): when to move a demo's start point back.
+DEMO_WINDOW    = 32     # recent episodes judged at the current start point
+DEMO_MIN_N     = 16     # ...needed before the start point may move
+DEMO_ADVANCE   = 0.25   # move back once >= 25% of them matched or beat the demo
+
 
 def paths(run):
     # absolute, so launching from another directory can't miss an existing
@@ -143,8 +171,17 @@ def paths(run):
         ckpt_dir=os.path.join(HOME, f'checkpoints_ss_multistage_{run}'),
         stop=os.path.join(HOME, f'STOP_{run}'),
         log=os.path.join(HOME, f'ss_log_{run}.jsonl'),
+        demo_state=os.path.join(HOME, f'sonic_ss_multistage_{run}_demos.json'),
         prefix=f'sonic_ss_ms_{run}',
     )
+
+
+def demo_paths(cfg):
+    """A run's demo files: its `demos` patterns, matched under demos/."""
+    found = []
+    for pat in cfg.get('demos', []):
+        found += sorted(glob.glob(os.path.join(HOME, 'demos', f'{pat}.npz')))
+    return found
 
 
 def list_runs():
@@ -160,6 +197,9 @@ def list_runs():
             status = 'no checkpoint'
         print(f'{name:6} {len(cfg["stages"]):<8} {cfg["lstm"]:<6} '
               f'{cfg["lr"]:<8.0e} {obs_s:41} {status}')
+        if cfg.get('demos'):
+            print(f'       demos {cfg["demos"]} at {cfg.get("demo_prob", 0.5):.0%}: '
+                  f'{len(demo_paths(cfg))} recorded')
         print(f'       {cfg["result"]}')
 
 
@@ -195,6 +235,13 @@ os.environ['SS_STAGES'] = ','.join(str(s) for s in CFG['stages'])
 os.environ['SS_RESTART_PROB'] = str(args.restart_prob)
 os.environ['SS_LOG'] = P['log']          # per-run log: a shared log made every
                                          # analyzer read the GHOST of prior runs
+DEMOS = demo_paths(CFG)
+if CFG.get('demos') and not DEMOS:
+    sys.exit(f"\nrun {args.run} learns from demos {CFG['demos']}, but none are "
+             f"recorded yet in {os.path.join(HOME, 'demos')}.\n"
+             f"  record one:  python3 record_demo.py <stage>\n")
+os.environ['SS_DEMOS'] = ','.join(DEMOS)
+os.environ['SS_DEMO_PROB'] = str(CFG.get('demo_prob', 0.5))
 
 import torch                                                    # noqa: E402
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize  # noqa: E402
@@ -309,6 +356,78 @@ class PruneCheckpointsCallback(BaseCallback):
         return True
 
 
+class DemoCurriculumCallback(BaseCallback):
+    """Backward curriculum over the recorded demos (Salimans & Chen 2018).
+
+    A share of episodes start from a state along a demo, at or just after that
+    demo's start point. The start point begins near the END of the demo and
+    moves one checkpoint (~2 cells) toward the stage start whenever enough
+    recent episodes from it matched or beat the demo — collected at least as
+    many spheres from there as the demo did. At checkpoint 0 the agent is
+    playing the stage from the start, measured against the demo's whole run.
+    Only the demo's states are used, never its inputs, so the agent can end up
+    better than the demo. The start points persist next to the checkpoint, so
+    --resume keeps the curriculum where it was."""
+
+    def __init__(self, state_path, verbose=0):
+        super().__init__(verbose)
+        self.state_path = state_path
+        self.ptr, self.fracs, self.recent = {}, {}, {}
+
+    def _on_training_start(self):
+        saved = {}
+        if os.path.exists(self.state_path):
+            with open(self.state_path) as f:
+                saved = json.load(f)
+        for d in self.training_env.env_method('demo_info', indices=[0])[0]:
+            last = len(d['fracs']) - 1
+            self.fracs[d['id']] = d['fracs']
+            self.ptr[d['id']] = min(saved.get(d['id'], {}).get('ptr', last), last)
+            self.recent[d['id']] = collections.deque(maxlen=DEMO_WINDOW)
+            print(f"[demo] {d['id']}: stage {d['stage']}, {d['final']} spheres in "
+                  f"{d['frames']} frames; episodes start "
+                  f"{d['fracs'][self.ptr[d['id']]]:.0%} of the way in", flush=True)
+        self._push()
+
+    def _push(self):
+        self.training_env.env_method('set_demo_pointers', dict(self.ptr))
+        tmp = self.state_path + '.tmp'
+        with open(tmp, 'w') as f:
+            json.dump({k: {'ptr': p, 'frac': round(self.fracs[k][p], 4)}
+                       for k, p in self.ptr.items()}, f, indent=1)
+        os.replace(tmp, self.state_path)
+
+    def _on_step(self):
+        moved = False
+        for info in self.locals.get('infos', []):
+            r = info.get('demo_result')
+            if not r or r['demo'] not in self.ptr:
+                continue
+            p = self.ptr[r['demo']]
+            if not p <= r['start'] <= p + special_stage_env.DEMO_BAND:
+                continue                    # began before the start point moved
+            q = self.recent[r['demo']]
+            q.append(r)
+            if len(q) >= DEMO_MIN_N and p > 0:
+                rate = sum(x['success'] for x in q) / len(q)
+                if rate >= DEMO_ADVANCE:
+                    margin = sum(x['gained'] - x['target'] for x in q) / len(q)
+                    self.ptr[r['demo']] = p - 1
+                    q.clear()
+                    moved = True
+                    fr = self.fracs[r['demo']]
+                    print(f"[demo] {r['demo']}: start -> {fr[p - 1]:.0%} into the "
+                          f"demo ({rate:.0%} matched or beat it from {fr[p]:.0%}; "
+                          f"mean margin {margin:+.1f} spheres)", flush=True)
+        if moved:
+            self._push()
+        return True
+
+    def _on_rollout_end(self):
+        for did, p in self.ptr.items():
+            self.logger.record(f'demo/{did}/start_frac', self.fracs[did][p])
+
+
 def make_env():
     def _init():
         return SpecialStageEnv()
@@ -328,6 +447,9 @@ if __name__ == '__main__':
           f"x{special_stage_env.GRID_CHANNELS} "
           f"ram_feats={special_stage_env.NUM_RAM_FEATURES}")
     print(f"  restart_prob : {args.restart_prob}")
+    if DEMOS:
+        print(f"  demos        : {len(DEMOS)} at {CFG.get('demo_prob', 0.5):.0%} of "
+              f"episodes: {', '.join(os.path.basename(d) for d in DEMOS)}")
     print(f"  log          : {P['log']}")
     print(f"  autosave every {AUTOSAVE_STEPS:,} steps | "
           f"graceful stop: touch {P['stop']}")
@@ -353,6 +475,16 @@ if __name__ == '__main__':
     if missing:
         sys.exit('\nREFUSING TO LAUNCH: stage state file(s) missing:\n  '
                  + '\n  '.join(missing) + '\n')
+
+    # Each demo must still replay into the run it recorded (same stage state,
+    # same action table); the workers would fail on it less legibly.
+    if DEMOS:
+        import demos as demo_io
+        for d in DEMOS:
+            ok, note = demo_io.replay_check(d)
+            print(f'  demo check   : {os.path.basename(d)}: {note}')
+            if not ok:
+                sys.exit(f'\nREFUSING TO LAUNCH: {d} no longer replays.\n')
 
     tb_dir = os.path.join(HOME, 'logs_ss')
     os.makedirs(tb_dir, exist_ok=True)
@@ -407,7 +539,7 @@ if __name__ == '__main__':
                            name_prefix=P['prefix'], verbose=1),
         AutoSaveCallback(save_freq=AUTOSAVE_STEPS),
         PruneCheckpointsCallback(checkpoint_dir=P['ckpt_dir']),
-    ])
+    ] + ([DemoCurriculumCallback(P['demo_state'])] if DEMOS else []))
 
     try:
         model.learn(total_timesteps=TOTAL_STEPS, callback=callbacks,

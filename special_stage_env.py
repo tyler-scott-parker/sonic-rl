@@ -3,14 +3,28 @@ import numpy as np
 import cv2
 import stable_retro
 import os
+import sys
 import json
 import time
 import glob
 import random
 import re
+import zlib
 from gymnasium import spaces
 
 # Button order: B, A, MODE, START, UP, DOWN, LEFT, RIGHT, C, Y, X, Z
+
+# The agent's actions as button masks. Module-level so record_demo.py plays with
+# exactly these controls: every frame of a human demo is a move the agent has.
+ACTION_BUTTONS = [
+    [0,0,0,0,0,0,0,0,0,0,0,0],  # 0: no-op
+    [1,0,0,0,0,0,0,0,0,0,0,0],  # 1: B (jump)
+    [0,0,0,0,0,0,1,0,0,0,0,0],  # 2: left
+    [0,0,0,0,0,0,0,1,0,0,0,0],  # 3: right
+    [0,0,0,0,1,0,0,0,0,0,0,0],  # 4: up (advance / bumper recovery)
+    [1,0,0,0,0,0,1,0,0,0,0,0],  # 5: B + left
+    [1,0,0,0,0,0,0,1,0,0,0,0],  # 6: B + right
+]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # env v2 (2026-09-29) — logic-error fixes, every one checked in the emulator.
@@ -185,6 +199,23 @@ RESTART_DEPTH_WEIGHTS = {
 }
 _BUCKET_RE = re.compile(r's(\d+)_')
 
+# ── Demonstrations (env v2; recorded with record_demo.py) ────────────────────
+# A share of resets start from a state some recorded human run passed through,
+# at a checkpoint the trainer's DemoCurriculumCallback moves from the end of the
+# demo back toward its start as the agent learns to match or beat the demo from
+# there (the "backward" curriculum of Salimans & Chen 2018). The demo's ACTIONS
+# are never imitated — only its states are borrowed — so the reward alone
+# decides what is good play, and the agent is free to do better than the demo.
+#   SS_DEMOS=a.npz,b.npz   -> demo files (the trainer sets this from RUNS)
+#   SS_DEMO_PROB=p         -> share of resets that start from a demo
+DEMO_FILES      = [p for p in os.environ.get('SS_DEMOS', '').split(',') if p.strip()]
+DEMO_PROB       = float(os.environ.get('SS_DEMO_PROB', '0.5'))
+DEMO_CKPT_EVERY = 30    # frames between start points (~2 cells at base speed)
+DEMO_TAIL       = 60    # the latest start point is this many frames before the end
+DEMO_BAND       = 4     # starts are drawn from checkpoints [pointer, pointer + band]
+if DEMO_FILES and not V2:
+    raise ValueError('demos need SS_ENV_VERSION=2')
+
 
 class SpecialStageEnv(gym.Env):
     """Special stage environment — grid obs + self-curriculum restarts."""
@@ -208,16 +239,8 @@ class SpecialStageEnv(gym.Env):
             use_restricted_actions=stable_retro.Actions.FILTERED
         )
 
-        self.action_space = spaces.Discrete(7)
-        self._actions = [
-            [0,0,0,0,0,0,0,0,0,0,0,0],  # 0: no-op
-            [1,0,0,0,0,0,0,0,0,0,0,0],  # 1: B (jump)
-            [0,0,0,0,0,0,1,0,0,0,0,0],  # 2: left
-            [0,0,0,0,0,0,0,1,0,0,0,0],  # 3: right
-            [0,0,0,0,1,0,0,0,0,0,0,0],  # 4: up (advance / bumper recovery)
-            [1,0,0,0,0,0,1,0,0,0,0,0],  # 5: B + left
-            [1,0,0,0,0,0,0,1,0,0,0,0],  # 6: B + right
-        ]
+        self.action_space = spaces.Discrete(len(ACTION_BUTTONS))
+        self._actions = ACTION_BUTTONS
 
         obs_spaces = {
             'ram': spaces.Box(low=-np.inf, high=np.inf,
@@ -236,6 +259,9 @@ class SpecialStageEnv(gym.Env):
         self._ram_swapped = None
         self._original_grids = {}     # stage -> its layout at a fresh start
         self._cur_stage = 0
+        self._demos = None            # built from DEMO_FILES at the first reset
+        self._demo_ptr = {}           # demo id -> start checkpoint (trainer-set)
+        self._replaying = False       # True while _build_demos replays a demo
         self._reset_state()
 
     # ── RAM access ───────────────────────────────────────────────────────
@@ -319,7 +345,7 @@ class SpecialStageEnv(gym.Env):
             pass
 
     def _maybe_capture(self, info):
-        if RESTART_PROB <= 0:
+        if RESTART_PROB <= 0 or self._replaying:
             return      # nothing reads the pool with restarts off
         # Spheres collected on this board so far, restart-banked ones included.
         # Was `102 - remaining`: on the 37-sphere board that read 65 at sphere 0
@@ -358,6 +384,101 @@ class SpecialStageEnv(gym.Env):
         weights = [RESTART_DEPTH_WEIGHTS.get(b, 1) for b in buckets]
         bucket = random.choices(buckets, weights=weights, k=1)[0]
         return random.choice(by_bucket[bucket])
+
+    # ── Demonstrations ───────────────────────────────────────────────────
+
+    def _snapshot_fields(self):
+        """Episode bookkeeping a demo start restores besides the emulator state
+        (the rest is re-read from RAM, or is logging only)."""
+        return dict(steps=self.steps, speed_level=self.speed_level,
+                    prev_speed_timer=self.prev_speed_timer,
+                    bumper_hit=self.bumper_hit,
+                    prev_bumper_lock=self.prev_bumper_lock,
+                    spheres=self._spheres_collected)
+
+    def _build_demos(self):
+        """Replay each demo once through this env's own step logic, keeping the
+        emulator state before every DEMO_CKPT_EVERY-th frame (compressed, ~60 KB)
+        and the bookkeeping after it. Lazy, at the first reset of each worker;
+        nothing is written to disk. A replay that doesn't reproduce the recorded
+        run raises: a silently different demo would teach wrong targets."""
+        import demos as demo_io
+        self._demos = []
+        self._replaying = True
+        try:
+            for path in DEMO_FILES:
+                actions, meta = demo_io.load_demo(path)
+                demo_io.check_compatible(path, meta, sys.modules[__name__])
+                self.reset(options={'stage_file': stage_file(meta['stage'])})
+                n = len(actions)
+                ckpts = []
+                for j, a in enumerate(actions):
+                    state = (zlib.compress(self.base_env.em.get_state(), 6)
+                             if j % DEMO_CKPT_EVERY == 0 else None)
+                    _, _, done, trunc, _ = self.step(int(a))
+                    if (done or trunc) and j != n - 1:
+                        raise ValueError(f'{path}: replay ended at frame {j}, '
+                                         f'the recording ran to {n - 1}')
+                    if state is not None and j + 1 <= n - DEMO_TAIL:
+                        ckpts.append(dict(state=state, action=int(a),
+                                          fields=self._snapshot_fields()))
+                final = self._spheres_collected
+                if final != meta['spheres']:
+                    raise ValueError(f'{path}: replay collected {final} spheres, '
+                                     f'the recording {meta["spheres"]}')
+                if not ckpts:
+                    raise ValueError(f'{path}: too short to start from ({n} '
+                                     f'frames; needs more than {DEMO_TAIL})')
+                self._demos.append(dict(
+                    id=demo_io.demo_id(path), stage=meta['stage'],
+                    total=float(meta['stage_total']), final=final, frames=n,
+                    ckpts=ckpts))
+        finally:
+            self._replaying = False
+
+    def _reset_from_demo(self):
+        demo = random.choice(self._demos)
+        last = len(demo['ckpts']) - 1
+        ptr = min(self._demo_ptr.get(demo['id'], last), last)
+        k = random.randint(ptr, min(last, ptr + DEMO_BAND))
+        ck = demo['ckpts'][k]
+        self.base_env.em.set_state(zlib.decompress(ck['state']))
+        self._cur_stage = demo['stage']
+        self._reset_state()
+        # the reset frame is the demo's own next frame, so the episode starts
+        # exactly on a state the demo passed through
+        frame, _, _, _, info = self.base_env.step(ACTION_BUTTONS[ck['action']])
+        f = ck['fields']
+        self.steps = f['steps']
+        self.speed_level = f['speed_level']
+        self.prev_speed_timer = f['prev_speed_timer']
+        self.bumper_hit = f['bumper_hit']
+        self.prev_bumper_lock = f['prev_bumper_lock']
+        self.prev_blue_spheres = info.get('blue_spheres_remaining')
+        self._stage_total = demo['total']
+        self._from_restart = True
+        self._restart_from = f['spheres']
+        self._capture_idx = sum(1 for t in CAPTURE_AT if t <= self._restart_from)
+        self._rebuild_converted()
+        # success from here = collect at least what the demo collected from here
+        self._demo_episode = dict(demo=demo['id'], start=k,
+                                  frac=f['steps'] / demo['frames'],
+                                  target=demo['final'] - f['spheres'])
+        return self._get_obs(frame, info), {}
+
+    def set_demo_pointers(self, pointers):
+        """Called by the trainer (VecEnv.env_method) as the curriculum moves."""
+        self._demo_ptr.update({k: int(v) for k, v in pointers.items()})
+
+    def demo_info(self):
+        """Per demo: id, stage, spheres, length, and where each start point sits
+        in it (fraction of its frames) — for the trainer's curriculum."""
+        if DEMO_FILES and self._demos is None:
+            self._build_demos()
+        return [dict(id=d['id'], stage=d['stage'], final=d['final'],
+                     frames=d['frames'],
+                     fracs=[c['fields']['steps'] / d['frames'] for c in d['ckpts']])
+                for d in (self._demos or [])]
 
     # ── Grid telemetry ───────────────────────────────────────────────────
 
@@ -472,15 +593,24 @@ class SpecialStageEnv(gym.Env):
         self._board_cleared = False
         self._stage_total = 102.0        # per-stage starting sphere count;
                                          # set from RAM at reset (102/127/118…)
+        self._demo_episode = None        # set when the episode starts from a demo
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
+        if DEMO_FILES and self._demos is None:
+            self._build_demos()
         self.base_env.reset()
 
         self._cur_stage = 0   # 0 = unknown; the stage pick / restart meta set it
 
+        # options={'stage_file': path}: a fresh start on that stage, no restart
+        # or demo draw (used to replay demos)
+        forced = (options or {}).get('stage_file')
+        if forced is None and self._demos and random.random() < DEMO_PROB:
+            return self._reset_from_demo()
+
         restart_file = None
-        if self._original_grids and random.random() < RESTART_PROB:
+        if forced is None and self._original_grids and random.random() < RESTART_PROB:
             files = glob.glob(os.path.join(POOL_DIR, '*.state'))
             if files:
                 restart_file = self._weighted_pick(files)
@@ -501,7 +631,8 @@ class SpecialStageEnv(gym.Env):
         if not restart_file:
             # Multi-stage: pick a stage at random for this fresh episode.
             # Falls back to the single state_path when SS_STAGES is unset.
-            load_path = random.choice(STAGE_FILES) if STAGE_FILES else self.state_path
+            load_path = forced or (random.choice(STAGE_FILES) if STAGE_FILES
+                                   else self.state_path)
             # remember which stage this fresh episode is on, for per-stage logging
             m = re.search(r'curriculum_stage_(\d+)', load_path)
             self._cur_stage = int(m.group(1)) if m else 0
@@ -563,6 +694,14 @@ class SpecialStageEnv(gym.Env):
             self._log_episode(success=False, emerald_type=None,
                               death_at_sphere=None, own_trail=None,
                               timeout=True)
+
+        if (done or truncated) and self._demo_episode is not None:
+            d = self._demo_episode      # read by the trainer's demo curriculum
+            info['demo_result'] = dict(
+                demo=d['demo'], start=d['start'], target=d['target'],
+                gained=self._spheres_collected,
+                success=self._spheres_collected >= d['target'],
+                cleared=self._board_cleared)
 
         return self._get_obs(frame, info), reward, done, truncated, info
 
@@ -632,6 +771,8 @@ class SpecialStageEnv(gym.Env):
 
     def _log_episode(self, success, emerald_type, death_at_sphere=None,
                      own_trail=None, timeout=False):
+        if self._replaying:
+            return          # a demo replay is not an episode
         entry = {
             "t":               round(time.time()),
             "steps":           self.steps,
@@ -654,6 +795,10 @@ class SpecialStageEnv(gym.Env):
             "stage":           getattr(self, "_cur_stage", None),
             "stage_total":     int(self._stage_total),
         }
+        if self._demo_episode is not None:
+            d = self._demo_episode
+            entry.update(demo=d['demo'], demo_start=d['start'],
+                         demo_frac=round(d['frac'], 4), demo_target=d['target'])
         try:
             with open(SS_LOG_FILE, "a") as f:
                 f.write(json.dumps(entry) + "\n")
