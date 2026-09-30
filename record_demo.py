@@ -184,7 +184,10 @@ def main():
         pad = pygame.joystick.Joystick(0)
         pad.init()
 
-    speed, paused, saved, msg = args.speed, False, None, 'playing — Backspace rewinds'
+    # open paused: in Blue Spheres Sonic is already running, and the window
+    # needs a click for focus first
+    speed, paused, saved, msg = (args.speed, True, None,
+                                 'paused — any move key (or P) starts; Backspace rewinds')
     jump_keys = (pygame.K_z, pygame.K_x, pygame.K_c, pygame.K_SPACE)
     move_keys = jump_keys + (pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP)
     running = True
