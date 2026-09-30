@@ -25,6 +25,7 @@ ENV VERSION: every run pins SS_ENV_VERSION in its preset. v1-v5 trained on
 env v1, which had the logic errors found 2026-09-29 (grid blind to board rows
 24-31, episodes ending ~670 frames after death, springs shown as red — see
 special_stage_env.py); they must stay on v1. v6 is the first run on env v2.
+Env v3 (d2 onward) adds 4-frame choices and the stall rule for demo learning.
 
 LEARNING FROM YOUR PLAY: record a run with `python3 record_demo.py <stage>`
 (slow motion + rewind; it lands in demos/). A RUNS entry with `demos=[...]`
@@ -131,10 +132,24 @@ RUNS = {
         obs=dict(SS_ENV_VERSION='2',
                  SS_USE_PIXELS='0', SS_PATCH_R='7', SS_DROP_POSITION='1'),
         demos=['stage1_*'], demo_prob=0.75,
-        result="NOT STARTED. Stage 1 from Tyler's recorded run(s), backward "
-               'curriculum. The question: does it reach fresh-start clears of '
-               'stage 1 — which the specialist never did in 326M steps — and '
-               'beat the demo?',
+        result='STOPPED 2026-09-30 at ~3.1M steps on Tyler\'s stage-1 clear: '
+               '0 matches from its first start point (98/102) in ~2,500 '
+               'episodes. Per-frame choices never held a straight line (53% '
+               'of frames pressed a turn), and it learned to hop around the red '
+               'board to postpone dying (median 752 frames alive; the demo '
+               'needed 75). Superseded by d2.',
+    ),
+    'd2': dict(
+        stages=[1], lstm=512, lr=3e-4,
+        obs=dict(SS_ENV_VERSION='3',
+                 SS_USE_PIXELS='0', SS_PATCH_R='7', SS_DROP_POSITION='1'),
+        demos=['stage1_*'], demo_prob=0.75,
+        ppo=dict(gamma=0.988),          # 0.997 per frame ~= 0.988 per 4 frames:
+                                        # the same ~5.5 s horizon d1 had
+        result='NOT STARTED. d1 on env v3: the agent chooses every 4 frames '
+               '(a straight cell is ~3 choices, not ~12 frames) and 10 s '
+               'without a sphere counts as touching red. Same demo, obs and '
+               'network. The question: does the first start point fall now?',
     ),
 }
 
@@ -440,7 +455,8 @@ if __name__ == '__main__':
     print(f"=== multistage run {args.run} ===")
     print(f"  {CFG['result']}")
     print(f"  stages       : {CFG['stages']}")
-    print(f"  lstm_hidden  : {CFG['lstm']}   lr: {CFG['lr']:.0e}")
+    print(f"  lstm_hidden  : {CFG['lstm']}   lr: {CFG['lr']:.0e}   "
+          f"ppo: {({**PPO_KWARGS, **CFG.get('ppo', {})})}")
     print(f"  obs preset   : env=v{special_stage_env.ENV_VERSION} "
           f"pixels={special_stage_env.USE_PIXELS} "
           f"patch={special_stage_env.PATCH_SIZE}x{special_stage_env.PATCH_SIZE}"
@@ -527,7 +543,7 @@ if __name__ == '__main__':
             verbose=1,
             tensorboard_log=tb_dir,
             device='auto',
-            **PPO_KWARGS,
+            **{**PPO_KWARGS, **CFG.get('ppo', {})},   # a run may override
         )
         print(f'Starting FRESH multistage {args.run} model (random weights)')
 
