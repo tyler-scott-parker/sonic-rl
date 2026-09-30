@@ -159,9 +159,18 @@ def invariant():
         if not (stack_ok and res['outcome'] == 'clear' and res['frames'] == res['target']
                 and abs(ret - C.CLEAR_BONUS) < 1e-6):
             worst.append((k, res['outcome'], res['frames'], res['target'], round(ret, 2)))
-    env.close()
     check(not worst, f"{len(seg['ckpts'])} start points: clear on the demo's frame, return "
           f"= CLEAR_BONUS {C.CLEAR_BONUS:.0f}" + (f'; MISMATCHES {worst}' if worst else ''))
+    env.reset(options={'key': seg['key'], 'ckpt': 3})
+    while True:                                     # stand still: no route progress
+        _, _, term, trunc, info = env.step(0)
+        if term or trunc:
+            break
+    res = info['mg_result']
+    check(res['outcome'] == 'stuck' and C.STUCK_FRAMES <= res['frames'] <= C.STUCK_FRAMES + 200,
+          f"standing still is cut as '{res['outcome']}' after {res['frames']} frames "
+          f"(STUCK_FRAMES {C.STUCK_FRAMES}; the timeout would be {env._max_frames})")
+    env.close()
 
 
 def recorder():

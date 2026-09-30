@@ -20,6 +20,10 @@ state that run passed through, until:
   stage    entered a special stage (giant ring) or a bonus stage (starpost
            stars). Truncated: neutral either way, and the in-game timer
            doesn't run in there.
+  stuck    no new progress along the demo's route for STUCK_FRAMES (boss
+           fights excepted, where progress holds on purpose). Truncated. The
+           first real run spent 84% of its frames in 47-second timeouts,
+           pressed against one wall; cutting them at 10 s buys ~4x the attempts.
   timeout  far slower than the demo from the same start. Truncated.
 
 REWARD — frames faster than the demo. Progress is measured along the demo's
@@ -120,6 +124,8 @@ MATCH_SLACK    = 0.25      # x (demo frames from there) ...
 MATCH_ADD      = 60        # ... + 1 s
 TIMEOUT_MULT   = 2.0       # an episode is cut (truncated) at 2x the demo's
 TIMEOUT_ADD    = 1200      # time from its start point + 20 s
+STUCK_FRAMES   = 600       # ... or after 10 s with no new route progress. The
+                           # demo's own inputs never lag its route by > 40 frames
 
 # Route progress (see RouteProgress)
 ROUTE_RADIUS   = 96        # px: within this of the demo's route = on it
@@ -573,6 +579,7 @@ class SonicCoordinator(gym.Env):
         self._target = seg['T'] - ck['t']
         self._max_frames = int(self._target * TIMEOUT_MULT + TIMEOUT_ADD)
         self.frames = 0
+        self._moved_at = 0            # frames when route progress last rose
         self.ret = 0.0
         self._t0 = time.time()
         self._xmax = None
@@ -610,11 +617,17 @@ class SonicCoordinator(gym.Env):
         elif event == 'death':
             r -= DEATH_PENALTY
         elif event is None:
-            r += self._route.update(info['zone'], info['act'], x, int(info['y']),
-                                    int(info['mg_boss']) != 0)
+            gain = self._route.update(info['zone'], info['act'], x, int(info['y']),
+                                      int(info['mg_boss']) != 0)
+            r += gain
+            if gain > 0 or self._route.fight is not None:
+                self._moved_at = self.frames
+            elif self.frames - self._moved_at >= STUCK_FRAMES:
+                event = 'stuck'
         self.ret += r
         terminated = event in ('clear', 'death')
-        truncated = event == 'stage' or (not terminated and self.frames >= self._max_frames)
+        truncated = event in ('stage', 'stuck') or (
+            not terminated and self.frames >= self._max_frames)
         if terminated or truncated:
             outcome = event or 'timeout'
             info = dict(info)

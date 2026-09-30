@@ -49,7 +49,8 @@ def describe(rows):
     out = collections.Counter(r['outcome'] for r in rows)
     clears = [r for r in rows if r['outcome'] == 'clear']
     s = (f"{n:6d} eps  clear {out['clear'] / n:5.1%}  death {out['death'] / n:5.1%}  "
-         f"timeout {out['timeout'] / n:5.1%}  stage {out['stage'] / n:4.1%}")
+         f"stuck {out['stuck'] / n:5.1%}  timeout {out['timeout'] / n:5.1%}  "
+         f"stage {out['stage'] / n:4.1%}")
     if clears:
         m = np.array([r['margin'] for r in clears])
         s += (f"  | vs you: median {np.median(m):+5.0f}f  best {m.max():+5.0f}f "
