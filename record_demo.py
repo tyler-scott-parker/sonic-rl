@@ -84,6 +84,7 @@ class Recorder:
         self.total = int(info['blue_spheres_remaining'])
         self.blue = self.total
         self.actions = []
+        self._screen = None
         self.ended = None       # None, or 'clear' / 'death' / 'timeout'
         self.rewinds = 0
         self._swapped = self._detect_swap()
@@ -109,6 +110,7 @@ class Recorder:
     def step(self, action):
         if self.ended:
             return
+        self._screen = None
         _, _, _, _, info = self.env.step(sse.ACTION_BUTTONS[action])
         self.actions.append(int(action))
         self.blue = int(info['blue_spheres_remaining'])
@@ -134,9 +136,15 @@ class Recorder:
         self.blue = blue
         self.ended = None
         self.rewinds += 1
+        # loading a state leaves the screen black until a frame runs: run one
+        # for the display and put the state back (the run stays identical)
+        state = self.env.em.get_state()
+        self.env.step(sse.ACTION_BUTTONS[0])
+        self._screen = self.env.em.get_screen().copy()
+        self.env.em.set_state(state)
 
     def screen(self):
-        return self.env.em.get_screen()
+        return self._screen if self._screen is not None else self.env.em.get_screen()
 
     def save(self, path=None):
         path = path or os.path.join(
