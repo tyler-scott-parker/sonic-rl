@@ -42,7 +42,7 @@ import pygame                                                 # noqa: E402
 
 from stable_baselines3.common.vec_env import (DummyVecEnv,    # noqa: E402
                                               VecNormalize)
-from special_stage_env import SpecialStageEnv                 # noqa: E402
+from special_stage_env import SpecialStageEnv, FRAME_SKIP     # noqa: E402
 
 try:
     from sb3_contrib import RecurrentPPO                      # noqa: E402
@@ -150,7 +150,7 @@ def main():
             lstm_states   = None
             episode_start = np.array([True])
 
-        clock.tick(60)
+        clock.tick(60 / FRAME_SKIP)        # one agent step = FRAME_SKIP frames
 
     pygame.quit()
     env.close()

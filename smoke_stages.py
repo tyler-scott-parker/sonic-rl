@@ -116,8 +116,9 @@ for sid in stages:
             obs, _, term, trunc, info = env.step(0)
             timer = int(env._ram()[sse.ADDR_EXIT_TIMER])
             if term or trunc:
-                ends = (f'{env.steps}f' if term and (env._board_cleared or timer)
-                        else 'WRONG')
+                stall = getattr(env, '_stalled', False)     # v3: no sphere in 10 s
+                ends = (f"{env.steps}f{'s' if stall else ''}"
+                        if term and (env._board_cleared or timer or stall) else 'WRONG')
                 break
             if timer:
                 ends = 'LATE'           # exit animation running, episode still on

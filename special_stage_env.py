@@ -109,10 +109,29 @@ SS_LOG_FILE = os.path.expanduser(
 #                                 (specialist, multistage v1-v5) saw v1 and
 #                                 must be run on v1: the shapes differ, and so
 #                                 would what a matching shape contains.
+#   SS_ENV_VERSION=3           -> v2 + the agent choosing every FRAME_SKIP
+#                                 frames + the stall rule (see below). For
+#                                 learning from demos: run d2 onward.
 ENV_VERSION = int(os.environ.get('SS_ENV_VERSION', '2'))
-if ENV_VERSION not in (1, 2):
-    raise ValueError(f'SS_ENV_VERSION must be 1 or 2, got {ENV_VERSION}')
-V2 = ENV_VERSION == 2
+if ENV_VERSION not in (1, 2, 3):
+    raise ValueError(f'SS_ENV_VERSION must be 1, 2 or 3, got {ENV_VERSION}')
+V2 = ENV_VERSION >= 2       # v3 keeps every v2 fix
+V3 = ENV_VERSION >= 3
+
+# ── env v3 (2026-09-30), found by run d1 (per-frame, env v2) ─────────────────
+#   - FRAME_SKIP: the agent chooses every 4 frames and the action is held.
+#     One tap of left/right anywhere in a cell queues the turn for the next
+#     corner, so per-frame choice bought nothing — and it made a straight
+#     cell ~12 turn-free choices in a row: d1's policy pressed a turn on 53%
+#     of frames and never held a line (0 matches from its first start point
+#     in ~2,500 episodes). Demos still replay frame by frame.
+#   - STALL_FRAMES: this long without a sphere ends the episode as a death
+#     (same penalty). d1 learned to hop around the red board to postpone
+#     dying: a median 752 frames alive after its start point, where the demo
+#     needed 75. Tyler's stage-1 clear never went more than 257 frames
+#     between spheres.
+FRAME_SKIP    = 4 if V3 else 1
+STALL_FRAMES  = 600
 
 # ── Observation shape (env-var driven; see OBSERVATION PRESETS below) ───────
 #   SS_USE_PIXELS=1  -> include the 84x84x3 pixel stream (pre-v4 obs).
@@ -131,8 +150,9 @@ V2 = ENV_VERSION == 2
 #                -> 15 feats, 4-channel grid, pixels
 #   v4 / v5    : SS_ENV_VERSION=1 SS_USE_PIXELS=0 SS_PATCH_R=7 SS_DROP_POSITION=1
 #                -> 11 feats, 4-channel grid
-#   v6         : SS_ENV_VERSION=2 SS_USE_PIXELS=0 SS_PATCH_R=7 SS_DROP_POSITION=1
+#   v6, d1     : SS_ENV_VERSION=2 SS_USE_PIXELS=0 SS_PATCH_R=7 SS_DROP_POSITION=1
 #                -> 10 feats, 5-channel grid
+#   d2         : SS_ENV_VERSION=3, otherwise as v6 (same obs; 4-frame choices)
 #
 # NOT reproducible here (deliberate): the dead v1/v2/v3 multistage runs used
 # DROP_POSITION=1 with the position slots still present as CONSTANT ZEROS, i.e.
@@ -415,7 +435,7 @@ class SpecialStageEnv(gym.Env):
                 for j, a in enumerate(actions):
                     state = (zlib.compress(self.base_env.em.get_state(), 6)
                              if j % DEMO_CKPT_EVERY == 0 else None)
-                    _, _, done, trunc, _ = self.step(int(a))
+                    _, _, done, trunc, _ = self._step_frames(int(a), 1)
                     if (done or trunc) and j != n - 1:
                         raise ValueError(f'{path}: replay ended at frame {j}, '
                                          f'the recording ran to {n - 1}')
@@ -450,6 +470,7 @@ class SpecialStageEnv(gym.Env):
         frame, _, _, _, info = self.base_env.step(ACTION_BUTTONS[ck['action']])
         f = ck['fields']
         self.steps = f['steps']
+        self._last_pickup = self.steps      # the stall clock starts here
         self.speed_level = f['speed_level']
         self.prev_speed_timer = f['prev_speed_timer']
         self.bumper_hit = f['bumper_hit']
@@ -568,6 +589,8 @@ class SpecialStageEnv(gym.Env):
 
     def _reset_state(self):
         self.steps = 0
+        self._last_pickup = 0            # frame of the last sphere (v3 stall rule)
+        self._stalled = False
         self.prev_blue_spheres = None
         self.prev_chaos_em = 0
         self.prev_super_em = 0
@@ -673,7 +696,21 @@ class SpecialStageEnv(gym.Env):
         return self._get_obs(frame, info), {}
 
     def step(self, action):
-        buttons = self._actions[int(action)]
+        return self._step_frames(int(action), FRAME_SKIP)
+
+    def _step_frames(self, action, n):
+        """Hold `action` for up to n frames — FRAME_SKIP for the agent, 1 for
+        a demo replay — stopping on the frame the episode ends. With n == 1
+        this is exactly the per-frame step of env v1/v2."""
+        total = 0.0
+        for _ in range(n):
+            frame, reward, done, truncated, info = self._frame(self._actions[action])
+            total += reward
+            if done or truncated:
+                break
+        return self._get_obs(frame, info), total, done, truncated, info
+
+    def _frame(self, buttons):
         frame, _, game_terminated, game_truncated, info = \
             self.base_env.step(buttons)
         self.steps += 1
@@ -703,7 +740,7 @@ class SpecialStageEnv(gym.Env):
                 success=self._spheres_collected >= d['target'],
                 cleared=self._board_cleared)
 
-        return self._get_obs(frame, info), reward, done, truncated, info
+        return frame, reward, done, truncated, info
 
     # ── Observation ──────────────────────────────────────────────────────
 
@@ -770,7 +807,7 @@ class SpecialStageEnv(gym.Env):
     # ── Logging / reward ─────────────────────────────────────────────────
 
     def _log_episode(self, success, emerald_type, death_at_sphere=None,
-                     own_trail=None, timeout=False):
+                     own_trail=None, timeout=False, stall=False):
         if self._replaying:
             return          # a demo replay is not an episode
         entry = {
@@ -795,6 +832,8 @@ class SpecialStageEnv(gym.Env):
             "stage":           getattr(self, "_cur_stage", None),
             "stage_total":     int(self._stage_total),
         }
+        if V3:
+            entry["stall"] = stall          # ended by the stall rule, not red
         if self._demo_episode is not None:
             d = self._demo_episode
             entry.update(demo=d['demo'], demo_start=d['start'],
@@ -835,14 +874,19 @@ class SpecialStageEnv(gym.Env):
                               emerald_type=emerald_type or "cleared")
             return reward, True
 
-        if exiting or left:
+        # v3: STALL_FRAMES without a sphere counts as touching red
+        stalled = (V3 and not (exiting or left)
+                   and self.steps - self._last_pickup >= STALL_FRAMES)
+        if exiting or left or stalled:
             n = self._spheres_collected   # this-episode only
             penalty = SS_RED_SPHERE_BASE + SS_RED_SPHERE_SCALE * n + 500
             reward -= penalty
             self.ss_current_streak = 0
+            self._stalled = stalled
             self._log_episode(success=False, emerald_type=None,
                               death_at_sphere=n,
-                              own_trail=self._death_on_trail())
+                              own_trail=None if stalled else self._death_on_trail(),
+                              stall=stalled)
             return reward, True
 
         return reward, False
@@ -872,6 +916,7 @@ class SpecialStageEnv(gym.Env):
                 collected = self.prev_blue_spheres - blue_spheres
                 reward += collected * SS_SPHERE_REWARD
                 self._spheres_collected += collected
+                self._last_pickup = self.steps
                 self.ss_current_streak += collected
                 if self.ss_current_streak > self.ss_best_streak:
                     self.ss_best_streak = self.ss_current_streak

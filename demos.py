@@ -63,7 +63,7 @@ def check_compatible(path, meta, sse):
     if actions_sha1(sse.ACTION_BUTTONS) != meta['actions_sha1']:
         raise ValueError(f'{path}: the action table has changed since recording')
     if not sse.V2:
-        raise ValueError('demos need SS_ENV_VERSION=2')
+        raise ValueError('demos need SS_ENV_VERSION >= 2')
 
 
 def replay_check(path):
@@ -84,7 +84,7 @@ def replay_check(path):
         env.reset(options={'stage_file': sf})
         ended_at = None
         for i, a in enumerate(actions):
-            _, _, done, trunc, _ = env.step(int(a))
+            _, _, done, trunc, _ = env._step_frames(int(a), 1)   # frame by frame
             if done or trunc:
                 ended_at = i
                 break
