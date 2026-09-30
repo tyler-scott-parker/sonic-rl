@@ -57,13 +57,17 @@ recording of Tyler's own playthrough and improved on (`coordinator.py`).
 - **Learning from Tyler's play** (branch **`demo-learning`**, stacked on
   `env-v2-fixes`): record a run with `python3 record_demo.py 1`, then
   `python3 train_ss_multistage.py d1`. See "Learning from Tyler's play" below.
-- **Base game (2026-09-30): rebuilt, and run `aiz1` is TRAINING** on Tyler's
-  recording `demos/play_20260930-153946.npz` (AIZ1 in 1:25.43, clean; he
-  stopped 0:08 into AIZ2 inside a hidden giant-ring room — resume with
-  `record_play.py --resume ...` and 3 Backspace presses to get back before the
-  tree). Read with `python3 main_progress.py --run aiz1`; stop with
-  `touch STOP_main_aiz1`. See "Base game rebuild 2026-09-30". Work is
-  uncommitted on `demo-learning` as of that date.
+- **Base game (2026-09-30): rebuilt; run `aiz1` PAUSED at 5.0M steps** (start
+  point 82%) on Tyler's recording `demos/play_20260930-153946.npz` (AIZ1 in
+  1:25.43, clean). Resume: `nohup python3 train_main.py aiz1 --resume >>
+  logs/main_aiz1.log 2>&1 &`. He stopped 0:08 into AIZ2 inside a hidden
+  giant-ring room — `record_play.py --resume ...` + 3 Backspace presses gets
+  back before the tree. See "Base game rebuild 2026-09-30".
+- **`d1` is RUNNING alone** (special stage 1 from Tyler's flawless clear,
+  `demos/stage1_20260930-165817.npz`: 102 spheres, 2925 frames, 0 rewinds).
+  Read with `python3 demo_progress.py --run d1`.
+- **The test of the demo approach is pre-committed** — see "Pre-Committed
+  Criteria": each run's first fresh-start clear, within 50M steps.
 
 ### What to expect / what to watch
 14 boards split episodes 14 ways, so per-stage numbers come SLOWLY.
@@ -248,7 +252,9 @@ check each new act's recorded clear frame/time against what you saw.
   **clear** (terminated, +600 frames), **death** (routine 6/8/$C, on that
   frame; terminated, −1800 frames ≈ a starpost restart), **special/bonus
   stage entry** (truncated — neutral; the in-game timer doesn't run there and
-  the SS agent will take these over later), or **timeout** at 2x the
+  the SS agent will take these over later), **stuck** — 600 frames (10 s)
+  with no new progress along the route, boss fights excepted (truncated;
+  added after aiz1's first stall, below), or **timeout** at 2x the
   recording's time from that start + 20 s (truncated).
 - **Reward = frames faster than the recording, along its own route.**
   `RouteProgress` maps Sonic's position to the nearest point of the recorded
@@ -292,8 +298,9 @@ check each new act's recorded clear frame/time against what you saw.
   x=7100, `MG_TEST_GOAL_X`) clears on the timer-stop frame and replays; **from
   all 11 start points, the demo's own inputs clear on its exact frame and
   return exactly +600** (start states, observation stacks and reward
-  accounting agree); the recorder round-trips with a rewind and a cached
-  resume.
+  accounting agree); standing still is cut as `stuck` after ~600 frames;
+  the recorder round-trips with a rewind, a cached resume, and a rewind past
+  the point the resumed session started from.
 - Beating the script scores as it should: jumping the ledge sooner cleared
   25 / 89 frames faster → returns 625 / 689.
 - **Special stage inside an act** (failing stage 1 hands-off from
@@ -315,6 +322,22 @@ check each new act's recorded clear frame/time against what you saw.
   act switch at 3253 with x 12249 → 217) and 4476–5244 (the miniboss). From
   every sampled start point his own inputs clear on his frame; route progress
   never leads him and lags ≤ 40 frames outside fights.
+- **aiz1's first stall (4.3M steps): the start point sat at 83% for 3.5M
+  steps.** Cause: a wall just before the miniboss (x ≈ 3830, internal act 1)
+  that is climbed by going BACK — up-left onto a ledge (y 838), then up-right
+  over the top (y 740 → 766). Tyler's route there includes a failed direct
+  jump (he fell back onto the rock pile, hesitated ~1 s, then took the ledge);
+  that's harmless for the reward (it happens on the rock pile where the ledge
+  route starts). The agent reached the ledge in sampled play but not the
+  second jump. Entropy was NOT collapsed (−1.94 of a max 2.2). The real waste:
+  **84% of all frames trained on were 47-second timeouts** (median 2800
+  frames), mostly pressed against that wall; clears were 4%. Fix: `stuck`
+  truncation after STUCK_FRAMES = 600 frames with no new route progress
+  (boss fights excepted; the demo's own inputs never lag its route by > 40
+  frames). Resumed at 4,346,400 steps with the pointer kept; PAUSED at
+  4,998,008 steps (pointer 69 = 82%, one past the wall) so the special-stage
+  run d1 gets the machine. Resume: `nohup python3 train_main.py aiz1 --resume
+  >> logs/main_aiz1.log 2>&1 &`.
 - Recorder bugs found on first real use, fixed: a cached `--resume` kept no
   rewind points (Backspace couldn't go back past where the session ended),
   and loading a state leaves the emulator's screen black until a frame runs,
@@ -431,7 +454,8 @@ through; the game's reward decides what good play is. His routing gets reused
 where it works, his mistakes don't get learned, and it can find better routes.
 
 **Recording:** `python3 record_demo.py <stage>` (50% speed by default; `--speed 25`
-for hard boards). Arrows turn/advance, Z/X/C/Space jump, **Backspace rewinds ~2 s**
+for hard boards; opens paused — any move key starts, since Sonic is already
+running in the captured state). Arrows turn/advance, Z/X/C/Space jump, **Backspace rewinds ~2 s**
 (hold to keep going), P pause, 1–4 set speed, Enter saves, R restarts, Esc quits;
 a gamepad works too. He plays with exactly the agent's 7 actions, so every frame is
 a move the agent has. Slow motion and rewind don't change what's recorded: the demo
@@ -465,6 +489,14 @@ agent beats the run. For boards Tyler can't finish, a run that dies still works 
 episodes that start near his death point push the agent past it. In a 4-minute
 smoke test on a scripted 8-sphere demo, the start point walked 93% → 78% and the
 agent out-collected the demo from each start (margin +0.9 to +2.9).
+
+**First real demo (2026-09-30):** `demos/stage1_20260930-165817.npz` — Tyler
+cleared stage 1 first try: 102/102 spheres in 2925 frames (48.75 s), 0
+rewinds, not a single jump (91% of frames he let Sonic run, turning the
+rest). `d1` launched on it; its first start point is 98 collected / 4 to go,
+where early episodes reliably take the 99th sphere and then hit red. The
+curriculum state lives in `sonic_ss_multistage_d1_demos.json` (run output,
+not committed). Pre-committed test: "Pre-Committed Criteria".
 
 ---
 
@@ -647,6 +679,44 @@ Frontier climb is **decelerating** at the top (gained_avg ~1.6–2.1, three buck
 ## Pre-Committed Criteria / Open Decisions
 
 Written down *before* the data, to read the same way later:
+
+### Does learning from Tyler's recordings beat learning from scratch? (2026-09-30, before results)
+The baselines it has to beat, both learned from scratch:
+- **Base game — v10** (PPO CNN, ~210M steps): stalls at AIZ1's first ledge
+  (x≈6765) in 3 of 3 runs. It never cleared AIZ1.
+- **Special stage 1 — the specialist** (~326M steps): never a fresh-start
+  clear (best fresh 96/102; its 3 wins were all from restart states).
+
+The tests. A *fresh start* means the act's or stage's own start state, not a
+start point along a recording:
+- **aiz1 passes** when it clears AIZ1 from a fresh start (`main_progress.py
+  --run aiz1`, "from start" clear rate > 0). Stronger bar: beating Tyler's
+  1:25.43 from there (margin > 0).
+- **d1 passes** when it clears stage 1 from a fresh start
+  (`demo_progress.py --run d1`, "fresh starts" clears > 0). Stronger bar:
+  more of them than the specialist's restart wins (3).
+- **Decisively better** = both pass within **50M steps each** (a sixth of
+  the specialist's budget, a quarter of v10's). Record the step count of each
+  run's first fresh clear.
+
+How to read the other outcomes:
+- **d1's start point never leaves 97%** → the backward curriculum's first
+  step is too steep in Blue Spheres (the end of a run is the hardest part to
+  steer). That's a finding about the curriculum, not about demos.
+- **aiz1's start point walks back but fresh starts never clear** → look at
+  where fresh episodes die. So far that's x 7168–7423, just past the first
+  ledge, in a part the curriculum hadn't reached yet.
+- **Attribution is not clean.** v10 and the specialist also ran on buggy envs
+  (base game: late death, wrong clear signal; special stage: board rows
+  24–31 invisible, deaths ~11 s late). A pass says "demos + fixed env" beat
+  "scratch + buggy env". To credit the demos alone: special stage → a
+  stage-1 run on env v2 without demos (not yet defined); base game → no
+  control exists yet (its progress is measured along the recording, so a
+  no-demo run needs an x-progress reward first).
+
+State when written: aiz1 paused at 5.0M steps (start point 82%, just past
+the wall before the miniboss); d1 running alone at ~417 steps/s (start
+point 97%, 0 matches yet).
 
 - **First win** will come from a **restart** episode (`success: true`) → that's the *scaffolded* win + emerald. Proves the endgame is solvable.
 - **Handoff-real solve** = a **fresh-start** completion (the main game drops the agent in at sphere 0). This lags the scaffolded win — a cold run must survive 0→90 (rare) *and* close 90→102. Fresh ceiling is 93, so there's real distance between "won from a restart" and "can win from zero."

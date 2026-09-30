@@ -29,3 +29,6 @@ main_*_curriculum.json
 logs_main/
 demos/_synthetic_*
 demos/.cache/
+
+# special-stage demo curricula (train_ss_multistage.py) — run state
+sonic_ss_multistage_*_demos.json
