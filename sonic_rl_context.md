@@ -63,9 +63,11 @@ recording of Tyler's own playthrough and improved on (`coordinator.py`).
   logs/main_aiz1.log 2>&1 &`. He stopped 0:08 into AIZ2 inside a hidden
   giant-ring room — `record_play.py --resume ...` + 3 Backspace presses gets
   back before the tree. See "Base game rebuild 2026-09-30".
-- **`d1` is RUNNING alone** (special stage 1 from Tyler's flawless clear,
-  `demos/stage1_20260930-165817.npz`: 102 spheres, 2925 frames, 0 rewinds).
-  Read with `python3 demo_progress.py --run d1`.
+- **`d2` is RUNNING alone** — special stage 1 from Tyler's flawless clear
+  (`demos/stage1_20260930-165817.npz`) on **env v3** (4-frame choices + the
+  stall rule). `d1` (same demo, env v2) STOPPED at 3.36M steps: 0 matches from
+  its first start point. Read with `python3 demo_progress.py --run d2`. See
+  "Env v3 — d1's failure" below.
 - **The test of the demo approach is pre-committed** — see "Pre-Committed
   Criteria": each run's first fresh-start clear, within 50M steps.
 
@@ -489,6 +491,26 @@ agent beats the run. For boards Tyler can't finish, a run that dies still works 
 episodes that start near his death point push the agent past it. In a 4-minute
 smoke test on a scripted 8-sphere demo, the start point walked 93% → 78% and the
 agent out-collected the demo from each start (margin +0.9 to +2.9).
+
+**Env v3 — d1's failure (2026-09-30).** d1 (env v2, per-frame choices) ran
+3.36M steps and never matched Tyler from its first start point (98/102, 4
+to go; his finish = two straight cells, then two single right taps).
+Measured: (1) every episode took the 99th sphere and then hit red — the
+policy (entropy −1.69 of a max −1.95) pressed a turn on 53% of frames, and
+one tap anywhere in a cell queues the turn for the next corner, so a
+straight cell needed ~12 turn-free choices in a row; (2) it learned to hop
+around the red board to postpone dying (median 752 frames alive after the
+start point, where he needed 75) — a far-off death costs less after
+discounting. **Env v3** (`SS_ENV_VERSION=3`): the agent chooses every 4
+frames (FRAME_SKIP; demos still replay frame by frame), and 600 frames
+without a sphere ends the episode as a death (STALL_FRAMES; his longest gap
+was 257). Checked: v1 and v2 are bit-identical to the committed env over
+4,003 / 6,007 seeded steps (trajectories and logs); under v3 his demo
+replays and his own inputs from the last start point clear; the stall rule
+fires at exactly 600 frames with red's penalty; all 14 boards read (straight
+runs on boards 5 and 11 meet no sphere in 10 s and end by the rule). **d2** =
+d1 on env v3, gamma 0.988 per 4-frame step (= d1's 0.997 per frame, the
+same ~5.5 s horizon). `watch_ss.py` plays v3 at real speed.
 
 **First real demo (2026-09-30):** `demos/stage1_20260930-165817.npz` — Tyler
 cleared stage 1 first try: 102/102 spheres in 2925 frames (48.75 s), 0
