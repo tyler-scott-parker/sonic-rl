@@ -1,5 +1,5 @@
 # Sonic 3 & Knuckles Special Stage RL — Full Project Context
-*Last updated: 2026-09-29 (logic-error review → env v2, v6 defined — see "What Changed 2026-09-29")*
+*Last updated: 2026-09-30 (base game rebuilt around Tyler's recorded playthrough — see "Base game rebuild 2026-09-30")*
 
 ---
 
@@ -13,6 +13,8 @@ re-asking Tyler things he's already answered.
 Training an RL agent (RecurrentPPO / sb3-contrib, stable_retro) to play the Blue
 Spheres special stages in Sonic 3 & Knuckles. Long arc: one agent that plays all
 14 special stages. Runs locally on Tyler's RTX 2070 Super.
+Second track (2026-09-30): the **base game** — acts of S3&K, learned from a
+recording of Tyler's own playthrough and improved on (`coordinator.py`).
 
 ### How we work together (important — don't get this wrong)
 - **Two channels, and they differ.** In the *web chat* you have NO filesystem
@@ -55,6 +57,13 @@ Spheres special stages in Sonic 3 & Knuckles. Long arc: one agent that plays all
 - **Learning from Tyler's play** (branch **`demo-learning`**, stacked on
   `env-v2-fixes`): record a run with `python3 record_demo.py 1`, then
   `python3 train_ss_multistage.py d1`. See "Learning from Tyler's play" below.
+- **Base game (2026-09-30): rebuilt, and run `aiz1` is TRAINING** on Tyler's
+  recording `demos/play_20260930-153946.npz` (AIZ1 in 1:25.43, clean; he
+  stopped 0:08 into AIZ2 inside a hidden giant-ring room — resume with
+  `record_play.py --resume ...` and 3 Backspace presses to get back before the
+  tree). Read with `python3 main_progress.py --run aiz1`; stop with
+  `touch STOP_main_aiz1`. See "Base game rebuild 2026-09-30". Work is
+  uncommitted on `demo-learning` as of that date.
 
 ### What to expect / what to watch
 14 boards split episodes 14 ways, so per-stage numbers come SLOWLY.
@@ -164,6 +173,177 @@ honest way to know what's load-bearing — intuition can't tell you.
 fresh chat will confidently reason from an old version.
 (`COMMANDS_v3.md` is retired: the launch/stop/resume commands now live in the
 docstring of `train_ss_multistage.py`, which cannot drift away from the code.)
+
+---
+
+## Base game rebuild 2026-09-30 — learn from Tyler's playthrough, then beat it
+
+**Goal (Tyler's words):** get the base-game coordinator set up properly; use a
+recording of his own playthrough as the agent's starting point; have it
+improve on his play from there.
+
+### What was wrong with the old main game (each checked in the emulator)
+1. **`coordinator.py` could not run.** `SS_STREAK_MULTIPLIER` and
+   `STUCK_SECONDS` were undefined — the stuck check raises NameError on the
+   first frame Sonic doesn't move, i.e. the first step — and every path was
+   `~/sonic-rl`. So the v10 model was trained by a version of the file that no
+   longer exists, by a trainer that no longer exists.
+2. **The act-clear trigger read an unnamed byte.** data.json's
+   `level_end_bonus` ($FAA8) is `_unkFAA8` in the disassembly (set by some
+   bosses' end sequences only). It never marks a signpost clear.
+3. **Death was seen late, and episodes were 3 lives long.** It keyed on the
+   lives counter, which drops ~80 frames after the fatal frame; the level
+   reloads ~290 frames after. The scenario's `done` is lives == 0, so every
+   episode ran through all three lives.
+4. **Progress was normalized by `screen_x_end`** = `Camera_max_X_pos`, the
+   camera's *current* right limit ($6000 in AIZ1 until an event locks it), not
+   the level's end.
+5. **Two more mislabels in data.json:** `shield` ($FE47) is
+   `Saved_status_secondary`, the starpost copy; `special_stage` ($FE48) is
+   `Special_bonus_entry_flag` — 1 = special stage, **2 = bonus stage**, so the
+   old `== 1` check missed bonus stages. (The SS env's use of it is fine.)
+6. **No spindash rev:** the old action 8 was B+**UP** (button index 4) under a
+   "B + down (spin dash charge)" comment. Launch speed 2048 unrevved vs 2944
+   after 6 revs.
+7. **v10** (`sonic_ppo_v10_emerald_priority.zip`, PPO CNN, 4x84x84, 9 actions,
+   210M steps): 3 of 3 stochastic 20k-frame episodes stall at x≈6765 — the
+   first ledge of AIZ1 — and never die. The ledge is cleared by a plain full
+   jump (tested), so the action-table bug is NOT the cause. Kept as a record;
+   not worth warm-starting.
+
+### RAM facts (skdisasm constants resolved to addresses; checked in the emulator)
+The disassembly (github.com/sonicretro/skdisasm) names every RAM variable, and
+its `loc_XXXXX` labels are ROM addresses of this exact ROM (`Obj_Sonic` =
+$10A94, matching Sonic's code pointer). A parser over `sonic3k.constants.asm`
+reproduces every address we already trusted ($B000, $EE78, $F600, $FE10,
+$FE20, $FFB0), so the rest can be read off it.
+
+| what | address | name | notes |
+|---|---|---|---|
+| player routine | $B005 | Player_1+routine | 2 control, 4 hurt, **6 dying, 8 restarting, $C drowned** |
+| player status | $B02A | +status | bit 1 in air, bit 2 rolling, bit 5 pushing |
+| spindash | $B03D | +spin_dash_flag | 1 while revving |
+| game mode | $F600 | Game_mode | $0C level, $8C loading, $34 special stage, $48 SS results |
+| timer running | $FE1E | Update_HUD_timer | **0 = timer stopped** (results, capsule, death fall, SS entry) |
+| in-game time | $FE23/24/25 | Timer min/sec/frame | holds the act's time at the clear |
+| stage entry | $FE48 | Special_bonus_entry_flag | 1 special, 2 bonus; cleared on return |
+| boss fight | $F7AA | Boss_flag | minibosses too |
+| title-card act | $EE4F | Apparent_act | internal `act` ($FE11) can differ: AIZ switches to act 2 mid-act with x −$2F00 |
+| signpost | $FAA6 | Signpost_addr | Obj_EndSign = ROM $837B2; needs bit 0 of Slotted_object_bits ($FA9A) |
+
+**Act end, measured** (a real signpost spawned into AIZ1): lands, $40 frames,
+then on the first frame Sonic is on the ground the results object starts,
+`Update_HUD_timer` → 0 and the timer freezes on the act time; controls lock;
+the tally runs ~1000 frames; `Apparent_act` → 1; the act-2 timer restarts from
+0:00. So **"the timer stops with Sonic alive in the level" is the act clear.**
+Act 2 ends at the capsule, whose opening clears the same flag per the
+disassembly (`loc_7403A`) — not yet seen in the emulator; the first recording
+through an act 2 will show it (`ActSplitter` would report no clear). The rule's
+one known false positive: a cutscene that stops the timer mid-act (the
+disassembly has one in Hidden Palace, the Knuckles grab) reads as a clear —
+check each new act's recorded clear frame/time against what you saw.
+
+### The design (`coordinator.py`, `record_play.py`, `train_main.py`)
+- **Episode = one act**, from a start point along a recording, ending on the
+  **clear** (terminated, +600 frames), **death** (routine 6/8/$C, on that
+  frame; terminated, −1800 frames ≈ a starpost restart), **special/bonus
+  stage entry** (truncated — neutral; the in-game timer doesn't run there and
+  the SS agent will take these over later), or **timeout** at 2x the
+  recording's time from that start + 20 s (truncated).
+- **Reward = frames faster than the recording, along its own route.**
+  `RouteProgress` maps Sonic's position to the nearest point of the recorded
+  route (same internal zone/act, within 96 px, searched −300/+600 demo frames
+  around the last match; after 8 misses the whole remaining route). Each step
+  pays the new best demo frame reached (a ratchet) minus the frames the step
+  took. The undiscounted return of a clear is therefore exactly
+  `(recording's frames to the clear − agent's frames) + 600` — "improve on
+  Tyler" is the objective, not a proxy for it. A route he didn't take is free
+  to win: off the route progress holds, and jumps when the agent rejoins.
+  Boss arenas get the whole route stacked on one screen, so while the boss
+  flag is up progress holds at his fight start and jumps to his fight end when
+  it drops: a faster kill is worth exactly the frames it saves.
+- **Backward curriculum** (Salimans & Chen 2018, as in the SS `d1` design): a
+  start point every 60 demo frames; the pointer starts at the end of each act
+  and moves one back when ≥25% of the last 16–32 episodes from it cleared
+  within 1.25x his time + 1 s. 25% of episodes always start at the act's
+  beginning (the honest measure).
+- **Actions (9, held 4 frames):** noop, left, right, down, up, jump,
+  jump+left, jump+right, jump+down. Down+left/right is left out on purpose:
+  `SonicKnux_Roll` ignores down while left/right is held (tested: down+right
+  at speed doesn't roll). The recorder maps held keys the same way the game
+  reads them, except while revving a spindash, where down keeps the charge.
+- **Observation:** 4 stacked 84x84 grayscale frames, each the max of its
+  step's last two emulator frames. Pixels only for now — add features on
+  demonstrated need.
+- **Recordings** (`demos/play_<stamp>.npz`): inputs only, plus the action
+  table itself (not just a hash — the replay always uses the table it was
+  recorded with), the start state by name + SHA1, and every act's start/clear
+  frame and time, which the trainer re-verifies by replay before launching.
+  One file is a whole playthrough across sessions (`--resume`, instant via a
+  local cache). Rewind points thin to 1 per 10 s beyond the last minute.
+- Integration states are **Sonic & Tails** (AIZ1, HCZ1, MGZ1) — except
+  AngelIslandZone.Act2, which is Sonic alone on a title card. A playthrough
+  from AIZ1 makes its own act-2 start.
+
+### Verified
+- `smoke_main.py` (7 checks, ~7 s): RAM map at the AIZ1 start; death seen on
+  the fatal frame with lives still 3 (they drop 80 frames later); the
+  down+left/right premise; a scripted mini-act (AIZ1 to a test signpost at
+  x=7100, `MG_TEST_GOAL_X`) clears on the timer-stop frame and replays; **from
+  all 11 start points, the demo's own inputs clear on its exact frame and
+  return exactly +600** (start states, observation stacks and reward
+  accounting agree); the recorder round-trips with a rewind and a cached
+  resume.
+- Beating the script scores as it should: jumping the ledge sooner cleared
+  25 / 89 frames faster → returns 625 / 689.
+- **Special stage inside an act** (failing stage 1 hands-off from
+  `curriculum_stage_1.state`, which was entered from AIZ1 at 0:19): 551
+  frames in the stage, results (gm $48; timer flag cleared at 612), reload
+  (gm $8C from 1107; entry flag cleared at 1210 with Sonic put back at the
+  ring, x 7112 y 1216, timer restored), level + timer at 1260. No frame meets
+  the clear condition, and only the ~50 loading frames after the flag clears
+  count as act time. Ring *entry* is not tested in the emulator (teleporting
+  onto the ring crashed the game to the title screen); per the disassembly
+  (`loc_90926`) the flag and game mode are set on the same frame, before the
+  timer is touched. A pit death mid-act and its reload also leave the act
+  open (no false clear).
+- **Tyler's first recording** (`play_20260930-153946`): AIZ1 1:25.43, 0
+  deaths, 0 rewinds. In S3&K AIZ1 the timer stops at the **miniboss kill**
+  (frame 5060); the signpost only spawns 184 frames later, results after
+  that — so the clear is the kill, which is when the act time is locked in.
+  Boss flag: 2459–3253 (the jungle-burning flyover, cleared by the internal
+  act switch at 3253 with x 12249 → 217) and 4476–5244 (the miniboss). From
+  every sampled start point his own inputs clear on his frame; route progress
+  never leads him and lags ≤ 40 frames outside fights.
+- Recorder bugs found on first real use, fixed: a cached `--resume` kept no
+  rewind points (Backspace couldn't go back past where the session ended),
+  and loading a state leaves the emulator's screen black until a frame runs,
+  so the recorder showed black after every rewind and at startup. Fixed by
+  caching the rewind points and drawing a one-frame peek (state restored;
+  determinism checked). `record_demo.py` (special stages) had the same black
+  screen — fixed too.
+- Recording advice given: record the time run WITHOUT giant rings or starpost
+  bonus stars. The reward is time, so a ring detour only lowers the bar (the
+  agent skips it); emeralds need their own reward decision and, ideally, the
+  env playing the stage through instead of truncating (an agent following a
+  with-rings route into the ring gets cut short, and the curriculum counts it
+  as a miss).
+- **Smoke run** (`train_main.py smoke`, the mini-act, 9 min, 536K steps): the
+  start point walked 92% → 0% by 287K steps. From the act's start, clear rate
+  19.5% → 100% and the median margin −1270 → **+20 frames** over the log; it
+  beat the script in 67% of clears in the last sixth, best +115 frames (1.9 s).
+  So the whole loop — record, replay, curriculum, reward — produces an agent
+  that out-plays its recording.
+
+### Deliberately open
+- Special stages are neutral truncations. The coordinator's eventual job is to
+  hand giant rings to the SS agent (emeralds as a reward is a decision for
+  then: it trades against act time).
+- The death penalty (1800 frames) sets the risk appetite: a shortcut is worth
+  it when it saves more than P(death) x 30 s. Revisit once there's play to read.
+- `train_main.py` has its own copies of the SS trainer's small callbacks
+  (GracefulStop, AutoSave, Prune): the SS trainer parses args at import and
+  can't be imported. Extract a shared module if a third trainer appears.
 
 ---
 
@@ -569,7 +749,7 @@ Entropy is floored (~-1.1 to -1.35) and we are **deliberately not fighting it.**
 - **Silent fallbacks turn a broken setup into a "healthy" run.** A missing state file loaded Angel Island; a failing log write was swallowed. Both are loud now. After the repo move, `~/sonic-rl` paths failed exactly this way.
 - **Check when the episode actually ends, not just that it does.** Waiting for `special_stage` to drop added ~670 dead frames per death — 44% of all v4/v5 samples, and a γ^675 discount on the death penalty.
 - **Old checkpoints stay on the env they were trained on.** `SS_ENV_VERSION=1` reproduces the pre-fix env bit-for-bit; every pre-v6 preset pins it. Feeding a v1 checkpoint the fixed grid would load fine and silently change its inputs.
-- **`coordinator.py` (main game) cannot run as-is:** `SS_STREAK_MULTIPLIER` and `STUCK_SECONDS` are referenced but never defined, its special-stage failure penalty waits on a `terminated` that the scenario only raises at lives == 0, and its `CURRICULUM_STATES[2]` now points at special stage 2. Untouched — the main game is paused.
+- **`coordinator.py` (main game) cannot run as-is:** `SS_STREAK_MULTIPLIER` and `STUCK_SECONDS` are referenced but never defined, its special-stage failure penalty waits on a `terminated` that the scenario only raises at lives == 0, and its `CURRICULUM_STATES[2]` now points at special stage 2. *[Rebuilt 2026-09-30 — see "Base game rebuild 2026-09-30".]*
 
 ---
 
@@ -653,14 +833,19 @@ branch or commit instead.
 | `capture_stages.py`, `check_stages.py` | Stage capture + distinctness verification. Capture phase is COMPLETE; kept for re-capture. |
 | `watch_ss.py` | Watch a checkpoint play. Takes a run name (or `specialist`) so the preset always matches. |
 | `watchdog.sh <run>` | Keep a run alive across crashes. Was `watchdog_v3.sh`. |
-| `coordinator.py`, `watch_agent.py`, `watch_checkpoint.py` | Main-game (paused) env + watchers. |
+| `coordinator.py` | THE base-game env (rebuilt 2026-09-30): one act per episode from a recorded playthrough; reward = frames faster than the recording. Env-var driven (`MG_*`), set by the trainer. |
+| `record_play.py` | Record a playthrough (slow-mo, rewind, `--resume`); saves `demos/play_<stamp>.npz` and proves it replays. |
+| `train_main.py` | THE base-game trainer (PPO CNN + backward curriculum per act). `RUNS` is importable (`configure_env`). |
+| `smoke_main.py` | Base-game pre-launch checks + the synthetic mini-act for `train_main.py smoke`. |
+| `main_progress.py`, `watch_main.py` | Read a base-game run against the recording; watch the agent (or `--you`, the recording) play an act. |
 | `data.json` | retro integration RAM map. |
 
 ### Model artifacts
 - `sonic_ss_model_v2.zip` + `sonic_ss_vecnormalize_v2.pkl` — **specialist baseline/control, ~326M steps, PRESERVE.**
 - `sonic_ss_multistage_v{1,2,3,4,5}.zip` + `_vecnormalize.pkl` — one final checkpoint per multistage run. **v1/v2/v3 are NOT resumable** against the current env (they used the old 15-feature vector with 4 dead zeros); they are kept as records.
 - `checkpoints_ss_multistage_v5/` — rolling checkpoints for the live run only.
-- `sonic_ppo_v10_emerald_priority.zip` — main-game model, paused ~208M steps.
+- `sonic_ppo_v10_emerald_priority.zip` — the OLD main-game model (~210M steps), a record only: stalls at AIZ1's first ledge (2026-09-30), and its env/trainer are gone. `attic/main_game/` has its watchers.
+- `main_<run>.zip` + `_vecnormalize.pkl` + `main_<run>_curriculum.json`, `checkpoints_main_<run>/`, `mg_log_<run>.jsonl` — base-game runs.
 - `ss_log_v{3,4,5}.jsonl` — per-run episode logs. `ss_log.jsonl` is the old SHARED log (specialist + v1/v2 blended; totals are meaningless, read recent windows only).
 - `states/curriculum_stage_{1..14}.state` — all 14 captured entry states, backups in `states/backup_captures/`.
 
@@ -756,6 +941,20 @@ python3 watch_ss.py v6           # or: v5 / specialist (each runs on its own env
 python3 record_demo.py 1               # play stage 1 (slow-mo + rewind), Enter saves to demos/
 python3 train_ss_multistage.py d1      # backward curriculum from your stage-1 run(s)
 python3 demo_progress.py --run d1      # catching up with you? beating you?
+```
+
+### Base game — learn from your playthrough, then beat it
+```bash
+python3 smoke_main.py                      # 7 checks, ~7 s; must say ALL CHECKS PASSED
+python3 record_play.py                     # play from Angel Island 1 (F5 saves, Enter saves+quits)
+python3 record_play.py --resume demos/play_<stamp>.npz   # keep going later
+python3 train_main.py --list
+nohup python3 train_main.py aiz1 > logs/main_aiz1.log 2>&1 &
+grep -E "FRESH|Resuming|demo check" logs/main_aiz1.log
+python3 main_progress.py --run aiz1        # start point, match rate, frames vs you
+python3 watch_main.py aiz1                 # the agent from the act's start
+python3 watch_main.py aiz1 --you           # your recording, same start
+touch ~/Projects/sonic-rl/STOP_main_aiz1   # graceful stop
 ```
 
 ### Stage capture (complete — kept for re-capture)
