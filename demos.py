@@ -102,3 +102,84 @@ def replay_check(path):
            f'{meta["outcome"]} at frame {last}, replay got {spheres} spheres, '
            f'ended at {ended_at}')
     return ok, msg
+
+
+# ── Main-game playthroughs (record_play.py -> coordinator.py) ────────────────
+# Same idea — only the inputs — plus what the special-stage format lacks:
+#   - the action TABLE itself (the 12-button mask per index), not just its
+#     hash, so a later change to the agent's actions can't reinterpret an old
+#     recording; the replay always uses the table it was recorded with
+#   - the start state by its integration name + SHA1 of its bytes
+#   - the acts the run passed through (coordinator.ActSplitter), so a replay
+#     can prove it reproduces them frame for frame
+PLAY_FORMAT = 1
+
+
+def save_play(path, actions, meta):
+    """Atomic: a crash mid-save leaves the previous file intact."""
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    meta = dict(meta, kind='main_game', play_format=PLAY_FORMAT)
+    tmp = path + '.tmp'
+    with open(tmp, 'wb') as f:
+        np.savez(f, actions=np.asarray(actions, dtype=np.uint8),
+                 meta=np.array(json.dumps(meta)))
+    os.replace(tmp, path)
+
+
+def load_play(path):
+    with np.load(path) as d:
+        actions = d['actions'].astype(np.int64)
+        meta = json.loads(str(d['meta']))
+    if meta.get('kind') != 'main_game' or meta.get('play_format') != PLAY_FORMAT:
+        raise ValueError(f'{path}: not a main-game playthrough of format {PLAY_FORMAT} '
+                         f'(kind {meta.get("kind")}, format {meta.get("play_format")})')
+    return actions, meta
+
+
+def play_start_state(meta):
+    """The bytes the recording started from; raises if they have changed."""
+    import coordinator
+    data = coordinator.integration_state(meta['start_state'])
+    if coordinator.sha1(data) != meta['start_sha1']:
+        raise ValueError(f"start state {meta['start_state']} has changed since "
+                         f"this playthrough was recorded")
+    return data
+
+
+def replay_play(actions, meta, env=None, on_frame=None):
+    """Replay a playthrough exactly as record_play.py played it. Returns the
+    ActSplitter. Uses one emulator — pass the process's own if it has one."""
+    import coordinator
+    own = env is None
+    env = env or coordinator.make_retro()
+    try:
+        env.reset()
+        env.em.set_state(play_start_state(meta))
+        split = coordinator.ActSplitter()
+        table = meta['action_table']
+        for i, a in enumerate(actions):
+            _, info = coordinator.emu_frame(env, table[a])
+            split.feed(i, info)
+            if on_frame:
+                on_frame(i, info)
+    finally:
+        if own:
+            env.close()
+    return split
+
+
+def replay_play_check(path, env=None):
+    """Replay a playthrough and confirm it reproduces the recorded acts —
+    every act's name, first frame and clear frame. Returns (ok, message)."""
+    actions, meta = load_play(path)
+    try:
+        split = replay_play(actions, meta, env=env)
+    except ValueError as e:
+        return False, str(e)
+    got = [(a['name'], a['start'], a['clear']) for a in split.summary()]
+    want = [(a['name'], a['start'], a['clear']) for a in meta['acts']]
+    if got != want:
+        return False, f'REPLAY MISMATCH: recorded {want}, replay {got}'
+    done = [f"{a['name']} {a['time']}" for a in meta['acts'] if a['clear'] is not None]
+    return True, (f'replay reproduces the run: {len(actions)} frames; cleared '
+                  f"{', '.join(done) if done else 'no act yet'}")

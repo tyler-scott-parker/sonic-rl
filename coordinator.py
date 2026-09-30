@@ -1,565 +1,657 @@
-import gymnasium as gym
+"""
+coordinator.py — the base game: Sonic 3 & Knuckles acts, learned from
+Tyler's recorded play and improved on. Rebuilt 2026-09-30 (the context doc,
+"Base game rebuild", has the why; the old SonicCoordinator could not run).
+
+The name is historical and still the plan: this env is where the special-
+stage agent will take over when Sonic jumps into a giant ring. For now a
+special or bonus stage ends the episode as a neutral truncation.
+
+EPISODE — one act of a recorded playthrough (record_play.py), started from a
+state that run passed through, until:
+  clear    the in-game timer stops with Sonic alive in the level: the results
+           screen after the signpost (act 1) or the capsule (act 2). The timer
+           then holds the act's time. Terminated, + CLEAR_BONUS.
+  death    Sonic's routine becomes 6 (dying), 8 (restarting) or $C (drowned)
+           — on that frame. The lives counter drops ~80 frames later and the
+           level reloads ~290 frames later; waiting for either would repeat
+           the special-stage env's old mistake (dead frames in every sample,
+           a death penalty discounted to nothing). Terminated, - DEATH_PENALTY.
+  stage    entered a special stage (giant ring) or a bonus stage (starpost
+           stars). Truncated: neutral either way, and the in-game timer
+           doesn't run in there.
+  timeout  far slower than the demo from the same start. Truncated.
+
+REWARD — frames faster than the demo. Progress is measured along the demo's
+own route, in demo frames: each step pays the newest demo frame it has
+reached (a ratchet, so going back and forth earns nothing) minus the frames
+the step took. At the demo's pace that nets ~0; faster is positive; standing
+still costs 1 per frame. For a clear the episode's undiscounted return is
+exactly
+    (demo frames from the start point to the clear) - (agent frames) + CLEAR_BONUS
+so improving on the demo is literally the objective, and a route the demo
+never took is free to win: off the route, progress holds until the agent
+rejoins it, then jumps to where it rejoined. Boss fights are gated: while the
+boss flag is up, progress holds at the demo's fight start; when the fight
+ends it jumps to the demo's fight end, so a faster kill is worth exactly the
+frames it saves.
+
+ACTIONS — ACTION_BUTTONS, each held for FRAME_SKIP frames.
+OBSERVATION — the last STACK agent frames: 84x84 grayscale, each the max of
+its step's last two emulator frames (sprite flicker).
+
+RAM facts (checked against the S3K disassembly, skdisasm, and in the
+emulator on 2026-09-30):
+  Player_1 object at $B000: routine +5 (2 control, 4 hurt, 6 dying,
+    8 restarting, $C drowned), x +$10, y +$14, status +$2A
+  Game_mode $F600: $0C level, $8C level loading, $34 special stage
+  Update_HUD_timer $FE1E: 0 = timer stopped; Timer $FE22 (min/sec/frame at
+    $FE23/24/25)
+  Special_bonus_entry_flag $FE48: 1 special stage, 2 bonus stage (the
+    integration calls it special_stage)
+  Boss_flag $F7AA; Apparent_act $EE4F (what the title card says);
+    Current_zone/act $FE10/$FE11 (the loaded level; AIZ switches its internal
+    act before the act-1 results, with a -$2F00 shift in x)
+  data.json mislabels three variables — level_end_bonus ($FAA8) is an
+  unnamed byte (End_of_level_flag is $FAAA), shield ($FE47) is the starpost
+  copy of the status byte, screen_x_end ($EE16) is the camera's current right
+  limit, not the level's end. None of them is used here.
+
+Environment variables (the trainer sets them before workers import this):
+  MG_DEMOS=a.npz,b.npz  recorded playthroughs (record_play.py)
+  MG_ACTS=AIZ1,AIZ2     acts to train on (labels as ACT_NAMES)
+  MG_DEMO_PROB=p        share of resets that start on the curriculum's start
+                        point; the rest start at the beginning of the act
+  MG_LOG=path           episode log (JSON lines)
+  MG_TEST_GOAL_X=x      TEST FIXTURE ONLY (smoke_main.py): spawn a signpost
+                        when Sonic first passes x, making a short fake act
+"""
+import os
+import json
+import time
+import zlib
+import gzip
+import random
+import hashlib
+import collections
+
 import numpy as np
 import cv2
-import stable_retro
-import json
-import os
-import time
+import gymnasium as gym
 from gymnasium import spaces
-from collections import deque
+import stable_retro
 
-# Correct button order: B, A, MODE, START, UP, DOWN, LEFT, RIGHT, C, Y, X, Z
+GAME = 'SonicAndKnuckles3-Genesis-v0'
+DEFAULT_START = 'AngelIslandZone.Act1'
+PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-CREDITS_ZONE = 23
-DOOMSDAY_ZONE = 11
+# Button order: B, A, MODE, START, UP, DOWN, LEFT, RIGHT, C, Y, X, Z
+# The old table's action 8 was B + UP under a "B + down (spin dash charge)"
+# comment, so its agent could never rev a spindash. Down + left/right is left
+# out on purpose: the game ignores down while left or right is held (it
+# blocks ducking and rolling), except during a spindash — see keys_to_action.
+ACTION_BUTTONS = [
+    [0,0,0,0,0,0,0,0,0,0,0,0],  # 0: no-op
+    [0,0,0,0,0,0,1,0,0,0,0,0],  # 1: left
+    [0,0,0,0,0,0,0,1,0,0,0,0],  # 2: right
+    [0,0,0,0,0,1,0,0,0,0,0,0],  # 3: down        (duck; roll when moving)
+    [0,0,0,0,1,0,0,0,0,0,0,0],  # 4: up          (look up; CNZ barrels)
+    [1,0,0,0,0,0,0,0,0,0,0,0],  # 5: jump        (shield move in the air)
+    [1,0,0,0,0,0,1,0,0,0,0,0],  # 6: jump + left
+    [1,0,0,0,0,0,0,1,0,0,0,0],  # 7: jump + right
+    [1,0,0,0,0,1,0,0,0,0,0,0],  # 8: jump + down (rev a spindash)
+]
+ACTION_NAMES = ['noop', 'left', 'right', 'down', 'up',
+                'jump', 'jump+left', 'jump+right', 'jump+down']
 
-ACT_COMPLETION_BASE     = 5000.0
-ACT_TIME_BONUS_MAX      = 2000.0
-ACT_MAX_STEPS           = 30000
-GAME_COMPLETION_BONUS   = 50000.0
+FRAME_SKIP = 4
+STACK      = 4
+OBS_SIZE   = 84
 
-CHAOS_EMERALD_REWARD    = 10000.0
-SUPER_EMERALD_REWARD    = 15000.0
-GIANT_RING_REWARD       = 2000.0
+# Reward, in frames (one frame = 1/60 s of the demo's time), then scaled.
+CLEAR_BONUS    = 600.0     # a clear is worth 10 s on top of the time saved
+DEATH_PENALTY  = 1800.0    # ~what a death costs a player: a restart from the
+                           # starpost. Risky shortcuts pay only if they save
+                           # more than P(death) x 30 s.
+REWARD_SCALE   = 0.01
 
-SS_COMPLETION_BASE      = 2000.0
-SS_SPHERE_REWARD        = 2000.0   # reward per blue sphere collected
-SS_RED_SPHERE_BASE      = 2000.0   # base penalty for touching a red sphere
-SS_RED_SPHERE_SCALE     = 2000.0   # additional penalty per blue sphere already collected
-SS_TIME_BONUS_MAX       = 300.0
-SS_MAX_STEPS            = 18000
+# Matching the demo from a start point = clearing within this much time.
+MATCH_SLACK    = 0.25      # x (demo frames from there) ...
+MATCH_ADD      = 60        # ... + 1 s
+TIMEOUT_MULT   = 2.0       # an episode is cut (truncated) at 2x the demo's
+TIMEOUT_ADD    = 1200      # time from its start point + 20 s
 
-PROGRESS_SCALE          = 2.0
-SPEED_SCALE             = 0.1
-MAX_X_VELOCITY          = 16.0
+# Route progress (see RouteProgress)
+ROUTE_RADIUS   = 96        # px: within this of the demo's route = on it
+ROUTE_BACK     = 300       # demo frames searched behind the current match
+ROUTE_AHEAD    = 600       # ... and ahead of it
+REACQUIRE      = 8         # steps off the route before searching all of it
+FIGHT_GAP      = 60        # boss-flag gaps shorter than this are one fight
 
-RING_GAIN_REWARD        = 1.0
-RING_LOSS_PENALTY       = 0.0
+# Demo start points
+CKPT_EVERY     = 60        # demo frames between start points (1 s)
+CKPT_TAIL      = 30        # no start point this close to the clear
+DEMO_BAND      = 4         # a start is drawn from [pointer, pointer + band]
 
-DEATH_PENALTY           = 200.0
-TIME_PENALTY            = 0.1
+DEMO_FILES  = [p for p in os.environ.get('MG_DEMOS', '').split(',') if p.strip()]
+ACTS        = [a for a in os.environ.get('MG_ACTS', '').split(',') if a.strip()]
+DEMO_PROB   = float(os.environ.get('MG_DEMO_PROB', '0.75'))
+LOG_FILE    = os.path.expanduser(
+    os.environ.get('MG_LOG', os.path.join(PROJECT_DIR, 'mg_log.jsonl')))
+TEST_GOAL_X = int(os.environ.get('MG_TEST_GOAL_X', '0'))
 
-# Transformation rewards
-SUPER_SONIC_REWARD      = 500.0   # one-time reward for going Super Sonic
-HYPER_SONIC_REWARD      = 750.0   # one-time reward for going Hyper Sonic
-
-# Boss rewards
-BOSS_HIT_REWARD         = 200.0  # reward per boss hit (via screen_shake rising edge)
-BOSS_DEFEAT_REWARD      = 1000.0  # reward when boss is defeated
-
-# Shield reward
-SHIELD_REWARD           = 50.0   # one-time reward for picking up any shield
-
-# Environmental context — available in info dict for future use, no penalties applied
-# water_flag, water_level, dual_collision: agent infers context visually from pixel frames
-
-# Post-SS progress boost — multiplies progress reward for a window after SS exit
-# to pull agent away from the empty ring location toward the goalpost
-POST_SS_BOOST_STEPS     = 600       # ~10 seconds at 60fps
-POST_SS_BOOST_SCALE     = 5.0       # progress reward multiplier during boost window
-STUCK_MAX_PENALTY       = 2.0     # max penalty per frame when stuck
-GAME_FPS                = 60.0    # Genesis runs at 60fps
-
-NUM_FRAMES              = 4
-MAX_EPISODE_STEPS       = 36000  # force reset if episode runs too long (matches in-game timer)
-
-# Curriculum settings
-CURRICULUM_STAGE_FILE   = os.path.expanduser("~/sonic-rl/curriculum_stage.json")
-CURRICULUM_STATES       = {
-    0: "AngelIslandZone.Act1",                                    # normal spawn
-    1: os.path.expanduser("~/sonic-rl/states/curriculum_stage_1.state"),  # special stage spawn
-    2: os.path.expanduser("~/sonic-rl/states/curriculum_stage_2.state"),  # x~6873 post-wall
+# ── RAM ──────────────────────────────────────────────────────────────────────
+# Registered on top of the integration's variables (zone, act, x, y, rings,
+# lives are the integration's own and correct). Names are prefixed so they
+# can't collide with data.json.
+RAM_VARS = {
+    'mg_routine':      (0xFFB005, '|u1'),   # Player_1+routine
+    'mg_status':       (0xFFB02A, '|u1'),   # Player_1+status (bit 1 = in air)
+    'mg_spindash':     (0xFFB03D, '|u1'),   # Player_1+spin_dash_flag: 1 while revving
+    'mg_game_mode':    (0xFFF600, '|u1'),   # Game_mode
+    'mg_hud_timer':    (0xFFFE1E, '|u1'),   # Update_HUD_timer
+    'mg_timer_min':    (0xFFFE23, '|u1'),   # Timer_minute
+    'mg_timer_sec':    (0xFFFE24, '|u1'),   # Timer_second
+    'mg_timer_frame':  (0xFFFE25, '|u1'),   # Timer_frame (0-59)
+    'mg_entry':        (0xFFFE48, '|u1'),   # Special_bonus_entry_flag
+    'mg_boss':         (0xFFF7AA, '|u1'),   # Boss_flag
+    'mg_apparent_act': (0xFFEE4F, '|u1'),   # Apparent_act
+    'mg_signpost':     (0xFFFAA6, '>u2'),   # Signpost_addr (test fixture)
 }
+GM_LEVEL       = 0x0C
+STAGE_MODES    = (0x34, 0x48)              # special stage, its results
+DEAD_ROUTINES  = (6, 8, 0xC)
 
-LOG_FILE = os.path.expanduser("~/sonic-rl/curriculum_log.jsonl")
-
-
-def _write_log(entry):
-    """Write a single JSON line to the log. Small writes are atomic on Linux."""
-    line = json.dumps(entry) + "\n"
-    try:
-        with open(LOG_FILE, "a") as f:
-            f.write(line)
-    except Exception:
-        pass
+ZONE_NAMES = {0: 'AIZ', 1: 'HCZ', 2: 'MGZ', 3: 'CNZ', 4: 'FBZ', 5: 'ICZ',
+              6: 'LBZ', 7: 'MHZ', 8: 'SOZ', 9: 'LRZ', 0xA: 'SSZ', 0xB: 'DEZ',
+              0xC: 'DDZ', 0x16: 'HPZ', 0x17: 'HPZ'}
 
 
-def _load_curriculum_stage():
-    """Read current curriculum stage from disk. Defaults to 0 if missing."""
-    try:
-        with open(CURRICULUM_STAGE_FILE, 'r') as f:
-            return int(json.load(f).get('stage', 0))
-    except Exception:
-        return 0
+def act_name(zone, apparent_act):
+    """'AIZ1', 'HCZ2', ... — the act the title card shows."""
+    return f"{ZONE_NAMES.get(int(zone), f'Z{int(zone):02X}')}{int(apparent_act) + 1}"
 
 
-def make_coordinator(**kwargs):
-    return SonicCoordinator(**kwargs)
+def make_retro(render_mode=None):
+    """The emulator, with the RAM variables above registered. stable_retro
+    allows one emulator per process."""
+    env = stable_retro.make(game=GAME, render_mode=render_mode,
+                            use_restricted_actions=stable_retro.Actions.FILTERED)
+    for name, (addr, typ) in RAM_VARS.items():
+        env.data.set_variable(name, {'address': addr, 'type': typ})
+    return env
 
+
+def integration_state(name):
+    """The bytes of one of the integration's save states ('HydrocityZone.Act1')."""
+    path = stable_retro.data.get_file_path(GAME, name + '.state')
+    if path is None:
+        raise FileNotFoundError(f'no integration state {name!r}')
+    with gzip.open(path, 'rb') as f:
+        return f.read()
+
+
+def sha1(data):
+    return hashlib.sha1(data).hexdigest()
+
+
+def process_frame(prev_raw, raw):
+    """One observation frame: max of two emulator frames (sprites flicker),
+    grayscale, 84x84."""
+    img = raw if prev_raw is None else np.maximum(prev_raw, raw)
+    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    return cv2.resize(gray, (OBS_SIZE, OBS_SIZE), interpolation=cv2.INTER_AREA)
+
+
+# ── Test fixture: a fake act end ─────────────────────────────────────────────
+# Obj_EndSign lives at $837B2 in this ROM (the disassembly's labels are ROM
+# addresses; checked against the bytes). Spawned into a free object slot, it
+# drops from the top of the screen and runs the real results sequence, so a
+# scripted run to x = MG_TEST_GOAL_X exercises the real clear signal.
+
+OBJ_ENDSIGN = 0x837B2
+SLOTTED_OBJECT_BITS = 0xFA9A   # the signpost needs bit 0 free or it deletes
+                               # itself (SetUp_ObjAttributesSlotted); another
+                               # object may hold it — the fixture takes it
+
+
+def _ram_words(env, info):
+    raw = np.frombuffer(bytes(env.get_ram()), dtype=np.uint8)
+    swapped = raw.reshape(-1, 2)[:, ::-1].reshape(-1)
+    for ram in (raw, swapped):
+        if (int(ram[0xB010]) << 8 | int(ram[0xB011])) == int(info['x']):
+            return ram
+    raise RuntimeError('cannot locate Player_1 in RAM')
+
+
+def _spawn_signpost(env, info, x):
+    ram = _ram_words(env, info)
+    for i in range(3, 110):                 # the dynamic object slots
+        base = 0xB000 + i * 0x4A
+        if not ram[base:base + 4].any():
+            writes = ((0xFF0000 + SLOTTED_OBJECT_BITS, '|u1',
+                       int(ram[SLOTTED_OBJECT_BITS]) & 0xFE),
+                      (0xFF0000 + base, '>u4', OBJ_ENDSIGN),
+                      (0xFF0000 + base + 0x10, '>u2', x))
+            for n, (addr, typ, val) in enumerate(writes):
+                env.data.set_variable(f't_{n}', {'address': addr, 'type': typ})
+                env.data.set_value(f't_{n}', val)
+            return
+    raise RuntimeError('no free object slot for the test signpost')
+
+
+def emu_frame(env, mask):
+    """Step the emulator one frame. The env, the recorder and the demo replay
+    all step through here, so a test fixture can't make them disagree."""
+    raw, _, _, _, info = env.step(mask)
+    if (TEST_GOAL_X and int(info['x']) >= TEST_GOAL_X
+            and int(info['mg_signpost']) == 0
+            and int(info['mg_game_mode']) == GM_LEVEL):
+        _spawn_signpost(env, info, TEST_GOAL_X + 0x40)
+    return raw, info
+
+
+# ── What a frame means ───────────────────────────────────────────────────────
+
+def frame_flags(info):
+    """(in_level, in_stage, dead, timer_on) for the frame just stepped."""
+    gm = int(info['mg_game_mode'])
+    in_stage = int(info['mg_entry']) != 0 or (gm & 0x7F) in STAGE_MODES
+    in_level = gm == GM_LEVEL and not in_stage
+    dead = int(info['mg_routine']) in DEAD_ROUTINES
+    timer_on = int(info['mg_hud_timer']) != 0
+    return in_level, in_stage, dead, timer_on
+
+
+def game_time(info):
+    """The in-game timer, as (minutes, seconds, frames)."""
+    return (int(info['mg_timer_min']), int(info['mg_timer_sec']),
+            int(info['mg_timer_frame']))
+
+
+def fmt_time(t):
+    m, s, f = t
+    return f'{m}:{s:02d}.{f * 100 // 60:02d}'
+
+
+class ActSplitter:
+    """Splits a run into acts, one frame at a time. The recorder, the demo
+    replay and the env all use it, so they agree on where every act starts
+    and ends.
+
+    An act starts on the first frame the in-game timer runs with Sonic alive
+    in the level, and clears on the first frame the timer stops with Sonic
+    alive in the level. Its demo time `t` counts every frame since the start
+    except those in a special or bonus stage (the in-game timer doesn't run
+    there either); deaths and the reloads after them do count."""
+
+    def __init__(self):
+        self.acts = []              # finished (cleared) acts
+        self.cur = None             # the act in progress
+        self._stage = False
+        self._dead = False
+
+    def feed(self, i, info):
+        """Frame i (0-based) was just stepped. Returns 'start', 'clear',
+        'death', 'stage' or None."""
+        in_level, in_stage, dead, timer_on = frame_flags(info)
+        event = None
+        cur = self.cur
+        if cur is None:
+            if in_level and timer_on and not dead:
+                self.cur = dict(
+                    name=act_name(info['zone'], info['mg_apparent_act']),
+                    zone=int(info['zone']), start=i, t=0, clear=None,
+                    time=None, deaths=[], stages=[])
+                event = 'start'
+        else:
+            if not in_stage:
+                cur['t'] += 1
+            if in_stage and not self._stage:
+                cur['stages'].append(i)
+                event = 'stage'
+            if dead and not self._dead:
+                cur['deaths'].append(i)
+                event = 'death'
+            if in_level and not dead and not timer_on:
+                cur['clear'] = i
+                cur['time'] = fmt_time(game_time(info))
+                self.acts.append(cur)
+                self.cur = None
+                event = 'clear'
+        self._stage, self._dead = in_stage, dead
+        return event
+
+    def summary(self):
+        """Every act so far, the unfinished one last (clear = None)."""
+        return [dict(a) for a in self.acts + ([self.cur] if self.cur else [])]
+
+
+# ── Progress along the demo's route ──────────────────────────────────────────
+
+class RouteProgress:
+    """How far along one act of the demo the agent is, in demo frames.
+
+    Each step the agent's position is matched to the nearest point of the
+    demo's route (same internal zone/act, within ROUTE_RADIUS) whose demo time
+    is within [-ROUTE_BACK, +ROUTE_AHEAD] of the last match; after REACQUIRE
+    misses in a row the whole remaining route is searched, so a shortcut is
+    paid the moment it rejoins the route. `best` only ever rises.
+
+    Boss fights: a boss arena is covered by the demo's route many times over,
+    so matching positions there would pay the fight's time for walking around.
+    Instead progress holds at the demo's fight start while the agent's boss
+    flag is up, and jumps to the demo's fight end when it drops."""
+
+    def __init__(self, route, t0, boss_on):
+        self.r = route
+        self.best = self.p = int(t0)
+        self.floor, self.cap = 0, int(route['T'])
+        self.fight = None
+        self.miss = 0
+        if boss_on:
+            self._enter_fight()
+
+    def _enter_fight(self):
+        for s, e in self.r['fights']:
+            if e > self.best:
+                self.fight = (s, e)
+                self.cap = max(s, self.best)
+                return
+        self.fight = (self.best, self.best)     # a fight the demo never had
+
+    def _leave_fight(self):
+        _, e = self.fight
+        self.fight = None
+        self.best = self.p = max(self.best, e)
+        self.floor, self.cap = e, int(self.r['T'])
+
+    def _nearest(self, lo, hi, zone, act, x, y):
+        t = self.r['t']
+        i0 = int(np.searchsorted(t, lo, 'left'))
+        i1 = int(np.searchsorted(t, hi, 'right'))
+        if i1 <= i0:
+            return None
+        sl = slice(i0, i1)
+        d2 = (self.r['x'][sl] - x) ** 2 + (self.r['y'][sl] - y) ** 2
+        d2 = np.where((self.r['zone'][sl] == zone) & (self.r['act'][sl] == act),
+                      d2, np.iinfo(np.int64).max)
+        k = int(np.argmin(d2))
+        if d2[k] > ROUTE_RADIUS ** 2:
+            return None
+        return int(t[i0 + k])
+
+    def update(self, zone, act, x, y, boss_on):
+        """Returns the demo frames gained this step (>= 0)."""
+        before = self.best
+        if boss_on and self.fight is None:
+            self._enter_fight()
+        elif not boss_on and self.fight is not None:
+            self._leave_fight()
+        args = (int(zone), int(act), int(x), int(y))
+        t = self._nearest(max(self.floor, self.p - ROUTE_BACK),
+                          min(self.cap, self.p + ROUTE_AHEAD), *args)
+        if t is None:
+            self.miss += 1
+            if self.miss >= REACQUIRE:
+                t = self._nearest(self.floor, self.cap, *args)
+        if t is not None:
+            self.miss = 0
+            self.p = t
+            self.best = max(self.best, t)
+        return self.best - before
+
+    def finish(self):
+        """The clear: the rest of the demo's time, all at once."""
+        gained = int(self.r['T']) - self.best
+        self.best = self.p = int(self.r['T'])
+        return max(0, gained)
+
+
+def _fights(t, boss):
+    """[(start, end)] in demo time of the demo's boss fights."""
+    out = []
+    for ti, b in zip(t, boss):
+        if b:
+            if out and ti - out[-1][1] <= FIGHT_GAP:
+                out[-1][1] = ti + 1
+            else:
+                out.append([ti, ti + 1])
+    return [tuple(f) for f in out]
+
+
+# ── The environment ──────────────────────────────────────────────────────────
 
 class SonicCoordinator(gym.Env):
-    metadata = {"render_modes": ["human", "rgb_array"]}
+    """One act at a time, from states along recorded playthroughs."""
 
-    def __init__(self, render_mode=None, ss_model=None):
+    metadata = {'render_modes': ['rgb_array']}
+
+    def __init__(self, demo_files=None, acts=None, demo_prob=None):
         super().__init__()
-        self.render_mode = render_mode
-        self.ss_model = ss_model
-
-        self.base_env = stable_retro.make(
-            "SonicAndKnuckles3-Genesis-v0",
-            render_mode=render_mode if render_mode == "human" else "rgb_array",
-        )
-
-        # 4 stacked frames
+        self.demo_files = list(demo_files if demo_files is not None else DEMO_FILES)
+        self.acts = list(acts if acts is not None else ACTS)
+        self.demo_prob = DEMO_PROB if demo_prob is None else demo_prob
+        if not self.demo_files:
+            raise ValueError('SonicCoordinator needs recorded playthroughs '
+                             '(MG_DEMOS / demo_files): episodes start on them '
+                             'and progress is measured along them')
+        self.base_env = make_retro()
+        self.action_space = spaces.Discrete(len(ACTION_BUTTONS))
         self.observation_space = spaces.Box(
-            low=0, high=255, shape=(NUM_FRAMES, 84, 84), dtype=np.uint8
-        )
+            low=0, high=255, shape=(OBS_SIZE, OBS_SIZE, STACK), dtype=np.uint8)
+        self._segs = None            # built from the demos at the first reset
+        self._ptr = {}               # segment key -> start checkpoint (trainer-set)
+        self._log_warned = False
+        self._last_raw = None
+        self._stack = collections.deque(maxlen=STACK)
 
-        # 9 actions — correct button mapping
-        # Button order: B, A, MODE, START, UP, DOWN, LEFT, RIGHT, C, Y, X, Z
-        self.action_space = spaces.Discrete(9)
+    # ── Demos → start points and routes ──────────────────────────────────
 
-        self._actions = [
-            [0,0,0,0,0,0,0,0,0,0,0,0],  # 0: no-op
-            [1,0,0,0,0,0,0,0,0,0,0,0],  # 1: B (jump)
-            [0,0,0,0,0,0,1,0,0,0,0,0],  # 2: left
-            [0,0,0,0,0,0,0,1,0,0,0,0],  # 3: right
-            [0,0,0,0,0,1,0,0,0,0,0,0],  # 4: down (spin dash charge)
-            [0,0,0,0,1,0,0,0,0,0,0,0],  # 5: up
-            [1,0,0,0,0,0,1,0,0,0,0,0],  # 6: B + left
-            [1,0,0,0,0,0,0,1,0,0,0,0],  # 7: B + right
-            [1,0,0,0,1,0,0,0,0,0,0,0],  # 8: B + down (spin dash charge)
-        ]
+    def _build(self):
+        """Replay every demo once through emu_frame, keeping for each act to
+        train on: its route (position + boss flag per demo frame) and a start
+        point every CKPT_EVERY demo frames (compressed emulator state + the
+        observation stack there). A replay that doesn't reproduce the
+        recording raises: a silently different demo would teach wrong targets.
+        Lazy (first reset of each worker); nothing is written to disk."""
+        import demos as demo_io
+        self._segs = []
+        for path in self.demo_files:
+            actions, meta = demo_io.load_play(path)
+            table = meta['action_table']
+            start = demo_io.play_start_state(meta)
+            want = [i for i, a in enumerate(meta['acts'])
+                    if a['clear'] is not None and (not self.acts or a['name'] in self.acts)]
+            if not want:
+                continue
+            last = meta['acts'][want[-1]]['clear']
+            self.base_env.reset()
+            self.base_env.em.set_state(start)
+            split = ActSplitter()
+            # observation frames i-12 .. i; the stack at frame i is every 4th
+            procs = collections.deque(maxlen=(STACK - 1) * FRAME_SKIP + 1)
+            prev_raw = None
+            seg = None
+            for i, a in enumerate(actions[:last + 1]):
+                raw, info = emu_frame(self.base_env, table[a])
+                procs.append(process_frame(prev_raw, raw))
+                prev_raw = raw
+                event = split.feed(i, info)
+                if event == 'start' and len(split.acts) in want:
+                    seg = dict(demo=demo_io.demo_id(path), name=split.cur['name'],
+                               index=len(split.acts), ckpts=[],
+                               path=collections.defaultdict(list))
+                if seg is None:
+                    continue
+                if event == 'clear':
+                    self._finish_seg(seg, split.acts[-1], meta['acts'][seg['index']])
+                    seg = None
+                    continue
+                t = split.cur['t']
+                in_level, _, dead, timer_on = frame_flags(info)
+                if not in_level or dead:
+                    continue
+                p = seg['path']
+                p['t'].append(t)
+                p['zone'].append(int(info['zone']))
+                p['act'].append(int(info['act']))
+                p['x'].append(int(info['x']))
+                p['y'].append(int(info['y']))
+                p['boss'].append(int(info['mg_boss']) != 0)
+                if timer_on and (not seg['ckpts'] or t - seg['ckpts'][-1]['t'] >= CKPT_EVERY):
+                    # a recording's first frames have no history: repeat the oldest
+                    frames = [procs[0]] * (procs.maxlen - len(procs)) + list(procs)
+                    seg['ckpts'].append(dict(
+                        state=zlib.compress(self.base_env.em.get_state(), 6),
+                        stack=np.stack(frames[::FRAME_SKIP], -1),
+                        t=t, boss=int(info['mg_boss']) != 0, frame=i))
+        if not self._segs:
+            raise ValueError(f'no cleared act in {self.demo_files} matches '
+                             f'MG_ACTS={self.acts}')
 
-        self.frame_buffer = deque(maxlen=NUM_FRAMES)
-        self._reset_state()
+    def _finish_seg(self, seg, act, recorded):
+        if (act['start'], act['clear'], act['name']) != (
+                recorded['start'], recorded['clear'], recorded['name']):
+            raise ValueError(f"{seg['demo']}: replay found {act['name']} at frames "
+                             f"{act['start']}-{act['clear']}, the recording "
+                             f"{recorded['name']} at {recorded['start']}-{recorded['clear']}")
+        T = act['t']
+        seg['ckpts'] = [c for c in seg['ckpts'] if T - c['t'] >= CKPT_TAIL]
+        if not seg['ckpts']:
+            raise ValueError(f"{seg['demo']} {act['name']}: too short to start from")
+        route = {k: np.asarray(v, dtype=np.int64) for k, v in seg.pop('path').items()}
+        route['fights'] = _fights(route['t'], route.pop('boss'))
+        route['T'] = T
+        seg.update(route=route, T=T, time=act['time'],
+                   key=f"{seg['demo']}:{act['name']}")
+        self._segs.append(seg)
 
-    def _reset_state(self):
-        self.prev_info = {}
-        self.prev_x = None
-        self.start_x = None
-        self.act_start_step = 0
-        self.ss_start_step = 0
-        self.total_steps = 0
-        self.in_special_stage = False
-        self.game_done = False
-        self.prev_zone = None
-        self.prev_act = None
-        self.best_x = None
-        self.last_x = None
-        self.best_screen_x = None
-        self.frame_buffer.clear()
-        # Stuck detection using game timer
-        self.stuck_timer = 0          # frames spent without x progress
-        self.stuck_x_anchor = None    # x position when stuck timer started
-        # Boss state
-        self.in_boss_fight = False
-        self.prev_level_end_bonus = 0
-        # Super Sonic state
-        self.was_super = False
-        self.episode_steps = 0
-        # Curriculum state
-        self.curriculum_stage = 0
-        # Logging state
-        self.episode_stuck_xs = []
-        self.last_logged_stuck_x = None
-        self.death_x = None
-        self.episode_start_time = time.time()
-        self.max_rings = 0
-        self.prev_blue_spheres = None
-        self.best_screen_x_log = 0
-        self.max_chaos_emeralds = 0
-        self.max_super_emeralds = 0
-        self.act_completed = False
-        self.boss_encountered = False
-        self.was_super_log = False
-        self.giant_rings_entered = 0
-        self.ss_failures = 0
-        self.ss_successes = 0
-        self.max_spheres_collected = 0
-        self.ss_best_streak = 0
-        self.ss_current_streak = 0
-        self.ss_speed_level = 0
-        self.ss_prev_speed_timer = None
-        self.post_ss_boost_remaining = 0  # steps remaining in post-SS progress boost
+    def demo_info(self):
+        """For the trainer's curriculum: per act of each demo, its key, act
+        time, and where each start point sits in it (fraction of demo time)."""
+        if self._segs is None:
+            self._build()
+        return [dict(key=s['key'], demo=s['demo'], name=s['name'], T=s['T'],
+                     time=s['time'], fracs=[c['t'] / s['T'] for c in s['ckpts']])
+                for s in self._segs]
 
-    def _log_episode(self, zone, act):
-        entry = {
-            "t": round(time.time()),
-            "zone": int(zone),
-            "act": int(act),
-            "best_x": int(self.best_x) if self.best_x is not None else None,
-            "best_screen_x": int(self.best_screen_x_log),
-            "death_x": int(self.death_x) if self.death_x is not None else None,
-            "stuck_xs": self.episode_stuck_xs,
-            "steps": self.total_steps,
-            "duration_s": round(time.time() - self.episode_start_time, 1),
-            "max_rings": int(self.max_rings),
-            "max_chaos_emeralds": int(self.max_chaos_emeralds),
-            "max_super_emeralds": int(self.max_super_emeralds),
-            "act_completed": self.act_completed,
-            "boss_encountered": self.boss_encountered,
-            "was_super": self.was_super_log,
-            "giant_rings_entered": self.giant_rings_entered,
-            "ss_failures": self.ss_failures,
-            "ss_successes": self.ss_successes,
-            "max_spheres_collected": self.max_spheres_collected,
-            "ss_best_streak": self.ss_best_streak,
-            "ss_speed_level": self.ss_speed_level,
-        }
-        _write_log(entry)
+    def set_demo_pointers(self, pointers):
+        """Called by the trainer (VecEnv.env_method) as the curriculum moves."""
+        self._ptr.update({k: int(v) for k, v in pointers.items()})
 
-    def _preprocess(self, obs):
-        frame = obs[32:208, :, :]
-        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
-        frame = cv2.resize(frame, (84, 84))
-        return frame
-
-    def _get_stacked_obs(self, frame):
-        self.frame_buffer.append(frame)
-        while len(self.frame_buffer) < NUM_FRAMES:
-            self.frame_buffer.appendleft(frame)
-        return np.array(self.frame_buffer, dtype=np.uint8)
-
-    def _is_super_sonic_draining(self, super_sonic_flag):
-        """Use direct RAM flag instead of heuristic ring drain detection."""
-        return super_sonic_flag != 0
-
-    def _compute_reward(self, info):
-        reward = 0.0
-
-        zone             = info.get('zone', 0)
-        act              = info.get('act', 0)
-        x                = info.get('x', 0)
-        y                = info.get('y', 0)
-        rings            = info.get('rings', 0)
-        score            = info.get('score', 0)
-        lives            = info.get('lives', 3)
-        chaos_em         = info.get('chaos_emeralds', 0)
-        super_em         = info.get('super_emeralds', 0)
-        special          = info.get('special_stage', 0)
-        x_end            = info.get('screen_x_end', 24576)
-        boss_flag        = info.get('boss_flag', 0)
-        level_end_bonus  = info.get('level_end_bonus', 0)
-        level_started    = info.get('level_started', 0)
-        super_sonic      = info.get('super_sonic', 0)
-        shield           = info.get('shield', 0)
-        screen_shake     = info.get('screen_shake', 0)
-
-        prev_rings       = self.prev_info.get('rings', rings)
-        prev_lives       = self.prev_info.get('lives', lives)
-        prev_chaos       = self.prev_info.get('chaos_emeralds', 0)
-        prev_super_em    = self.prev_info.get('super_emeralds', 0)
-        prev_special     = self.prev_info.get('special_stage', 0)
-        prev_zone        = self.prev_info.get('zone', zone)
-        prev_act         = self.prev_info.get('act', act)
-        prev_x           = self.prev_info.get('x', x)
-        prev_y           = self.prev_info.get('y', y)
-        prev_shield      = self.prev_info.get('shield', 0)
-        prev_screen_shake = self.prev_info.get('screen_shake', 0)
-
-        # ── Game completion ──────────────────────────────────────────────
-        if zone == CREDITS_ZONE and prev_zone != CREDITS_ZONE:
-            reward += GAME_COMPLETION_BONUS
-            self.game_done = True
-            return reward
-
-        # ── Special stage ────────────────────────────────────────────────
-        if special == 1:
-            if not self.in_special_stage:
-                self.in_special_stage = True
-                self.ss_start_step = self.total_steps
-                self.prev_blue_spheres = None
-                self.giant_rings_entered += 1
-                self._spheres_collected_this_stage = 0
-                self.ss_best_streak = 0
-                self.ss_current_streak = 0
-                self.ss_speed_level = 0
-                self.ss_prev_speed_timer = None
-                # Only reward entry if emeralds still remain to collect
-                if chaos_em < 7 or super_em < 7:
-                    reward += GIANT_RING_REWARD
-
-            blue_spheres = info.get('blue_spheres_remaining', None)
-
-            # Reward each blue sphere collected
-            if blue_spheres is not None:
-                if self.prev_blue_spheres is not None and blue_spheres < self.prev_blue_spheres:
-                    spheres_collected = self.prev_blue_spheres - blue_spheres
-                    reward += spheres_collected * SS_SPHERE_REWARD
-                    self._spheres_collected_this_stage = getattr(self, '_spheres_collected_this_stage', 0) + spheres_collected
-                    if self._spheres_collected_this_stage > self.max_spheres_collected:
-                        self.max_spheres_collected = self._spheres_collected_this_stage
-                    # Update streak and apply multiplier bonus
-                    self.ss_current_streak += spheres_collected
-                    streak_bonus = self.ss_current_streak * SS_STREAK_MULTIPLIER * spheres_collected
-                    reward += streak_bonus
-                    if self.ss_current_streak > self.ss_best_streak:
-                        self.ss_best_streak = self.ss_current_streak
-                self.prev_blue_spheres = blue_spheres
-
-            # Track speed level via ss_speed_timer resets
-            ss_speed_timer = info.get('ss_speed_timer', None)
-            if ss_speed_timer is not None and self.ss_prev_speed_timer is not None:
-                if ss_speed_timer > self.ss_prev_speed_timer + 100:  # timer reset = speed increase
-                    self.ss_speed_level += 1
-            self.ss_prev_speed_timer = ss_speed_timer
-
-            reward -= TIME_PENALTY
-            return reward
-
-        if self.in_special_stage and special == 0:
-            self.in_special_stage = False
-            ss_steps = self.total_steps - self.ss_start_step
-            emerald_gained = False
-            if chaos_em > prev_chaos:
-                gained = chaos_em - prev_chaos
-                reward += CHAOS_EMERALD_REWARD * gained
-                emerald_gained = True
-            if super_em > prev_super_em:
-                gained = super_em - prev_super_em
-                reward += SUPER_EMERALD_REWARD * gained
-                emerald_gained = True
-            if emerald_gained:
-                time_bonus = max(0.0, (SS_MAX_STEPS - ss_steps) / SS_MAX_STEPS) * SS_TIME_BONUS_MAX
-                reward += SS_COMPLETION_BASE + time_bonus
-                self.ss_successes += 1
-            else:
-                self.ss_failures += 1
-            # Start post-SS progress boost regardless of success/failure —
-            # agent should move toward goalpost either way
-            self.post_ss_boost_remaining = POST_SS_BOOST_STEPS
-
-        # ── Boss mode ────────────────────────────────────────────────────
-        if boss_flag and not self.in_boss_fight:
-            self.in_boss_fight = True
-
-        # Track chaos emeralds and boss
-        if chaos_em > self.max_chaos_emeralds:
-            self.max_chaos_emeralds = chaos_em
-        if super_em > self.max_super_emeralds:
-            self.max_super_emeralds = super_em
-        if boss_flag:
-            self.boss_encountered = True
-        if super_sonic != 0:
-            self.was_super_log = True
-
-        if self.in_boss_fight:
-            # Boss defeated — level_end_bonus transitions 0 → nonzero
-            if level_end_bonus and not self.prev_level_end_bonus:
-                reward += BOSS_DEFEAT_REWARD
-                self.in_boss_fight = False
-                self.act_completed = True
-            # In boss fight: suspend progress reward, just apply time penalty
-            # Ring and death rewards still apply below
-            self.prev_level_end_bonus = level_end_bonus
-            reward -= TIME_PENALTY
-
-            # Still track rings and death during boss
-            ring_delta = rings - prev_rings
-            draining = self._is_super_sonic_draining(super_sonic)
-            if not draining:
-                if ring_delta > 0:
-                    reward += ring_delta * RING_GAIN_REWARD
-                elif ring_delta < 0 and rings > 0:
-                    reward += ring_delta * RING_LOSS_PENALTY
-            if lives < prev_lives:
-                reward -= DEATH_PENALTY
-                self.death_x = x
-
-            return reward
-
-        # ── Act completion (level_end_bonus is canonical — fires after score tally) ──
-        if level_end_bonus and not self.prev_level_end_bonus and not self.in_boss_fight:
-            act_steps = self.total_steps - self.act_start_step
-            time_bonus = max(0.0, (ACT_MAX_STEPS - act_steps) / ACT_MAX_STEPS) * ACT_TIME_BONUS_MAX
-            reward += ACT_COMPLETION_BASE + time_bonus
-            self.act_start_step = self.total_steps
-            self.act_completed = True
-        # Reset spatial tracking on zone/act change
-        if (zone != prev_zone or act != prev_act) and prev_zone is not None:
-            self.start_x = x
-            self.best_x = x
-            self.best_screen_x = None
-            self.stuck_timer = 0
-            self.stuck_x_anchor = None
-
-        # ── Progress reward (camera scroll) ──────────────────────────────
-        screen_x = info.get('screen_x', 0)
-        if self.best_screen_x is None:
-            self.best_screen_x = screen_x
-        if screen_x > self.best_screen_x:
-            level_length = x_end - (self.start_x or 0)
-            if level_length > 0:
-                progress_gained = (screen_x - self.best_screen_x) / level_length
-                boost = POST_SS_BOOST_SCALE if self.post_ss_boost_remaining > 0 else 1.0
-                reward += progress_gained * PROGRESS_SCALE * boost
-            self.best_screen_x = screen_x
-
-        # Count down post-SS boost window
-        if self.post_ss_boost_remaining > 0:
-            self.post_ss_boost_remaining -= 1
-
-        # Track character x and screen_x for curriculum logging
-        if self.best_x is None:
-            self.best_x = x
-        if x > self.best_x:
-            self.best_x = x
-        if screen_x > self.best_screen_x_log:
-            self.best_screen_x_log = screen_x
-
-        # ── Speed reward (weak rightward bootstrap) ───────────────────────
-        x_delta = x - prev_x
-        if x_delta > 0:
-            speed_ratio = min(x_delta / MAX_X_VELOCITY, 1.0)
-            reward += speed_ratio * SPEED_SCALE
-
-        # ── Super/Hyper Sonic transformation reward ─────────────────────
-        is_super = (super_sonic != 0)
-        if is_super and not self.was_super:
-            if super_sonic == 1:
-                reward += SUPER_SONIC_REWARD
-            elif super_sonic == 255:
-                reward += HYPER_SONIC_REWARD
-        self.was_super = is_super
-
-        # ── Stuck detection (game-timer based, only after level starts) ───
-        if level_started:
-            if self.stuck_x_anchor is None:
-                self.stuck_x_anchor = x
-
-            if abs(x - self.stuck_x_anchor) > 16:
-                # Made meaningful progress — reset stuck timer
-                self.stuck_timer = 0
-                self.stuck_x_anchor = x
-            else:
-                self.stuck_timer += 1
-                stuck_seconds = self.stuck_timer / GAME_FPS
-                if stuck_seconds > STUCK_SECONDS:
-                    # Escalate penalty the longer we're stuck
-                    progress = min((stuck_seconds - STUCK_SECONDS) / STUCK_SECONDS, 1.0)
-                    penalty = STUCK_MAX_PENALTY * progress
-                    reward -= penalty
-                    # Log stuck position
-                    if (self.last_logged_stuck_x is None or
-                            abs(x - self.last_logged_stuck_x) > 50):
-                        self.episode_stuck_xs.append(int(x))
-                        self.last_logged_stuck_x = x
-
-        # ── Ring rewards ─────────────────────────────────────────────────
-        ring_delta = rings - prev_rings
-        draining = self._is_super_sonic_draining(super_sonic)
-        doomsday = (zone == DOOMSDAY_ZONE)
-
-        if not doomsday and not draining:
-            if ring_delta > 0:
-                reward += ring_delta * RING_GAIN_REWARD
-            elif ring_delta < 0 and rings > 0:
-                reward += ring_delta * RING_LOSS_PENALTY
-        if rings > self.max_rings:
-            self.max_rings = rings
-
-        # ── Shield acquisition ───────────────────────────────────────────
-        # Reward picking up any shield (fire, lightning, bubble, or basic)
-        if shield != 0 and prev_shield == 0:
-            reward += SHIELD_REWARD
-
-        # ── Boss hit detection (screen shake) ────────────────────────────
-        # screen_shake goes positive on boss hit/bomb impact, negative for earthquakes
-        # Rising edge of positive shake = boss hit or explosion
-        if screen_shake > 0 and prev_screen_shake == 0 and self.in_boss_fight:
-            reward += BOSS_HIT_REWARD
-
-        # ── Death ────────────────────────────────────────────────────────
-        if lives < prev_lives:
-            reward -= DEATH_PENALTY
-            self.death_x = x
-
-        # ── Time penalty ─────────────────────────────────────────────────
-        reward -= TIME_PENALTY
-
-        return reward
+    # ── Episodes ─────────────────────────────────────────────────────────
 
     def reset(self, seed=None, options=None):
-        if self.prev_zone is not None and self.best_x is not None:
-            self._log_episode(self.prev_zone, self.prev_act or 0)
-
-        # Load curriculum stage and spawn at appropriate state
-        stage = _load_curriculum_stage()
-        state_path = CURRICULUM_STATES.get(stage, CURRICULUM_STATES[0])
-
-        if stage > 0 and os.path.exists(state_path):
-            # Load custom save state for this curriculum stage
-            obs, info = self.base_env.reset()
-            with open(state_path, 'rb') as f:
-                self.base_env.em.set_state(f.read())
-            obs = self.base_env.em.get_screen()
+        super().reset(seed=seed)
+        if self._segs is None:
+            self._build()
+        opts = options or {}
+        if 'key' in opts:
+            seg = next(s for s in self._segs if s['key'] == opts['key'])
         else:
-            obs, info = self.base_env.reset()
+            seg = random.choice(self._segs)
+        last = len(seg['ckpts']) - 1
+        if 'ckpt' in opts:
+            k = min(int(opts['ckpt']), last)
+        elif random.random() < self.demo_prob:
+            ptr = min(self._ptr.get(seg['key'], last), last)
+            k = random.randint(ptr, min(last, ptr + DEMO_BAND))
+        else:
+            k = 0                                   # the start of the act
+        ck = seg['ckpts'][k]
 
-        self._reset_state()
-        self.curriculum_stage = stage
-        # If spawning inside special stage, mark as already entered
-        if stage == 1:
-            self.in_special_stage = True
-            self.ss_start_step = 0
-            self._spheres_collected_this_stage = 0
-            self.ss_best_streak = 0
-            self.ss_current_streak = 0
-            self.ss_speed_level = 0
-            self.ss_prev_speed_timer = None
-        frame = self._preprocess(obs)
-        self.frame_buffer.clear()
-        stacked = self._get_stacked_obs(frame)
-        return stacked, {}
+        self.base_env.reset()
+        self.base_env.em.set_state(zlib.decompress(ck['state']))
+        self._stack.clear()
+        for j in range(STACK):
+            self._stack.append(ck['stack'][..., j])
+        self._last_raw = None
+
+        self._seg, self._k, self._ck = seg, k, ck
+        self._route = RouteProgress(seg['route'], ck['t'], ck['boss'])
+        self._target = seg['T'] - ck['t']
+        self._max_frames = int(self._target * TIMEOUT_MULT + TIMEOUT_ADD)
+        self.frames = 0
+        self.ret = 0.0
+        self._t0 = time.time()
+        self._xmax = None
+        return self._obs(), {}
+
+    def _obs(self):
+        return np.stack(self._stack, axis=-1)
 
     def step(self, action):
-        buttons = self._actions[int(action)]
-        obs, _, terminated, truncated, info = self.base_env.step(buttons)
-        self.total_steps += 1
-        self.episode_steps += 1
-        if self.episode_steps >= MAX_EPISODE_STEPS:
-            truncated = True
+        mask = ACTION_BUTTONS[int(action)]
+        event, n, raws = None, 0, []
+        for _ in range(FRAME_SKIP):
+            raw, info = emu_frame(self.base_env, mask)
+            n += 1
+            raws.append(raw)
+            in_level, in_stage, dead, timer_on = frame_flags(info)
+            if in_stage:
+                event = 'stage'
+            elif dead:
+                event = 'death'
+            elif in_level and not timer_on:
+                event = 'clear'
+            if event:
+                break
+        prev = raws[-2] if len(raws) > 1 else self._last_raw
+        self._stack.append(process_frame(prev, raws[-1]))
+        self._last_raw = raws[-1]
+        self.frames += n
+        x = int(info['x'])
+        self._xmax = x if self._xmax is None else max(self._xmax, x)
 
-        if self.prev_x is None:
-            self.prev_x = info.get('x', 0)
-            self.start_x = info.get('x', 0)
-            self.best_x = info.get('x', 0)
-            self.act_start_step = self.total_steps
-            self.prev_zone = info.get('zone', 0)
-            self.prev_act = info.get('act', 0)
+        r = -float(n)
+        if event == 'clear':
+            r += self._route.finish() + CLEAR_BONUS
+        elif event == 'death':
+            r -= DEATH_PENALTY
+        elif event is None:
+            r += self._route.update(info['zone'], info['act'], x, int(info['y']),
+                                    int(info['mg_boss']) != 0)
+        self.ret += r
+        terminated = event in ('clear', 'death')
+        truncated = event == 'stage' or (not terminated and self.frames >= self._max_frames)
+        if terminated or truncated:
+            outcome = event or 'timeout'
+            info = dict(info)
+            info['mg_result'] = self._result(outcome, info)
+        return self._obs(), r * REWARD_SCALE, terminated, truncated, info
 
-        reward = self._compute_reward(info)
+    def _result(self, outcome, info):
+        cleared = outcome == 'clear'
+        res = dict(
+            key=self._seg['key'], start=self._k, outcome=outcome,
+            frames=self.frames, target=self._target,
+            margin=(self._target - self.frames) if cleared else None,
+            success=cleared and self.frames <= self._target * (1 + MATCH_SLACK) + MATCH_ADD,
+            progress=round((self._route.best - self._ck['t']) / max(1, self._target), 4))
+        self._log(res, info)
+        return res
 
-        # Cache prev_chaos BEFORE overwriting prev_info — the termination check below
-        # needs the value from the previous step, not the current one.
-        prev_chaos_cached = self.prev_info.get('chaos_emeralds', 0)
-
-        self.prev_x = info.get('x', self.prev_x)
-        self.prev_zone = info.get('zone', self.prev_zone)
-        self.prev_act = info.get('act', self.prev_act)
-        self.prev_info = info
-
-        frame = self._preprocess(obs)
-        stacked = self._get_stacked_obs(frame)
-
-        # Red sphere detection: terminated inside special stage without earning an emerald
-        if terminated and self.in_special_stage:
-            curr_chaos = info.get('chaos_emeralds', 0)
-            if curr_chaos == prev_chaos_cached:  # no emerald earned = red sphere hit
-                spheres_collected = getattr(self, '_spheres_collected_this_stage', 0)
-                # Flat penalty that always makes dying net -2500 regardless of N
-                # sphere rewards = N * 2000
-                # penalty = 2000 + 2000*N + 500 → net = -2500
-                dynamic_penalty = SS_RED_SPHERE_BASE + SS_RED_SPHERE_SCALE * spheres_collected + 500
-                reward -= dynamic_penalty
-                self.ss_current_streak = 0  # break streak on red sphere
-
-        done = terminated or self.game_done
-        return stacked, reward, done, truncated, info
+    def _log(self, res, info):
+        entry = dict(
+            t=round(time.time()), act=self._seg['name'], demo=self._seg['demo'],
+            start=self._k, start_frac=round(self._ck['t'] / self._seg['T'], 4),
+            outcome=res['outcome'], frames=res['frames'], target=res['target'],
+            margin=res['margin'], success=res['success'], progress=res['progress'],
+            ret=round(self.ret, 1), game_time=fmt_time(game_time(info)),
+            x=int(info['x']), y=int(info['y']), x_max=self._xmax,
+            rings=int(info['rings']), duration=round(time.time() - self._t0, 1))
+        try:
+            with open(LOG_FILE, 'a') as f:
+                f.write(json.dumps(entry) + '\n')
+        except Exception as e:
+            if not self._log_warned:                # say so once: a run with no
+                self._log_warned = True             # episode log can't be read
+                print(f'[coordinator] WARNING: cannot write episode log '
+                      f'{LOG_FILE}: {e!r}', flush=True)
 
     def render(self):
-        return self.base_env.render()
+        return self.base_env.em.get_screen()
 
     def close(self):
         self.base_env.close()
