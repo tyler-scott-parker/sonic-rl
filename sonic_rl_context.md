@@ -1,5 +1,5 @@
 # Sonic 3 & Knuckles Special Stage RL — Full Project Context
-*Last updated: 2026-09-30 (base game rebuilt around Tyler's recorded playthrough — see "Base game rebuild 2026-09-30")*
+*Last updated: 2026-10-01, d2 RUNNING (base game rebuilt around Tyler's recordings; special-stage env v3 + run d2 — see "Current state")*
 
 ---
 
@@ -63,11 +63,19 @@ recording of Tyler's own playthrough and improved on (`coordinator.py`).
   logs/main_aiz1.log 2>&1 &`. He stopped 0:08 into AIZ2 inside a hidden
   giant-ring room — `record_play.py --resume ...` + 3 Backspace presses gets
   back before the tree. See "Base game rebuild 2026-09-30".
-- **`d2` is RUNNING alone** — special stage 1 from Tyler's flawless clear
-  (`demos/stage1_20260930-165817.npz`) on **env v3** (4-frame choices + the
-  stall rule). `d1` (same demo, env v2) STOPPED at 3.36M steps: 0 matches from
-  its first start point. Read with `python3 demo_progress.py --run d2`. See
-  "Env v3 — d1's failure" below.
+- **`d2` is RUNNING alone (resumed 2026-10-01 14:25 at 2,060,008 steps, ~295
+  steps/s).** Paused by Tyler earlier on 2026-10-01. `d2` (special stage 1
+  from Tyler's flawless clear, `demos/stage1_20260930-165817.npz`, on **env
+  v3**: 4-frame choices + the stall rule) was resumed 2026-09-30 21:10 at 303K
+  and stopped cleanly at **2,060,008 steps**. The first start point FELL at
+  ~614K steps (the milestone d1 never reached); start point now **82%**
+  (ptr 80). Pace: 97→88% in ~150K steps, then ~1 point per 150K. The last
+  bucket (start 84%) matched only 2% vs 10–13% before — watch for a stall
+  there. Fresh starts: mean spheres 1.9 → 17.4, best 41/102, 0 clears.
+  Resume: `nohup python3 train_ss_multistage.py d2 --resume >>
+  logs/ss_multistage_d2.log 2>&1 &`, read with `python3 demo_progress.py
+  --run d2`. Speed fell 270 → 160 steps/s while a game was using the GPU.
+  See "Env v3 — d1's failure" below.
 - **The test of the demo approach is pre-committed** — see "Pre-Committed
   Criteria": each run's first fresh-start clear, within 50M steps.
 
