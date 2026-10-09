@@ -1,5 +1,5 @@
 # Sonic 3 & Knuckles Special Stage RL — Full Project Context
-*Last updated: 2026-10-09 evening — d2 STOPPED by Tyler at 6.36M (start point 78%); d3 (env v4, one choice per corner, branch `corner-decisions`) RUNNING ALONE, ~94 steps/s ≈ 2,200 frames/s (see "Current state")*
+*Last updated: 2026-10-09 ~19:30 — PAUSED by Tyler, nothing training. d3 (env v4) saved at 537,616 steps (~12.4M frames): start point 56%, fresh-start mean 80.8/102 (best 98), 0 clears. Env v5 + run d4 built, not started. Branch `corner-decisions` (see "Current state")*
 
 ---
 
@@ -63,6 +63,21 @@ recording of Tyler's own playthrough and improved on (`coordinator.py`).
   logs/main_aiz1.log 2>&1 &`. He stopped 0:08 into AIZ2 inside a hidden
   giant-ring room — `record_play.py --resume ...` + 3 Backspace presses gets
   back before the tree. See "Base game rebuild 2026-09-30".
+- **PAUSED by Tyler 2026-10-09 ~19:30 — nothing is training.** Pick up here:
+  - **d3** (env v4, stage 1) saved at **537,616 steps (~12.4M frames)**: start
+    point **56%** of Tyler's run (d2 stalled at 78% after 22.8M frames);
+    fresh starts mean **80.8/102**, best **98**, **0 clears** yet. Resume:
+    `nohup python3 train_ss_multistage.py d3 --resume >> logs/ss_multistage_d3.log 2>&1 &`
+    (~94 steps/s ≈ 2,200 frames/s alone). Its pre-committed checks (see
+    Pre-Committed Criteria): gate at **25M frames** (start point past 78% —
+    already met; re-run the steering probe adapted to v4 there), stall stop at
+    15M frames without a move, first fresh clear within 100M frames.
+  - **d4** (env v5, stages 1-4, one demo each, 5-7 held out) is defined and
+    verified (`smoke_corners.py d4` passes), NOT STARTED — waits on d3's gate
+    and Tyler's go.
+  - Tyler's demos: stage1 (Sep 30), stage2/3/4 (2026-10-09), all clears.
+  - Branch `corner-decisions` (on top of base-game ← demo-learning ←
+    env-v2-fixes): nothing merged or pushed. d2 (v3) remains resumable.
 - **`d2` STOPPED by Tyler 2026-10-09 ~16:45 at 6,355,232 steps** to give d3
   the machine (graceful stop, resumable with `--resume >>`). Start point 78%
   (79%→78% at 5.71M after ~2.3M steps at 79%). In frames: 97%→78% took 22.8M
