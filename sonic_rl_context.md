@@ -1,5 +1,5 @@
 # Sonic 3 & Knuckles Special Stage RL — Full Project Context
-*Last updated: 2026-10-01, d2 RUNNING (base game rebuilt around Tyler's recordings; special-stage env v3 + run d2 — see "Current state")*
+*Last updated: 2026-10-09 evening, d2 RUNNING again (resumed 15:08 at 5.15M); why it stalls is now measured — it can't go straight on the ground, so it jumps instead (see "Current state")*
 
 ---
 
@@ -63,8 +63,80 @@ recording of Tyler's own playthrough and improved on (`coordinator.py`).
   logs/main_aiz1.log 2>&1 &`. He stopped 0:08 into AIZ2 inside a hidden
   giant-ring room — `record_play.py --resume ...` + 3 Backspace presses gets
   back before the tree. See "Base game rebuild 2026-09-30".
-- **`d2` is RUNNING alone (resumed 2026-10-01 14:25 at 2,060,008 steps, ~295
-  steps/s).** Paused by Tyler earlier on 2026-10-01. `d2` (special stage 1
+- **`d2` RUNNING again — resumed 2026-10-09 15:08 at 5,148,624 steps** (~340
+  steps/s, second `=== resumed 2026-10-09` marker in the log). Before that it
+  was paused by Tyler 13:58 that day after a 12:28 resume at 4,050,816 steps.
+  At 5.2M: start point still 79%; fresh-start bucket mean 26.2, new best 75
+  (was 69), 0 clears. Stop: `touch STOP_d2`.
+  At 4.89M (13:38): start point **still 79%**; since the resume 0/316 matches
+  from 79%, 9.5% from 83%, overall falling 2.4%→1.7%; fresh starts mean
+  21.8→26.8 spheres, best 63, 0 clears. 53% of demo-start episodes ended by
+  the stall rule, 35% on own-trail red.
+- **"It can't see the last spheres" — TESTED 2026-10-09 and REFUTED.**
+  `attic/one_off_tools/probe_visibility.py` played the 13:41 d2 save 100× from
+  the 79% start (CPU, own log, no pool captures) and replayed Tyler's run as
+  the yardstick; `probe_analyze.py` summarizes. Yardsticks held: the patch
+  from the agent's own obs and from RAM agreed on all 39,115 steps; blue cells
+  = the game's counter every step; one step before a pickup the clear-path
+  distance was 1 in 1,661 of 1,773 (the rest = springs/loops). Result: 56
+  stalls, 38 red, 6 clears. In **all 56 stalls a blue sphere was in the 15×15
+  view (95% of the 600-frame window, median) AND reachable without crossing
+  red**; median 3 blues left, nearest **3 cells** when the stall clock started,
+  and the agent passed within 1 cell. Tyler's own run from 79% always had a
+  blue within 5 cells (median 1) and never needed a jump. So a wider patch or a
+  direction-to-nearest-sphere feature would NOT fix this — it sees them and
+  doesn't steer onto them. Not yet measured: what it does in those 10 s
+  (turn presses, heading, lane vs the target's lane).
+- **Why it doesn't steer onto them — MEASURED 2026-10-09: on the ground it
+  can't go straight, so it jumps to go straight, and in the air it can't turn
+  or collect.** `attic/one_off_tools/probe_steering.py` played the 15:08 d2
+  save (5.15M) 100× from 79% (CPU, raw per-frame pose + per-decision action
+  probabilities + every board change); `steering_analyze.py` scores every
+  intersection's move against a heading-aware shortest route to the nearest
+  blue (no reversing, no red/bumpers, no jumps). Yardsticks held: Tyler's moves
+  are on a shortest route at 96% of his 145 intersections (a random legal move:
+  58%), 100% when a blue was 1 step away; the turn inferred from cells matched
+  the queued-corner byte on 859/859 turns; 548/548 pickups landed on a blue
+  cell. Results (58 stalls, 30 red, 12 clears):
+  - **Air:** Sonic is airborne ($E432 bit 7; value 1 = a buffered jump, still
+    on the ground) on 46% of frames (53% in stall windows); Tyler on 0% from
+    79%. 64% of intersections are crossed in the air (74% in stalls). **Turns
+    don't happen in the air:** a turn was pressed before 85–91% of airborne
+    intersections and only 7–8% turned (on the ground: 92%).
+  - **Ground:** it turns at ~90% of intersections (Tyler: 44%). Where ONLY
+    straight was right it went straight 6% (collecting) / 9% (stalled); the
+    policy's chance of pressing no turn in the whole window is median 0.00 /
+    0.07 (P(turn) ~0.5 per decision, ~3 decisions per cell). A turn needs one
+    press in the window; straight needs none in all three — so the policy never
+    learned ground straights and uses a jump (one press, ~24 frames of straight)
+    instead. P(start a jump) is 0.12 per ground decision and 0.39 in the air
+    (chaining hops).
+  - **Stragglers:** in 31 of 58 stall windows the closest approach was a blue
+    1 step away — and in 26 of those 31 Sonic was airborne at that
+    intersection (73 airborne vs 15 grounded dist-1 moments in all). Grounded
+    moves in stall windows are at chance (57% vs 53%; collecting 75% vs 55%).
+    Direct fly-overs of a blue: only 14, in 17% of windows — it mostly passes
+    BESIDE the straggler mid-hop, not over it.
+  - Same disease as d1 ("never held a straight line"): env v3 cut the window
+    from ~12 choices per cell to ~3, which left the asymmetry intact.
+  Candidate fix (a NEW run, Tyler's call — not started): **one decision per
+  intersection** (straight / left / right / jump, taken at each corner's centre
+  for the next one), so straight costs one choice like a turn; Tyler's demo is
+  145 such decisions. Needs a gamma rescale (per cell, not per 4 frames) and an
+  emulator check that a one-frame tap after a centre always queues the next
+  corner. Raw outputs (`steer_*.json`, 33 MB, and the probe's model copy
+  `d2.zip/.pkl`) are untracked in `attic/one_off_tools/`.
+- Earlier: **paused by Tyler 2026-10-01 17:33.** `d2` stopped
+  cleanly at **4,050,816 steps**, start point **79%** (ptr 77). That day's
+  session (resumed 14:25 at 2.06M): 82% held ~1.0M steps (1.69M→2.72M), then
+  81% at 2.72M, 80% at 3.36M, 79% at 3.40M and still 79% at 4.05M — pace slowed
+  from ~75K steps per point (97→82%) to ~650K. Match rate from the 81–84%
+  starts was 3–7% vs the 25% (8 of the last 32) needed to move. Fresh starts:
+  mean spheres 21.6 in the last bucket (best 69 overall), 0 clears. At ~650K
+  per point, 79%→0% is ~50M more steps, right at the pre-committed cutoff;
+  check again at ~6–7M before calling it a stall. ~176 steps/s while Vanguard
+  Galaxy held the GPU at 82%.
+- Before that: `d2` (special stage 1
   from Tyler's flawless clear, `demos/stage1_20260930-165817.npz`, on **env
   v3**: 4-frame choices + the stall rule) was resumed 2026-09-30 21:10 at 303K
   and stopped cleanly at **2,060,008 steps**. The first start point FELL at
@@ -943,7 +1015,7 @@ branch or commit instead.
 ### Model artifacts
 - `sonic_ss_model_v2.zip` + `sonic_ss_vecnormalize_v2.pkl` — **specialist baseline/control, ~326M steps, PRESERVE.**
 - `sonic_ss_multistage_v{1,2,3,4,5}.zip` + `_vecnormalize.pkl` — one final checkpoint per multistage run. **v1/v2/v3 are NOT resumable** against the current env (they used the old 15-feature vector with 4 dead zeros); they are kept as records.
-- `checkpoints_ss_multistage_v5/` — rolling checkpoints for the live run only.
+- `checkpoints_ss_multistage_<run>/` — rolling checkpoints, kept only for live or paused runs (d2, and `checkpoints_main_aiz1/`). Deleted 2026-10-09 (1.3 GB): v5's and d1's rolling checkpoints and `checkpoints_main_smoke/`; their final saves (v5 19.53M, d1 3.36M) are the top-level `.zip`s.
 - `sonic_ppo_v10_emerald_priority.zip` — the OLD main-game model (~210M steps), a record only: stalls at AIZ1's first ledge (2026-09-30), and its env/trainer are gone. `attic/main_game/` has its watchers.
 - `main_<run>.zip` + `_vecnormalize.pkl` + `main_<run>_curriculum.json`, `checkpoints_main_<run>/`, `mg_log_<run>.jsonl` — base-game runs.
 - `ss_log_v{3,4,5}.jsonl` — per-run episode logs. `ss_log.jsonl` is the old SHARED log (specialist + v1/v2 blended; totals are meaningless, read recent windows only).
