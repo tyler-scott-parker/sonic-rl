@@ -194,6 +194,38 @@ recording of Tyler's own playthrough and improved on (`coordinator.py`).
   human passed without one (answer: straight). d3 is unaffected: stage 1 has
   no jumps. Proposed for the multi-stage run: env v5 = v4 + the two
   turn-jump actions (a new action space, so not for d3).
+- **Env v5 BUILT 2026-10-09 (Tyler said go):** `SS_ENV_VERSION=5` = v4 + actions
+  `left+jump` / `right+jump` (tap the turn until taken, wait for the rotation
+  to start, press B until the game buffers it). v4/v3 stay bit-identical
+  (seeded random play, with and without demos, vs the committed code). Random
+  v5 play: every turn+jump not cut short by a bumper turned and then jumped
+  (643/643). Run **`d4`** defined, NOT STARTED: stages 1-4, one pinned demo
+  each, env v5, d3's hyperparameters; stages 5-7 held out for the zero-shot
+  test. Launch only after d3's gate and Tyler's go.
+- **Turn-window fix (v4 AND v5), found building v5:** the game's turn window
+  is where `(position & 0xFF) < 32` along the travel — the 32 units AFTER a
+  corner's centre moving up an axis (S, E), the 32 units BEFORE it moving
+  down (N, W) (tap sweeps in both directions). v4's decision rule only asked
+  "before the centre", so a cell reached by a landing or bounce 0-31 units
+  above a corner while moving N/W could be offered too late, and the turn
+  fired one corner late. The press comes on the NEXT frame, so moving down an
+  axis the cell needs at least one frame's travel above the centre (16 units
+  at base speed: Tyler's stage-4 landing 16 above, then a right turn, is
+  fine; random play's landing 8 above was not); otherwise it is skipped
+  (straight). A first fix demanded 32 units and wrongly skipped Tyler's turn.
+  Random v4 play: 3 of 2,787 choices (0.11%) were late under the old rule.
+- **Jump needs a fresh press (v4 AND v5):** with B still held from the frame
+  before, pressing it does nothing. Found at stage 4's start point 40 (Tyler
+  held B through a landing in his hop-hop; the env's jump did nothing and
+  Sonic ran into red). A press whose button was down on the previous frame
+  now gets one released frame first. Only that 1 of 329 demo start points
+  began mid-press (stage 1's 65: none); in play it can follow a very short
+  bumper-bounce step.
+- `smoke_corners.py` now matches human and env corners BY CELL, names moves
+  an env lacks, and checks every demo's own start points. Final state:
+  `smoke_corners.py d3` (v4) and `d4` (v5) ALL CHECKS PASS — all four demos
+  replay to their clears from a fresh start and from all 329 start points.
+  v3 still bit-identical. v4 changed on purpose (window rule, fresh press).
 - Earlier: **paused by Tyler 2026-10-01 17:33.** `d2` stopped
   cleanly at **4,050,816 steps**, start point **79%** (ptr 77). That day's
   session (resumed 14:25 at 2.06M): 82% held ~1.0M steps (1.69M→2.72M), then

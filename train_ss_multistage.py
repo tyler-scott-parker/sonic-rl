@@ -27,7 +27,8 @@ env v1, which had the logic errors found 2026-09-29 (grid blind to board rows
 special_stage_env.py); they must stay on v1. v6 is the first run on env v2.
 Env v3 (d2 onward) adds 4-frame choices and the stall rule for demo learning.
 Env v4 (d3 onward) makes it one choice per corner: check it with
-`python3 smoke_corners.py d3` before launching.
+`python3 smoke_corners.py d3` before launching. Env v5 (d4) adds
+turn-then-jump: `python3 smoke_corners.py d4`.
 
 LEARNING FROM YOUR PLAY: record a run with `python3 record_demo.py <stage>`
 (slow motion + rewind; it lands in demos/). A RUNS entry with `demos=[...]`
@@ -163,11 +164,24 @@ RUNS = {
         demos=['stage1_20260930-165817'], demo_prob=0.75,
         ppo=dict(gamma=0.95),           # per CORNER now: ~20 corners, the same
                                         # ~20-cell horizon d2 had at base speed
-        result='RUNNING since 2026-10-09. d2 on env v4: one choice per corner (straight / '
+        result='RUNNING since 2026-10-09 (resumed on the lag-frame, turn-window '
+               'and fresh-press fixes). d2 on env v4: one choice per corner (straight / '
                'left / right / jump), so going straight is one choice like a '
                'turn. d2 never learned ground straights and hopped instead '
                '(probe_steering.py). Same demo, obs, network, stall rule. A '
                'step is now ~16-32 frames, not 4: compare runs in frames.',
+    ),    'd4': dict(
+        stages=[1, 2, 3, 4], lstm=512, lr=3e-4,
+        obs=dict(SS_ENV_VERSION='5',
+                 SS_USE_PIXELS='0', SS_PATCH_R='7', SS_DROP_POSITION='1'),
+        demos=['stage1_20260930-165817', 'stage2_20261009-170251',
+               'stage3_20261009-170931', 'stage4_20261009-172620'],
+        demo_prob=0.75,
+        ppo=dict(gamma=0.95),
+        result='NOT STARTED — proposal, launch only after d3\'s gate and '
+               'Tyler\'s go. d3\'s setup on four boards, one demo each, on env '
+               'v5 (adds turn-then-jump, which stage 4 needs). Stages 5-7 stay '
+               'held out for the zero-shot test (eval_transfer.py).',
     ),
 }
 

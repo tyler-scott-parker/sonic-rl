@@ -115,12 +115,15 @@ SS_LOG_FILE = os.path.expanduser(
 #   SS_ENV_VERSION=4           -> v3's stall rule, but ONE CHOICE PER CORNER
 #                                 (straight / left / right / jump; see below).
 #                                 Run d3 onward.
+#   SS_ENV_VERSION=5           -> v4 + turn-then-jump (left+jump, right+jump).
+#                                 For boards that need it; run d4 onward.
 ENV_VERSION = int(os.environ.get('SS_ENV_VERSION', '2'))
-if ENV_VERSION not in (1, 2, 3, 4):
-    raise ValueError(f'SS_ENV_VERSION must be 1, 2, 3 or 4, got {ENV_VERSION}')
+if ENV_VERSION not in (1, 2, 3, 4, 5):
+    raise ValueError(f'SS_ENV_VERSION must be 1-5, got {ENV_VERSION}')
 V2 = ENV_VERSION >= 2       # v3 keeps every v2 fix
 V3 = ENV_VERSION >= 3       # v4 keeps the stall rule
-V4 = ENV_VERSION >= 4
+V4 = ENV_VERSION >= 4       # v5 keeps the corner choices
+V5 = ENV_VERSION >= 5
 
 # ── env v3 (2026-09-30), found by run d1 (per-frame, env v2) ─────────────────
 #   - FRAME_SKIP: the agent chooses every 4 frames and the action is held.
@@ -165,10 +168,22 @@ STALL_FRAMES  = 600
 #   - a bumper pushes him back about a cell, and he runs into it again until
 #     a turn fires — so the agent must get choices during the bounce, and his
 #     motion there runs against heading x speed sign
+#   - jump needs a fresh press: with B still held from the frame before
+#     (Tyler's stage-4 hop-hop, held through a landing) pressing it does
+#     nothing. So a press whose button was down on the last frame is
+#     preceded by one released frame
+#   - the turn window is where (position & 0xFF) < 32 along the travel —
+#     the 32 units after the centre moving up an axis (S, E), the 32 BEFORE it
+#     moving down (N, W). Found 2026-10-09 when v5 random play landed 8 units
+#     above a corner moving W at 16/frame: the press, on the next frame, ended
+#     past the window and the turn fired one corner late. (Landing 16 above
+#     is fine: the next frame ends on the centre — Tyler turned there, stage 4)
 #   Decision point = the first grounded, moving frame on a cell not yet
-#     decided, while still BEFORE its centre along his actual motion (either
-#     way, so bumper bounces offer choices too). A cell first reached past its
-#     centre (a long landing) is skipped: it goes straight.
+#     decided, with the corner still reachable by a press on the next frame:
+#     before the centre moving up an axis, at least one frame's travel above
+#     it moving down (along his actual motion, so bumper bounces offer choices
+#     too). A cell reached too late (a landing, a bounce) is skipped: it goes
+#     straight.
 #   - the game sometimes skips a frame's logic (a lag frame: nothing moves,
 #     input ignored) — and it tends to be the frame right after Sonic crosses
 #     into a new cell, i.e. right after a decision point. A one-frame tap there
@@ -176,8 +191,18 @@ STALL_FRAMES  = 600
 #     lost at frame 3339). So the button is held until the game shows it took
 #     it — the corner byte reads the turn, or the jump byte is set — up to
 #     CORNER_TAP_MAX frames, which ends well before the corner
-CORNER_ACTIONS     = ('straight', 'left', 'right', 'jump')
-CORNER_TAP         = (None, 2, 3, 1)    # the ACTION_BUTTONS index tapped for each
+#
+# ── env v5 (2026-10-09), found by Tyler's stage-4 demo ───────────────────────
+#   Turn-then-jump: B pressed DURING a corner's rotation is buffered ($E432 =
+#   1) and fires the instant the turn ends, launching straight out of the
+#   corner. v4 can't: a corner gets one choice, and the next jump chance is
+#   half a cell later. Tyler used it twice to finish stage 4; with these two
+#   actions all four of his demos replay to their clears (smoke_corners.py).
+#   left+jump / right+jump: tap the turn (until taken), wait for the rotation
+#   to start, then press B until the game buffers it.
+CORNER_ACTIONS     = (('straight', 'left', 'right', 'jump')
+                      + (('left+jump', 'right+jump') if V5 else ()))
+CORNER_TAP         = (None, 2, 3, 1, 2, 3)  # the ACTION_BUTTONS index pressed first
 CORNER_TAP_MAX     = 3                  # frames a tap is held at most (lag frames)
 CORNER_MAX_FRAMES  = 240                # a step never runs longer (spring flights)
 
@@ -399,9 +424,14 @@ class SpecialStageEnv(gym.Env):
         # signed offset from the cell's centre along the travel, board-wrapped
         ox = (x - (cell[1] << 8) + 4096) % 8192 - 4096
         oy = (y - (cell[0] << 8) + 4096) % 8192 - 4096
-        if abs(mx) >= abs(my):
-            return ox * mx < 0              # still before the corner
-        return oy * my < 0
+        off, up, v = ((ox, mx > 0, abs(mx)) if abs(mx) >= abs(my)
+                      else (oy, my > 0, abs(my)))
+        # the turn window is where (position & 0xFF) < 32: the 32 units AFTER
+        # the centre moving up the axis, the 32 BEFORE it moving down. The
+        # choice is pressed on the NEXT frame, so that frame must still end
+        # in or before the window, or the turn fires a corner late. Moving
+        # down that means at least one frame's travel (v) above the centre
+        return off < 0 if up else off >= v
 
     @staticmethod
     def _quadrant(heading):
@@ -560,6 +590,7 @@ class SpecialStageEnv(gym.Env):
         # the reset frame is the demo's own next frame, so the episode starts
         # exactly on a state the demo passed through
         frame, _, _, _, info = self.base_env.step(ACTION_BUTTONS[ck['action']])
+        self._last_buttons = ACTION_BUTTONS[ck['action']]
         f = ck['fields']
         self.steps = f['steps']
         self._last_pickup = self.steps      # the stall clock starts here
@@ -687,6 +718,7 @@ class SpecialStageEnv(gym.Env):
         self._last_pickup = 0            # frame of the last sphere (v3 stall rule)
         self._stalled = False
         self._decided = None             # v4: the cell whose corner was last offered
+        self._last_buttons = None        # v4: held on the last frame (presses need an edge)
         self._prev_xy = None             # v4: last frame's position, for the travel
         self.prev_blue_spheres = None
         self.prev_chaos_em = 0
@@ -808,11 +840,12 @@ class SpecialStageEnv(gym.Env):
                 raise RuntimeError('episode ended before its first decision point')
         raise RuntimeError(f'no decision point within {CORNER_MAX_FRAMES} frames of reset')
 
-    def _tap_taken(self, action, info):
-        """v4: did the game register this corner action? (A lag frame drops it.)"""
-        if CORNER_ACTIONS[action] == 'jump':
+    def _tap_taken(self, button, info):
+        """v4: did the game register this press? (A lag frame drops it.)
+        button: 'left', 'right' or 'jump'."""
+        if button == 'jump':
             return int(self._ram()[ADDR_JUMPING]) != 0
-        return int(info.get('ss_next_corner', 0)) == (4 if CORNER_ACTIONS[action] == 'left' else -4)
+        return int(info.get('ss_next_corner', 0)) == (4 if button == 'left' else -4)
 
     def step(self, action):
         if V4:
@@ -822,16 +855,32 @@ class SpecialStageEnv(gym.Env):
     def _step_corner(self, action):
         """v4: one corner. Press the chosen button until the game takes it (one
         frame, unless a lag frame drops it), then play on until the next
-        decision point (or the episode ends, or CORNER_MAX_FRAMES)."""
+        decision point (or the episode ends, or CORNER_MAX_FRAMES). v5's
+        turn+jump presses B as soon as the turn's rotation starts."""
+        presses = CORNER_ACTIONS[action].split('+')   # e.g. ['left', 'jump']
         tap = CORNER_TAP[action]
-        held = tap is not None
+        held, n_held = tap is not None, 0
+        then_jump = len(presses) == 2                 # v5: jump out of the turn
+        h0 = int(self._ram()[ADDR_HEADING])
         total = 0.0
         for t in range(CORNER_MAX_FRAMES):
+            # a press only counts on a fresh edge: if its button is still down
+            # from the frame before (a demo start mid-press, a short bounce
+            # step), let go for one frame first
+            last = self._last_buttons
+            pressing = held and not (n_held == 0 and last is not None and any(
+                a and b for a, b in zip(last, self._actions[tap])))
             frame, reward, done, truncated, info = self._frame(
-                self._actions[tap if held else 0])
+                self._actions[tap if pressing else 0])
             total += reward
-            if held and (t + 1 >= CORNER_TAP_MAX or self._tap_taken(action, info)):
+            n_held += pressing
+            if pressing and (n_held >= CORNER_TAP_MAX or self._tap_taken(presses[0], info)):
                 held = False
+                if presses[0] == 'jump':
+                    then_jump = False
+            elif then_jump and not held and int(self._ram()[ADDR_HEADING]) != h0:
+                # the rotation has started: press B now, it fires as the turn ends
+                tap, held, n_held, presses = 1, True, 0, ['jump']
             if done or truncated or self._at_decision(info):
                 break
         info['frames'] = t + 1
@@ -853,6 +902,7 @@ class SpecialStageEnv(gym.Env):
         frame, _, game_terminated, game_truncated, info = \
             self.base_env.step(buttons)
         self.steps += 1
+        self._last_buttons = buttons
         if self.frame_hook is not None:
             self.frame_hook(frame)
 
