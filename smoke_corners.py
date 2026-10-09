@@ -90,7 +90,10 @@ for path, d in zip(DEMOS, env._demos):
 
     env.reset(options={'stage_file': sse.stage_file(meta['stage'])})
     got = follow(points, 0)
-    check(got == (final, cleared) and env.steps == len(actions),
+    # v4 may finish a few frames SOONER, never later: it queues each turn before
+    # the corner's window, and a human tap on the window's last frame fires one
+    # frame late (stage 2, 2026-10-09: 3 frames over 213 corners)
+    check(got == (final, cleared) and env.steps <= len(actions),
           f'your corners from a fresh start: {got} in {env.steps} frames '
           f'(recorded: {final} spheres, cleared={cleared}, {len(actions)} frames)')
 

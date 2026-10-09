@@ -157,6 +157,13 @@ recording of Tyler's own playthrough and improved on (`coordinator.py`).
   horizon). A step is ~16-32 frames vs d2's 4 — **compare d2 and d3 in
   frames**: d2's pre-committed 50M steps = 200M frames ≈ 9M d3 steps (Tyler's
   call whether that is the d3 budget). `watch_ss.py d3` draws every frame.
+- **Tyler's stage-2 demo, recorded 2026-10-09 17:02:**
+  `demos/stage2_20261009-170251.npz` — flawless clear, 127/127, 3,786 frames,
+  0 rewinds, no jumps. NOT used by d3 (d3 is pinned to the stage-1 demo); it
+  is for a later multi-stage run. As v4 corners: 213 (straight 158, right 35,
+  left 20), same route, 127, clear, in 3,783 frames — 3 fewer because a few of
+  his turns were tapped on the last frame of a corner's window (fires one
+  frame late) while v4 queues before the window.
 - Earlier: **paused by Tyler 2026-10-01 17:33.** `d2` stopped
   cleanly at **4,050,816 steps**, start point **79%** (ptr 77). That day's
   session (resumed 14:25 at 2.06M): 82% held ~1.0M steps (1.69M→2.72M), then
