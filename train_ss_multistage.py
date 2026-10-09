@@ -129,11 +129,13 @@ RUNS = {
     ),
     # Learning from Tyler's play. `demos` = patterns under demos/ (record with
     # record_demo.py); `demo_prob` = share of episodes that start on a demo.
+    # Pin a run's demos to exact files: a wildcard like 'stage1_*' would pull
+    # a NEW recording into the run on its next resume and change the experiment.
     'd1': dict(
         stages=[1], lstm=512, lr=3e-4,
         obs=dict(SS_ENV_VERSION='2',
                  SS_USE_PIXELS='0', SS_PATCH_R='7', SS_DROP_POSITION='1'),
-        demos=['stage1_*'], demo_prob=0.75,
+        demos=['stage1_20260930-165817'], demo_prob=0.75,
         result='STOPPED 2026-09-30 at ~3.1M steps on Tyler\'s stage-1 clear: '
                '0 matches from its first start point (98/102) in ~2,500 '
                'episodes. Per-frame choices never held a straight line (53% '
@@ -145,21 +147,23 @@ RUNS = {
         stages=[1], lstm=512, lr=3e-4,
         obs=dict(SS_ENV_VERSION='3',
                  SS_USE_PIXELS='0', SS_PATCH_R='7', SS_DROP_POSITION='1'),
-        demos=['stage1_*'], demo_prob=0.75,
+        demos=['stage1_20260930-165817'], demo_prob=0.75,
         ppo=dict(gamma=0.988),          # 0.997 per frame ~= 0.988 per 4 frames:
                                         # the same ~5.5 s horizon d1 had
-        result='NOT STARTED. d1 on env v3: the agent chooses every 4 frames '
-               '(a straight cell is ~3 choices, not ~12 frames) and 10 s '
-               'without a sphere counts as touching red. Same demo, obs and '
-               'network. The question: does the first start point fall now?',
+        result='STOPPED 2026-10-09 at 6.36M steps (~25M frames): start point '
+               '97% -> 78%, 0 fresh-start clears (best 75/102). d1 on env v3 '
+               '(4-frame choices + the 10 s stall rule). It never learned to '
+               'go straight on the ground (6-9% where only straight was right) '
+               'and jumped instead, so it flew past the last spheres '
+               '(probe_steering.py). Superseded by d3.',
     ),    'd3': dict(
         stages=[1], lstm=512, lr=3e-4,
         obs=dict(SS_ENV_VERSION='4',
                  SS_USE_PIXELS='0', SS_PATCH_R='7', SS_DROP_POSITION='1'),
-        demos=['stage1_*'], demo_prob=0.75,
+        demos=['stage1_20260930-165817'], demo_prob=0.75,
         ppo=dict(gamma=0.95),           # per CORNER now: ~20 corners, the same
                                         # ~20-cell horizon d2 had at base speed
-        result='NOT STARTED. d2 on env v4: one choice per corner (straight / '
+        result='RUNNING since 2026-10-09. d2 on env v4: one choice per corner (straight / '
                'left / right / jump), so going straight is one choice like a '
                'turn. d2 never learned ground straights and hopped instead '
                '(probe_steering.py). Same demo, obs, network, stall rule. A '

@@ -1,5 +1,5 @@
 # Sonic 3 & Knuckles Special Stage RL — Full Project Context
-*Last updated: 2026-10-09 evening — d2 RUNNING (start point 78% at 6.3M); env v4 (one choice per corner) BUILT and verified on branch `corner-decisions`, run d3 defined (see "Current state")*
+*Last updated: 2026-10-09 evening — d2 STOPPED by Tyler at 6.36M (start point 78%); d3 (env v4, one choice per corner, branch `corner-decisions`) RUNNING ALONE, ~94 steps/s ≈ 2,200 frames/s (see "Current state")*
 
 ---
 
@@ -63,7 +63,11 @@ recording of Tyler's own playthrough and improved on (`coordinator.py`).
   logs/main_aiz1.log 2>&1 &`. He stopped 0:08 into AIZ2 inside a hidden
   giant-ring room — `record_play.py --resume ...` + 3 Backspace presses gets
   back before the tree. See "Base game rebuild 2026-09-30".
-- **`d2` RUNNING again — resumed 2026-10-09 15:08 at 5,148,624 steps** (~340
+- **`d2` STOPPED by Tyler 2026-10-09 ~16:45 at 6,355,232 steps** to give d3
+  the machine (graceful stop, resumable with `--resume >>`). Start point 78%
+  (79%→78% at 5.71M after ~2.3M steps at 79%). In frames: 97%→78% took 22.8M
+  frames; early points ~0.1M frames each, later 1-9M (78% alone: 9.3M).
+- Before that: **`d2` resumed 2026-10-09 15:08 at 5,148,624 steps** (~340
   steps/s, second `=== resumed 2026-10-09` marker in the log). Before that it
   was paused by Tyler 13:58 that day after a 12:28 resume at 4,050,816 steps.
   At 5.2M: start point still 79%; fresh-start bucket mean 26.2, new best 75
@@ -808,6 +812,29 @@ Frontier climb is **decelerating** at the top (gained_avg ~1.6–2.1, three buck
 ## Pre-Committed Criteria / Open Decisions
 
 Written down *before* the data, to read the same way later:
+
+### Run d3 (env v4, one choice per corner) — agreed with Tyler 2026-10-09, at ~1M frames
+**Budgets are in FRAMES.** The 50M-step test below was written when a step was
+1 frame (d1), i.e. ~50M frames, a sixth of the specialist's 326M. d2's 4-frame
+steps silently made it 200M frames, and d3's ~23-frame steps would make it
+>1B. Read in frames, d2 had spent half of it (25M) and was 22% of the way
+back, slowing: heading for a miss. Pace data now exists: d2 averaged ~1.2M
+frames per start point (22.8M frames for 97%→78%), the last point 9.3M.
+- **Gate at 25M frames** (~1.1M d3 steps, ~3 h alone): the start point must
+  be past **78%** (where d2 was at equal frames). If not, the action change
+  didn't move the wall: stop and rethink. At the gate, re-run the steering
+  probe (adapted to v4) for the mechanism: does it go straight on the ground
+  where only straight is right? (d2: 6-9%.)
+- **Stall stop:** the start point unmoved for **15M frames** (~2 h) → stop and
+  diagnose, don't wait (d2's slowest single point: 9.3M).
+- **Main test:** first **fresh-start clear of stage 1 within 100M frames**
+  (~4.3M d3 steps, ~13 h of machine time alone). From d2's 1.2M frames/point ×
+  d3's 65 start points ≈ 78M, plus margin; under a third of the specialist's
+  326M frames, which never cleared from a fresh start. Record the frame count
+  of the first fresh clear and frames per start point.
+- Attribution caveat as below: a pass credits demos + the fixed env together.
+- Frames = sum over episodes of frames played (`ss_log_d3.jsonl`: `steps`
+  minus the demo start frame); ~23 frames per d3 step, ~2,200 frames/s alone.
 
 ### Does learning from Tyler's recordings beat learning from scratch? (2026-09-30, before results)
 The baselines it has to beat, both learned from scratch:
