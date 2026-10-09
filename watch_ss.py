@@ -3,6 +3,7 @@ watch_ss.py — Watch a checkpoint play one game at a time.
 
 Run manually in a foreground terminal:
     python3 watch_ss.py v5           # a multistage run (see train_ss_multistage.py --list)
+    python3 watch_ss.py d3           # env v4 runs draw every frame of each corner
     python3 watch_ss.py specialist   # the paused single-board specialist
 
 Ctrl+C or close the window to stop. Creates a single env, reloads the
@@ -42,7 +43,7 @@ import pygame                                                 # noqa: E402
 
 from stable_baselines3.common.vec_env import (DummyVecEnv,    # noqa: E402
                                               VecNormalize)
-from special_stage_env import SpecialStageEnv, FRAME_SKIP     # noqa: E402
+from special_stage_env import SpecialStageEnv, FRAME_SKIP, V4  # noqa: E402
 
 try:
     from sb3_contrib import RecurrentPPO                      # noqa: E402
@@ -104,6 +105,20 @@ def main():
     episode_start = np.array([True])
     running = True
 
+    def draw(raw_frame):
+        if raw_frame is not None:
+            surface = pygame.surfarray.make_surface(raw_frame.swapaxes(0, 1))
+            scaled = pygame.transform.scale(surface, (320 * SCALE, 224 * SCALE))
+            screen.blit(scaled, (0, 0))
+            pygame.display.flip()
+
+    if V4:
+        # one v4 step is a whole corner (~16-32 frames): draw every frame of it
+        def per_frame(raw_frame):
+            draw(raw_frame)
+            clock.tick(60)
+        env.envs[0].frame_hook = per_frame
+
     print("[watch] Running. Close window or Ctrl+C to stop.")
 
     while running:
@@ -137,20 +152,17 @@ def main():
 
         obs, reward, done, info = env.step(action)
 
-        # Render from the underlying base_env
-        raw_frame = env.envs[0].base_env.render()
-        if raw_frame is not None:
-            surface = pygame.surfarray.make_surface(raw_frame.swapaxes(0, 1))
-            scaled = pygame.transform.scale(surface, (320 * SCALE, 224 * SCALE))
-            screen.blit(scaled, (0, 0))
-            pygame.display.flip()
+        # Render from the underlying base_env (v4 draws per frame, above)
+        if not V4:
+            draw(env.envs[0].base_env.render())
 
         if done[0]:
             obs = env.reset()
             lstm_states   = None
             episode_start = np.array([True])
 
-        clock.tick(60 / FRAME_SKIP)        # one agent step = FRAME_SKIP frames
+        if not V4:
+            clock.tick(60 / FRAME_SKIP)    # one agent step = FRAME_SKIP frames
 
     pygame.quit()
     env.close()

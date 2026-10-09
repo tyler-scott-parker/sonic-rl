@@ -81,7 +81,7 @@ def replay_check(path):
     env._demos = []                                   # don't build demos in here
     env._log_episode = lambda *a, **k: None
     try:
-        env.reset(options={'stage_file': sf})
+        env.reset(options={'stage_file': sf, 'replay': True})
         ended_at = None
         for i, a in enumerate(actions):
             _, _, done, trunc, _ = env._step_frames(int(a), 1)   # frame by frame

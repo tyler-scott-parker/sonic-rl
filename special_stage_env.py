@@ -112,11 +112,15 @@ SS_LOG_FILE = os.path.expanduser(
 #   SS_ENV_VERSION=3           -> v2 + the agent choosing every FRAME_SKIP
 #                                 frames + the stall rule (see below). For
 #                                 learning from demos: run d2 onward.
+#   SS_ENV_VERSION=4           -> v3's stall rule, but ONE CHOICE PER CORNER
+#                                 (straight / left / right / jump; see below).
+#                                 Run d3 onward.
 ENV_VERSION = int(os.environ.get('SS_ENV_VERSION', '2'))
-if ENV_VERSION not in (1, 2, 3):
-    raise ValueError(f'SS_ENV_VERSION must be 1, 2 or 3, got {ENV_VERSION}')
+if ENV_VERSION not in (1, 2, 3, 4):
+    raise ValueError(f'SS_ENV_VERSION must be 1, 2, 3 or 4, got {ENV_VERSION}')
 V2 = ENV_VERSION >= 2       # v3 keeps every v2 fix
-V3 = ENV_VERSION >= 3
+V3 = ENV_VERSION >= 3       # v4 keeps the stall rule
+V4 = ENV_VERSION >= 4
 
 # ── env v3 (2026-09-30), found by run d1 (per-frame, env v2) ─────────────────
 #   - FRAME_SKIP: the agent chooses every 4 frames and the action is held.
@@ -132,6 +136,42 @@ V3 = ENV_VERSION >= 3
 #     between spheres.
 FRAME_SKIP    = 4 if V3 else 1
 STALL_FRAMES  = 600
+
+# ── env v4 (2026-10-09), found by run d2 (env v3) ────────────────────────────
+#   One choice per corner. On v3 a turn needed one press anywhere in the ~3
+#   choices before a corner and straight needed none in all of them; d2's
+#   policy never managed that (where only straight was right it went straight
+#   6-9% of the time, P(no turn in the window) ~0), so it jumped to go
+#   straight — airborne 46% of frames, where it can't collect or turn — and
+#   flew past the last spheres (attic/one_off_tools/probe_steering.py).
+#   Now each step is one corner: the env taps the chosen button once, then
+#   plays on alone until the next decision point. Emulator facts behind it
+#   (checked 2026-10-09 by tapping on every frame of two cells):
+#   - a queued turn fires in a window at the corner: the first frame Sonic is
+#     0-31 units past its centre, along his travel. He then stops and rotates
+#     for 16 frames. A tap any time after the previous corner's window queues
+#     the turn for the next corner ($E42A ss_next_corner = +4 left / -4 right)
+#   - a jump takes off on the frame B is tapped and lasts 32 frames whatever
+#     the hold (2 cells at base speed). A turn tapped in the air is kept and
+#     fires at the first corner after landing; a jump tapped with or just after
+#     a turn CANCELS the turn (so v3's jump+turn actions were plain jumps)
+#   - Sonic runs 16 units/frame at base speed (a cell = 256, 16 frames); the
+#     patch's cell flips 128 units before a corner — after the previous
+#     window, before the next — so a choice made there always lands on the
+#     corner the patch is centred on
+#   - after a bumper bounce he stops and runs forward again on his own; Up
+#     does nothing while running, and at the stage start it skips the ~99
+#     frame wait (Tyler pressed it on frames 0-1, so fresh starts do too)
+#   - a bumper pushes him back about a cell, and he runs into it again until
+#     a turn fires — so the agent must get choices during the bounce, and his
+#     motion there runs against heading x speed sign
+#   Decision point = the first grounded, moving frame on a cell not yet
+#     decided, while still BEFORE its centre along his actual motion (either
+#     way, so bumper bounces offer choices too). A cell first reached past its
+#     centre (a long landing) is skipped: it goes straight.
+CORNER_ACTIONS     = ('straight', 'left', 'right', 'jump')
+CORNER_TAP         = (None, 2, 3, 1)    # the ACTION_BUTTONS index tapped for each
+CORNER_MAX_FRAMES  = 240                # a step never runs longer (spring flights)
 
 # ── Observation shape (env-var driven; see OBSERVATION PRESETS below) ───────
 #   SS_USE_PIXELS=1  -> include the 84x84x3 pixel stream (pre-v4 obs).
@@ -231,6 +271,7 @@ _BUCKET_RE = re.compile(r's(\d+)_')
 DEMO_FILES      = [p for p in os.environ.get('SS_DEMOS', '').split(',') if p.strip()]
 DEMO_PROB       = float(os.environ.get('SS_DEMO_PROB', '0.5'))
 DEMO_CKPT_EVERY = 30    # frames between start points (~2 cells at base speed)
+DEMO_DECISIONS_EVERY = 2    # v4: decision points between start points (~2 cells)
 DEMO_TAIL       = 60    # the latest start point is this many frames before the end
 DEMO_BAND       = 4     # starts are drawn from checkpoints [pointer, pointer + band]
 if DEMO_FILES and not V2:
@@ -259,7 +300,8 @@ class SpecialStageEnv(gym.Env):
             use_restricted_actions=stable_retro.Actions.FILTERED
         )
 
-        self.action_space = spaces.Discrete(len(ACTION_BUTTONS))
+        self.action_space = spaces.Discrete(
+            len(CORNER_ACTIONS) if V4 else len(ACTION_BUTTONS))
         self._actions = ACTION_BUTTONS
 
         obs_spaces = {
@@ -282,6 +324,7 @@ class SpecialStageEnv(gym.Env):
         self._demos = None            # built from DEMO_FILES at the first reset
         self._demo_ptr = {}           # demo id -> start checkpoint (trainer-set)
         self._replaying = False       # True while _build_demos replays a demo
+        self.frame_hook = None        # f(frame) on every emulator frame (watchers)
         self._reset_state()
 
     # ── RAM access ───────────────────────────────────────────────────────
@@ -325,6 +368,32 @@ class SpecialStageEnv(gym.Env):
         if V2:
             return ((y_raw + 0x80) >> 8) % 32, ((x_raw + 0x80) >> 8) % 32
         return ((y_raw >> 8) + GRID_ROW_OFF) % 32, (x_raw >> 8) % 32
+
+    def _at_decision(self, info):
+        """v4: is this frame a decision point? (See the env v4 header.) Marks
+        the cell decided, so each corner is offered at most once."""
+        if self._ram_swapped is None:
+            return False
+        x, y = int(info.get('ss_x', 0)), int(info.get('ss_y', 0))
+        prev, self._prev_xy = self._prev_xy, (x, y)
+        if prev is None or int(self._ram()[ADDR_JUMPING]) != 0:
+            return False                    # airborne, spring, or a buffered jump
+        # travel = the actual move this frame. Not heading x speed sign: in a
+        # bumper's push-back the game moves him against both (seen 2026-10-09)
+        mx = (x - prev[0] + 4096) % 8192 - 4096
+        my = (y - prev[1] + 4096) % 8192 - 4096
+        if mx == my == 0:
+            return False                    # standing, or rotating at a corner
+        cell = self._cell(x, y)
+        if cell == self._decided:
+            return False
+        self._decided = cell
+        # signed offset from the cell's centre along the travel, board-wrapped
+        ox = (x - (cell[1] << 8) + 4096) % 8192 - 4096
+        oy = (y - (cell[0] << 8) + 4096) % 8192 - 4096
+        if abs(mx) >= abs(my):
+            return ox * mx < 0              # still before the corner
+        return oy * my < 0
 
     @staticmethod
     def _quadrant(heading):
@@ -429,16 +498,31 @@ class SpecialStageEnv(gym.Env):
             for path in DEMO_FILES:
                 actions, meta = demo_io.load_demo(path)
                 demo_io.check_compatible(path, meta, sys.modules[__name__])
-                self.reset(options={'stage_file': stage_file(meta['stage'])})
+                self.reset(options={'stage_file': stage_file(meta['stage']),
+                                    'replay': True})
                 n = len(actions)
                 ckpts = []
+                decisions = 0
                 for j, a in enumerate(actions):
-                    state = (zlib.compress(self.base_env.em.get_state(), 6)
-                             if j % DEMO_CKPT_EVERY == 0 else None)
-                    _, _, done, trunc, _ = self._step_frames(int(a), 1)
+                    if V4:
+                        state = self.base_env.em.get_state()
+                    else:
+                        state = (zlib.compress(self.base_env.em.get_state(), 6)
+                                 if j % DEMO_CKPT_EVERY == 0 else None)
+                    _, _, done, trunc, info = self._step_frames(int(a), 1)
                     if (done or trunc) and j != n - 1:
                         raise ValueError(f'{path}: replay ended at frame {j}, '
                                          f'the recording ran to {n - 1}')
+                    if V4:
+                        # v4 starts on a decision point the demo passed, so the
+                        # agent's first step chooses that corner. Skipped where
+                        # the demo had already queued a turn: "straight" can't
+                        # undo it
+                        point = (not done and self._at_decision(info)
+                                 and int(info.get('ss_next_corner', 0)) == 0)
+                        decisions += point
+                        state = (zlib.compress(state, 6) if point and
+                                 decisions % DEMO_DECISIONS_EVERY == 0 else None)
                     if state is not None and j + 1 <= n - DEMO_TAIL:
                         ckpts.append(dict(state=state, action=int(a),
                                           fields=self._snapshot_fields()))
@@ -481,6 +565,9 @@ class SpecialStageEnv(gym.Env):
         self._restart_from = f['spheres']
         self._capture_idx = sum(1 for t in CAPTURE_AT if t <= self._restart_from)
         self._rebuild_converted()
+        if V4:      # a v4 start point is a decision point: this corner is the agent's
+            self._prev_xy = (int(info.get('ss_x', 0)), int(info.get('ss_y', 0)))
+            self._decided = self._cell(*self._prev_xy)
         # success from here = collect at least what the demo collected from here
         self._demo_episode = dict(demo=demo['id'], start=k,
                                   frac=f['steps'] / demo['frames'],
@@ -591,6 +678,8 @@ class SpecialStageEnv(gym.Env):
         self.steps = 0
         self._last_pickup = 0            # frame of the last sphere (v3 stall rule)
         self._stalled = False
+        self._decided = None             # v4: the cell whose corner was last offered
+        self._prev_xy = None             # v4: last frame's position, for the travel
         self.prev_blue_spheres = None
         self.prev_chaos_em = 0
         self.prev_super_em = 0
@@ -627,8 +716,10 @@ class SpecialStageEnv(gym.Env):
         self._cur_stage = 0   # 0 = unknown; the stage pick / restart meta set it
 
         # options={'stage_file': path}: a fresh start on that stage, no restart
-        # or demo draw (used to replay demos)
+        # or demo draw. 'replay': True also leaves it on the stage's first
+        # frame in v4, for replaying a demo's frames
         forced = (options or {}).get('stage_file')
+        replay = bool((options or {}).get('replay'))
         if forced is None and self._demos and random.random() < DEMO_PROB:
             return self._reset_from_demo()
 
@@ -693,10 +784,40 @@ class SpecialStageEnv(gym.Env):
                     and self._cur_stage not in self._original_grids):
                 self._original_grids[self._cur_stage] = self._read_grid().copy()
 
+        if V4 and not replay:
+            frame, info = self._advance_to_decision(frame, info, restart_file is None)
         return self._get_obs(frame, info), {}
 
+    def _advance_to_decision(self, frame, info, fresh):
+        """v4: play on to the first decision point, tapping Up on the first
+        frame of a fresh start (skips the ~99-frame wait, as Tyler did)."""
+        for t in range(CORNER_MAX_FRAMES):
+            if t and self._at_decision(info):
+                return frame, info
+            frame, _, done, trunc, info = self._frame(
+                self._actions[4 if fresh and t == 0 else 0])
+            if done or trunc:
+                raise RuntimeError('episode ended before its first decision point')
+        raise RuntimeError(f'no decision point within {CORNER_MAX_FRAMES} frames of reset')
+
     def step(self, action):
+        if V4:
+            return self._step_corner(int(action))
         return self._step_frames(int(action), FRAME_SKIP)
+
+    def _step_corner(self, action):
+        """v4: one corner. Tap the chosen button once, then play on until the
+        next decision point (or the episode ends, or CORNER_MAX_FRAMES)."""
+        tap = CORNER_TAP[action]
+        total = 0.0
+        for t in range(CORNER_MAX_FRAMES):
+            a = tap if t == 0 and tap is not None else 0
+            frame, reward, done, truncated, info = self._frame(self._actions[a])
+            total += reward
+            if done or truncated or self._at_decision(info):
+                break
+        info['frames'] = t + 1
+        return self._get_obs(frame, info), total, done, truncated, info
 
     def _step_frames(self, action, n):
         """Hold `action` for up to n frames — FRAME_SKIP for the agent, 1 for
@@ -714,6 +835,8 @@ class SpecialStageEnv(gym.Env):
         frame, _, game_terminated, game_truncated, info = \
             self.base_env.step(buttons)
         self.steps += 1
+        if self.frame_hook is not None:
+            self.frame_hook(frame)
 
         if self._ram_swapped is None:
             self._detect_swap(info)

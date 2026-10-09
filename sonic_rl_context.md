@@ -1,5 +1,5 @@
 # Sonic 3 & Knuckles Special Stage RL — Full Project Context
-*Last updated: 2026-10-09 evening, d2 RUNNING again (resumed 15:08 at 5.15M); why it stalls is now measured — it can't go straight on the ground, so it jumps instead (see "Current state")*
+*Last updated: 2026-10-09 evening — d2 RUNNING (start point 78% at 6.3M); env v4 (one choice per corner) BUILT and verified on branch `corner-decisions`, run d3 defined (see "Current state")*
 
 ---
 
@@ -126,6 +126,33 @@ recording of Tyler's own playthrough and improved on (`coordinator.py`).
   emulator check that a one-frame tap after a centre always queues the next
   corner. Raw outputs (`steer_*.json`, 33 MB, and the probe's model copy
   `d2.zip/.pkl`) are untracked in `attic/one_off_tools/`.
+- **Env v4 + run `d3` — BUILT 2026-10-09 (Tyler said go), branch
+  `corner-decisions`.** `SS_ENV_VERSION=4`: one step = one corner, actions
+  straight / left / right / jump; the env taps the button once and plays on
+  to the next decision point (grounded, moving, just entered a cell not yet
+  decided, still before its centre along his ACTUAL motion). Same obs, reward,
+  stall rule as v3. Emulator facts it rests on (env v4 header has them all):
+  a queued turn fires in a 32-unit window just past a corner's centre, then
+  16 frames of rotation; a tap anywhere after the previous window queues it;
+  jumps take off on the tap frame and last 32 frames; a turn tapped in the air
+  fires after landing, but a jump tapped with/after a turn CANCELS it (v3's
+  jump+turn actions were plain jumps); Up does nothing while running and skips
+  the ~99-frame start wait (fresh v4 starts tap it, as Tyler did); a bumper
+  pushes Sonic back ~a cell and he runs into it again until a turn fires, with
+  his motion running AGAINST heading x speed sign (why decisions use actual
+  motion — the first version used heading and got stuck 240 frames).
+  Verified: `python3 smoke_corners.py d3` — Tyler's run is 145 corners
+  (straight 90, right 31, left 24, jump 0) and replays through v4's own step
+  frame-exact (2925 frames, 102, clear); all 65 v4 start points begin on his
+  decision points and his choices from each reproduce his finish. v1/v2/v3
+  play bit-identical to before (seeded random play, with and without demos —
+  NB raw emulator state bytes differ run to run even for identical code, so
+  never hash them). Random play: ~21 frames/step, no step hits the 240-frame
+  cap; sub-8-frame steps that don't end the episode are all bumper bounces.
+  `d3` = d2's config on env v4 with gamma 0.95 per corner (~the same ~20-cell
+  horizon). A step is ~16-32 frames vs d2's 4 — **compare d2 and d3 in
+  frames**: d2's pre-committed 50M steps = 200M frames ≈ 9M d3 steps (Tyler's
+  call whether that is the d3 budget). `watch_ss.py d3` draws every frame.
 - Earlier: **paused by Tyler 2026-10-01 17:33.** `d2` stopped
   cleanly at **4,050,816 steps**, start point **79%** (ptr 77). That day's
   session (resumed 14:25 at 2.06M): 82% held ~1.0M steps (1.69M→2.72M), then
@@ -1059,6 +1086,11 @@ grep -E "FRESH|Resuming|preset" logs/ss_multistage_v6.log   # MUST say "Starting
 
 # resume it later
 nohup python3 train_ss_multistage.py v6 --resume >> logs/ss_multistage_v6.log 2>&1 &
+
+# env v4 (one choice per corner): verify against the demo, then launch d3
+python3 smoke_corners.py d3                    # must end "ALL CHECKS PASS" (~4 min)
+nohup python3 train_ss_multistage.py d3 > logs/ss_multistage_d3.log 2>&1 &
+python3 demo_progress.py --run d3
 
 # a NEW experiment: add an entry to RUNS (pin SS_ENV_VERSION in its obs preset)
 
