@@ -178,6 +178,22 @@ recording of Tyler's own playthrough and improved on (`coordinator.py`).
   first 193,400 steps on the one-frame tap (Tyler's stage-1 run has no lag
   frames, so the effect was ~nil) and was resumed on the fix at 193,400
   steps (~4.5M frames), marked "=== resumed ... lag-frame fix" in its log.
+- **Tyler's stage-4 demo, 2026-10-09 17:26:** `demos/stage4_20261009-172620.npz`
+  — clear, 115/115, 4,185 frames, 1 rewind; the first demo with jumps. It
+  exposed a **v4 expressiveness gap: turn-then-jump.** Jump pressed DURING a
+  corner's rotation is buffered ($E432 = 1, the "j=1" seen in d2's probe) and
+  fires the instant the turn ends — launching straight out of the corner. v4's
+  corner gets one choice (turn OR jump) and its next jump chance is half a
+  cell later. Tyler used it twice at the end of stage 4. Tested in scratch:
+  with two extra actions (left+jump, right+jump: tap the turn, press B once
+  the rotation starts, until the jump byte is set) ALL FOUR demos reproduce
+  their clears (stage 4: 115/115 in 4,183 frames; corners: straight 121, left
+  50, right 32, jump 3, right+jump 2). Also needed for checking demos with
+  jumps: align human and v4 decisions BY CELL — a jump taken at a different
+  frame lands at a different phase, so v4 can get a decision on a cell the
+  human passed without one (answer: straight). d3 is unaffected: stage 1 has
+  no jumps. Proposed for the multi-stage run: env v5 = v4 + the two
+  turn-jump actions (a new action space, so not for d3).
 - Earlier: **paused by Tyler 2026-10-01 17:33.** `d2` stopped
   cleanly at **4,050,816 steps**, start point **79%** (ptr 77). That day's
   session (resumed 14:25 at 2.06M): 82% held ~1.0M steps (1.69M→2.72M), then
