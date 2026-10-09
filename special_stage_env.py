@@ -169,8 +169,16 @@ STALL_FRAMES  = 600
 #     decided, while still BEFORE its centre along his actual motion (either
 #     way, so bumper bounces offer choices too). A cell first reached past its
 #     centre (a long landing) is skipped: it goes straight.
+#   - the game sometimes skips a frame's logic (a lag frame: nothing moves,
+#     input ignored) — and it tends to be the frame right after Sonic crosses
+#     into a new cell, i.e. right after a decision point. A one-frame tap there
+#     is silently dropped (found replaying Tyler's stage-3 clear: a left turn
+#     lost at frame 3339). So the button is held until the game shows it took
+#     it — the corner byte reads the turn, or the jump byte is set — up to
+#     CORNER_TAP_MAX frames, which ends well before the corner
 CORNER_ACTIONS     = ('straight', 'left', 'right', 'jump')
 CORNER_TAP         = (None, 2, 3, 1)    # the ACTION_BUTTONS index tapped for each
+CORNER_TAP_MAX     = 3                  # frames a tap is held at most (lag frames)
 CORNER_MAX_FRAMES  = 240                # a step never runs longer (spring flights)
 
 # ── Observation shape (env-var driven; see OBSERVATION PRESETS below) ───────
@@ -800,20 +808,30 @@ class SpecialStageEnv(gym.Env):
                 raise RuntimeError('episode ended before its first decision point')
         raise RuntimeError(f'no decision point within {CORNER_MAX_FRAMES} frames of reset')
 
+    def _tap_taken(self, action, info):
+        """v4: did the game register this corner action? (A lag frame drops it.)"""
+        if CORNER_ACTIONS[action] == 'jump':
+            return int(self._ram()[ADDR_JUMPING]) != 0
+        return int(info.get('ss_next_corner', 0)) == (4 if CORNER_ACTIONS[action] == 'left' else -4)
+
     def step(self, action):
         if V4:
             return self._step_corner(int(action))
         return self._step_frames(int(action), FRAME_SKIP)
 
     def _step_corner(self, action):
-        """v4: one corner. Tap the chosen button once, then play on until the
-        next decision point (or the episode ends, or CORNER_MAX_FRAMES)."""
+        """v4: one corner. Press the chosen button until the game takes it (one
+        frame, unless a lag frame drops it), then play on until the next
+        decision point (or the episode ends, or CORNER_MAX_FRAMES)."""
         tap = CORNER_TAP[action]
+        held = tap is not None
         total = 0.0
         for t in range(CORNER_MAX_FRAMES):
-            a = tap if t == 0 and tap is not None else 0
-            frame, reward, done, truncated, info = self._frame(self._actions[a])
+            frame, reward, done, truncated, info = self._frame(
+                self._actions[tap if held else 0])
             total += reward
+            if held and (t + 1 >= CORNER_TAP_MAX or self._tap_taken(action, info)):
+                held = False
             if done or truncated or self._at_decision(info):
                 break
         info['frames'] = t + 1

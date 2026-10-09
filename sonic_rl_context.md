@@ -164,6 +164,20 @@ recording of Tyler's own playthrough and improved on (`coordinator.py`).
   left 20), same route, 127, clear, in 3,783 frames — 3 fewer because a few of
   his turns were tapped on the last frame of a corner's window (fires one
   frame late) while v4 queues before the window.
+- **Tyler's stage-3 demo, 2026-10-09 17:09:** `demos/stage3_20261009-170931.npz`
+  — flawless clear, 118/118, 3,944 frames, 0 rewinds. Converting it to v4
+  corners exposed a **v4 bug, fixed the same day**: the game sometimes skips a
+  frame's logic (a lag frame — nothing moves, input ignored), and it lands
+  right after Sonic crosses into a new cell, i.e. right after a decision point
+  (2 lag frames in 10,655 of Tyler's frames, BOTH right after a decision). v4
+  tapped for one frame, so a left at stage 3's frame 3339 was dropped. v4 now
+  holds the button until the game takes it (corner byte / jump byte), at most
+  `CORNER_TAP_MAX` = 3 frames. After the fix: stage 1 frame-exact (smoke
+  passes), stage 2 unchanged (3,783 frames), stage 3 frame-exact (224 corners,
+  118, clear); 4,000 random v4 steps identical to before the fix. d3 ran its
+  first 193,400 steps on the one-frame tap (Tyler's stage-1 run has no lag
+  frames, so the effect was ~nil) and was resumed on the fix at 193,400
+  steps (~4.5M frames), marked "=== resumed ... lag-frame fix" in its log.
 - Earlier: **paused by Tyler 2026-10-01 17:33.** `d2` stopped
   cleanly at **4,050,816 steps**, start point **79%** (ptr 77). That day's
   session (resumed 14:25 at 2.06M): 82% held ~1.0M steps (1.69M→2.72M), then
