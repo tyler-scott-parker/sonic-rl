@@ -69,6 +69,11 @@ recording of Tyler's own playthrough and improved on (`coordinator.py`).
   `demo_progress.py --run d5`. Gate at 40M frames (~5 h alone); probe
   (`PROBE_RUN=d5 probe_steering_v4.py 100 0.56`) when the start point first
   reaches 56%.
+- **Overnight (Tyler away, 2026-10-09 ~22:10): Claude watches d5 and has
+  Tyler's OK to start the fallback run** if d5 is stopped by one of its
+  rules: **d4** (γ 0.95) if d5 never got below 56%, **d6** (= d4 with γ 0.99)
+  if it did. Criteria: Pre-Committed Criteria, "Overnight fallback". Watch log
+  `logs/d5_watch.log` (git-ignored).
 - **d3 is PARKED, not resumed:** saved at **821,424 steps / 17.31M frames**,
   start point **56%** since 11.62M frames, fresh starts mean 84.6/102, best
   99, 0 clears. It never reached its 25M-frame gate or its 26.62M stall stop;
@@ -104,9 +109,14 @@ recording of Tyler's own playthrough and improved on (`coordinator.py`).
   - **The penalty for the (26,21) jump arrives a median 101 decisions later
     (82-120): 0.95^101 = 0.006.** A sphere is worth the same whenever it is
     collected, so skipping it costs nothing until then: the error is
-    invisible to d3's credit assignment. (At γ 0.99: 0.36.) The
-    VecNormalize `clip_reward=10` (open since 2026-09-29) caps that penalty
-    as well. d4 has γ 0.95 too.
+    invisible to d3's credit assignment. (At γ 0.99: 0.36.) d4 has γ 0.95 too.
+  - **The reward clip does NOT bind here — MEASURED 2026-10-09 22:10** (this
+    replaces an earlier line here saying it "caps that penalty as well").
+    d3's saved VecNormalize return std is **28,313** (the ~710 in the 09-29
+    note was the old env's), so a stall/red at 48 spheres (−98,500 raw, the
+    median for d3's stalls near 56%) normalizes to **−3.5**, a sphere to
+    +0.07: all inside `clip_reward=10`. Not a reason for d3's wall, and not
+    a useful next experiment for it.
 - **d5 = d3 with γ 0.99, nothing else changed — DEFINED, NOT STARTED**
   (Tyler's go 2026-10-09; `smoke_corners.py d5` ALL CHECKS PASS). Plan: let
   d3 reach its 25M-frame gate (re-run the v4 probe on that save) and, if
@@ -950,6 +960,27 @@ Frontier climb is **decelerating** at the top (gained_avg ~1.6–2.1, three buck
 
 Written down *before* the data, to read the same way later:
 
+### Overnight fallback d4 / d6 — AGREED with Tyler 2026-10-09 ~22:10, before either launches
+Only if d5 is stopped by one of its rules overnight (gate, stall stop); Claude
+launches it then without waiting. **Which:** d5 never got below 56% → **d4**
+(γ 0.95), baseline **d3**. d5 got below 56%, then a rule stopped it → **d6**
+(d4 with γ 0.99, nothing else changed), baseline **d5**. Either way the
+difference from its baseline is training four boards (stages 1-4, one demo
+each, env v5) instead of one; stages 5-7 stay held out. `smoke_corners.py`
+must pass for the run first. Frames counted as for d3, per stage from each
+episode's `stage`.
+- **Interference read at 50M frames** (~6 h alone): stage 1's start point vs
+  the baseline's at the same number of STAGE-1 frames. Within 5 start points
+  (or ahead) = four boards don't slow stage 1; further behind = interference.
+- **Walls:** a stage whose start point is unmoved for 15M of its OWN frames
+  is walled — probe it (probe_steering_v4 needs adapting to other stages)
+  before naming a cause.
+- **Stall stop:** no stage's start point moves for 15M total frames.
+- **Main test:** first fresh-start clear of any of stages 1-4 within 100M
+  frames (record stage, frames, time).
+- **Held-out 5-7:** zero-shot test (`eval_transfer.py`) only after a fresh
+  clear — not overnight.
+
 ### Run d5 (d3 with γ 0.99 per corner) — AGREED with Tyler 2026-10-09 21:53, before launch (proposed earlier that evening)
 d5 differs from d3 ONLY in γ (0.95 → 0.99), so a difference is γ's. The
 question: does a ~100-corner horizon get past d3's 56% wall (the (26,21)
@@ -1073,7 +1104,7 @@ The pre-v4 shape, described below, is what the specialist still uses (on env v1)
 ### Reward Structure
 - Per step: small time penalty
 - Blue sphere: large positive (≈ +2000-scale)
-- Death: scaled on *this-episode* collections so net death ≈ **−2500 regardless of depth** (the net-negative-death invariant). Because the penalty scales on this-episode spheres only and restarts grant zero reward for handed-in spheres, a restart-from-88 that dies at 94 gets the same clean "collect more before dying" gradient as a fresh death. **Caveats found 2026-09-29:** env v1 paid it 651–678 frames after contact (discounted to 0.13 at γ=0.997); env v2 pays it on contact. And the `clip_reward=10` in VecNormalize caps it once n ≥ 3, so the invariant is not what PPO actually sees — open, see "What Changed 2026-09-29".
+- Death: scaled on *this-episode* collections so net death ≈ **−2500 regardless of depth** (the net-negative-death invariant). Because the penalty scales on this-episode spheres only and restarts grant zero reward for handed-in spheres, a restart-from-88 that dies at 94 gets the same clean "collect more before dying" gradient as a fresh death. **Caveats found 2026-09-29:** env v1 paid it 651–678 frames after contact (discounted to 0.13 at γ=0.997); env v2 pays it on contact. And the `clip_reward=10` in VecNormalize caps it once n ≥ 3, so the invariant is not what PPO actually sees — open, see "What Changed 2026-09-29". (That was with the old runs' return std ~710. On d3 the std is 28,313 and nothing is clipped — measured 2026-10-09, see "Current state".)
 - Chaos emerald / completion: large bonus + time bonus. Env v1 never paid the emerald part (see 2026-09-29); env v2 pays completion + time bonus + the stage's emerald on the clear frame.
 
 ---

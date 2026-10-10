@@ -200,6 +200,19 @@ RUNS = {
                'skips blue (25,21) with a P 0.998 jump and seals itself in the '
                'red staircase ~100 corners later, too far for gamma 0.95 to see.',
     ),
+    'd6': dict(
+        stages=[1, 2, 3, 4], lstm=512, lr=3e-4,
+        obs=dict(SS_ENV_VERSION='5',
+                 SS_USE_PIXELS='0', SS_PATCH_R='7', SS_DROP_POSITION='1'),
+        demos=['stage1_20260930-165817', 'stage2_20261009-170251',
+               'stage3_20261009-170931', 'stage4_20261009-172620'],
+        demo_prob=0.75,
+        ppo=dict(gamma=0.99),           # d5's gamma; everything else is d4
+        result='NOT STARTED — overnight fallback agreed with Tyler 2026-10-09: '
+               'launched instead of d4 only if d5 gets below 56% and is then '
+               'stopped by a rule. d4 with gamma 0.99 (d5\'s), so d6 vs d5 '
+               'isolates training four boards at once.',
+    ),
 }
 
 # ── Shared config (identical across every run so far — keep it that way) ──────
