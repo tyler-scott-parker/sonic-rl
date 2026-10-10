@@ -1185,12 +1185,12 @@ Frontier climb is **decelerating** at the top (gained_avg ~1.6–2.1, three buck
 
 Written down *before* the data, to read the same way later:
 
-### Run d9 (all 14 boards on env v7) — DRAFT, criteria PROPOSED by Claude 2026-10-10 ~21:00; NOT agreed, NOT started
+### Run d9 (all 14 boards on env v7) — criteria AGREED with Tyler 2026-10-10 ~21:05 ("All of those rules sound good to me. And let's go with your recommendations as well"); NOT started
 **Setup (RUNS 'd9'):** stages 1-14, one recording each (all flawless, pinned by name), env v7 (up / up-now, late-jump, landing decisions, turn_here), d7's recipe: compass (SS_POINTER), gamma 0.99 per decision, LSTM 512, lr 3e-4, demo_prob 0.75, backward curriculum per recording, NUM_ENVS 8. Fresh weights (v7's 14 ram feats and 9 actions don't fit d7's network). No stages held out: Tyler's goal is all 14 boards, and the special stages are exactly those 14, so learning those boards IS the goal; generalization beyond them isn't needed. Checked: the 14 demo names resolve to stages 1-14 in order.
-**Choices for Tyler (recommendation first):**
+**Choices — Tyler took both recommendations (no speed bonus in d9, speed phase after; all 14 boards at once):**
 1. **Speed bonus: NOT in d9; a speed phase afterwards** (d9's save → a d10 with SS_SPEED_BONUS, as d7 → d8), once d8 vs d8c shows whether the bonus works and what it costs in clears. One variable at a time; the bonus pays nothing until a board clears anyway. Alternative: include it from the start (k=7). Caveat for either: 7/frame is ~0.3% of a stage-1 clear per 100 frames but ~0.9% on stage 10 (37 spheres), so its strength varies by board.
 2. **All 14 at once** (as above). Alternative: a smaller set first (d6 ran 4 boards: start points 64-79% at ~4.1M frames each, 0 fresh clears at 16.5M total).
-**Proposed criteria (frames counted as for d4/d6: per stage from ss_log_d9.jsonl, steps - demo_frac x that demo's length; fresh = steps):**
+**Criteria (AGREED; frames counted as for d4/d6: per stage from ss_log_d9.jsonl, steps - demo_frac x that demo's length; fresh = steps):**
 - **Gate at 70M total frames (~5M per board):** every board's start point has moved off its recording's end, every board is below 90%, and the median board is below 75% (d6 reached 64-79% at ~4.1M frames per board). If not, 14 boards are too thin a mix: fall back to a smaller set.
 - **Interference read (report, not a stop):** stage 1's start point at equal stage-1 frames vs d7 (single board, same recipe); within 5 checkpoints = none.
 - **Main test: a fresh-start clear on ALL 14 boards within 280M total frames** (~20M per board, 2x d7's 10.3M to its first stage-1 clear). Also report how many boards have one at 140M (d7's pace per board).
