@@ -96,6 +96,14 @@ recording of Tyler's own playthrough and improved on (`coordinator.py`).
     invisible to d3's credit assignment. (At γ 0.99: 0.36.) The
     VecNormalize `clip_reward=10` (open since 2026-09-29) caps that penalty
     as well. d4 has γ 0.95 too.
+- **d5 = d3 with γ 0.99, nothing else changed — DEFINED, NOT STARTED**
+  (Tyler's go 2026-10-09; `smoke_corners.py d5` ALL CHECKS PASS). Plan: let
+  d3 reach its 25M-frame gate (re-run the v4 probe on that save) and, if
+  still at 56%, its stall stop at **26.62M frames** (56% since 11.62M); then
+  `touch STOP_d3` and launch fresh:
+  `nohup python3 train_ss_multistage.py d5 > logs/ss_multistage_d5.log 2>&1 &`.
+  Its criteria are in Pre-Committed Criteria (proposed, awaiting Tyler's OK).
+  d4 (γ 0.95) waits on d5's answer.
 - **PAUSED by Tyler 2026-10-09 ~19:30 — nothing is training.** Pick up here:
   - **d3** (env v4, stage 1) saved at **537,616 steps (~12.4M frames)**: start
     point **56%** of Tyler's run (d2 stalled at 78% after 22.8M frames);
@@ -929,6 +937,24 @@ Frontier climb is **decelerating** at the top (gained_avg ~1.6–2.1, three buck
 ## Pre-Committed Criteria / Open Decisions
 
 Written down *before* the data, to read the same way later:
+
+### Run d5 (d3 with γ 0.99 per corner) — PROPOSED 2026-10-09 before launch; needs Tyler's OK
+d5 differs from d3 ONLY in γ (0.95 → 0.99), so a difference is γ's. The
+question: does a ~100-corner horizon get past d3's 56% wall (the (26,21)
+jump whose penalty lands ~101 corners later)? Frames counted as for d3.
+- **Gate at 40M frames:** start point **below 56%** (further back than d3
+  ever got; d3 reached 56% at 11.6M frames and sat there). The margin allows
+  γ 0.99 to learn the early points 2-3x slower than d3. If not → γ isn't the
+  fix (or not alone): stop and rethink.
+- **Mechanism, when the start point first reaches 56% (or at the gate):**
+  `PROBE_RUN=d5 probe_steering_v4.py 100 0.56`. At (26,21) d3 jumped with
+  P 0.998 and 53 of 90 stalls ended with (25,21) the only sphere left. Pass
+  = the left turn onto (25,21) is the majority choice there.
+- **Pace (read, not a stop rule):** frames per start point 97%→56% vs d3's
+  11.6M total — γ 0.99's cost on the easy part.
+- **Stall stop:** start point unmoved for 15M frames, as d3.
+- **Main test:** first fresh-start clear of stage 1 within **100M frames**,
+  as d3. Same attribution caveat (demos + fixed env together).
 
 ### Run d3 (env v4, one choice per corner) — agreed with Tyler 2026-10-09, at ~1M frames
 **Budgets are in FRAMES.** The 50M-step test below was written when a step was

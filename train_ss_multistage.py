@@ -185,6 +185,21 @@ RUNS = {
                'v5 (adds turn-then-jump, which stage 4 needs). Stages 5-7 stay '
                'held out for the zero-shot test (eval_transfer.py).',
     ),
+    'd5': dict(
+        stages=[1], lstm=512, lr=3e-4,
+        obs=dict(SS_ENV_VERSION='4',
+                 SS_USE_PIXELS='0', SS_PATCH_R='7', SS_DROP_POSITION='1'),
+        demos=['stage1_20260930-165817'], demo_prob=0.75,
+        ppo=dict(gamma=0.99),           # ~100 corners: d3's wall was a jump at
+                                        # (26,21) whose penalty lands a median 101
+                                        # corners later (0.95^101 = 0.006; 0.99^101
+                                        # = 0.36) — probe_steering_v4.py
+        result='NOT STARTED — launch after d3\'s gate / stall stop (Tyler\'s go '
+               '2026-10-09). d3 with gamma 0.99 per corner instead of 0.95; '
+               'everything else identical, fresh start. d3 stalled at 56%: it '
+               'skips blue (25,21) with a P 0.998 jump and seals itself in the '
+               'red staircase ~100 corners later, too far for gamma 0.95 to see.',
+    ),
 }
 
 # ── Shared config (identical across every run so far — keep it that way) ──────

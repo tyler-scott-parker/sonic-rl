@@ -11,18 +11,18 @@ frame loop), and the probabilities are over straight / left / right / jump.
 Read-only for the training run: own copies of the model, own episode log,
 no curriculum-pool captures (restarts off), CPU only.
 
-usage: probe_steering_v4.py [episodes] [start fraction, e.g. 0.79]
-       (default start: d3's current curriculum pointer)
+usage: [PROBE_RUN=d5] probe_steering_v4.py [episodes] [start fraction, e.g. 0.79]
+       (default run d3; default start: the run's current curriculum pointer)
 """
 import os, sys, json, shutil, time
 REPO = '/home/tyler/Projects/sonic-rl'
 OUT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, REPO)
-RUN = 'd3'
+RUN = os.environ.get('PROBE_RUN', 'd3')   # any stage-1 run on env v4
 DEMO = os.path.join(REPO, 'demos', 'stage1_20260930-165817.npz')
 N_EPISODES = int(sys.argv[1]) if len(sys.argv) > 1 else 100
 FRAC = float(sys.argv[2]) if len(sys.argv) > 2 else None
-TAG = f'v4_{round(100 * FRAC)}' if FRAC is not None else 'v4_ptr'
+TAG = (f'{RUN}_' if RUN != 'd3' else '') + (f'v4_{round(100 * FRAC)}' if FRAC is not None else 'v4_ptr')
 os.environ.update(SS_ENV_VERSION='4', SS_USE_PIXELS='0', SS_PATCH_R='7',
                   SS_DROP_POSITION='1', SS_STAGES='1', SS_RESTART_PROB='0',
                   SS_LOG=os.path.join(OUT, f'probe_ss_log_{TAG}.jsonl'),

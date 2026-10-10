@@ -8,7 +8,7 @@ moves that start a shortest route to a blue (heading-aware, no reversing, no
 red/bumpers, no jumps). The intersection scoring below is copied UNCHANGED
 from steering_analyze.py, so the numbers compare with d2's.
 
-usage: steering_analyze_v4.py [tag] [dir]   (tag: v4_ptr, v4_79, ...;
+usage: steering_analyze_v4.py [tag] [dir]   (tag: v4_ptr, v4_79, d5_v4_ptr, ...;
        reads steer_demo_<tag>.json + steer_episodes_<tag>.json)
 """
 import os, sys, json
