@@ -843,6 +843,8 @@ check each new act's recorded clear frame/time against what you saw.
   So the whole loop — record, replay, curriculum, reward — produces an agent
   that out-plays its recording.
 
+- **`audit_play.py` (2026-10-10, for Tyler's full-game recording):** run after each recording session. It replays the playthrough (must reproduce every act) and prints per act: start/clear frame, own time, the in-game reading at the clear, the in-game time elapsed since the act began, deaths, stages and boss fights. It flags: an act that never cleared with another after it; clears under 15 s; an act 2 cleared with no boss fight before it (the capsule is still unverified); a clear >30 s after the last boss fight; an act following itself (a cutscene timer stop read as a clear); acts out of the game's order; own count vs in-game elapsed off by >2 s with no death or stage. On play_20260930-153946: nothing flagged. AIZ1's start state already has 0:01.15 on the clock, and own 1:24.33 vs elapsed 1:24.18 is 9 lag frames.
+
 ### Deliberately open
 - Special stages are neutral truncations. The coordinator's eventual job is to
   hand giant rings to the SS agent (emeralds as a reward is a decision for
