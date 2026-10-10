@@ -1,0 +1,9 @@
+stage1_20260930-165817.npz: stage 1, 102 spheres, 2925 frames, outcome clear
+  145 corners: straight 90, left 24, right 31
+  ok   every corner is a move env v7 has
+  ok   your corners from a fresh start: (102, True) in 2925 frames (recorded: 102 spheres, cleared=True, 2925 frames)
+  ok   all 65 start points begin on your decision point and your choices from there reproduce your finish
+  jump timings tried: 0, swapped to the other timing: 0, neither reached your next corner: 0
+  up timings tried: 0, swapped to up-now: 0, neither reached your next corner: 0
+
+ALL CHECKS PASS

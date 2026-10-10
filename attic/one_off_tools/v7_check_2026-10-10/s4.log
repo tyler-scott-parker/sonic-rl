@@ -1,0 +1,8 @@
+stage4_20261009-172620.npz: stage 4, 115 spheres, 4185 frames, outcome clear
+  211 corners: straight 124, left 50, right 32, late-jump 2, jump 1, right+jump 2
+  ok   every corner is a move env v7 has
+  FAIL your corners from a fresh start: None in 1780 frames (recorded: 115 spheres, cleared=True, 4185 frames)
+  FAIL all 72 start points begin on your decision point and your choices from there reproduce your finish — failures (ptr, corner, queued, result, target): [(0, 1, 0, None, 115), (1, 3, 0, None, 113), (2, 5, 0, None, 111), (3, 7, 0, None, 109), (4, 9, 0, None, 107)]
+  jump timings tried: 54, swapped to the other timing: 0, neither reached your next corner: 0
+
+2 CHECK(S) FAILED

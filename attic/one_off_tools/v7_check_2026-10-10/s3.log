@@ -1,0 +1,8 @@
+stage3_20261009-170931.npz: stage 3, 118 spheres, 3944 frames, outcome clear
+  224 corners: left 34, straight 166, right 24
+  ok   every corner is a move env v7 has
+  ok   your corners from a fresh start: (118, True) in 3944 frames (recorded: 118 spheres, cleared=True, 3944 frames)
+  ok   all 97 start points begin on your decision point and your choices from there reproduce your finish
+  jump timings tried: 0, swapped to the other timing: 0, neither reached your next corner: 0
+
+ALL CHECKS PASS

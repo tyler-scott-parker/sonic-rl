@@ -1,0 +1,9 @@
+stage5_20261010-091532.npz: stage 5, 58 spheres, 4148 frames, outcome clear
+  236 corners: straight 168, left 28, late-jump 13, right 25, up 1, jump 1
+  ok   every corner is a move env v7 has
+  ok   your corners from a fresh start: (58, True) in 4145 frames (recorded: 58 spheres, cleared=True, 4148 frames)
+  ok   all 101 start points begin on your decision point and your choices from there reproduce your finish
+  jump timings tried: 820, swapped to the other timing: 0, neither reached your next corner: 0
+  up timings tried: 25, swapped to up-now: 0, neither reached your next corner: 0
+
+ALL CHECKS PASS

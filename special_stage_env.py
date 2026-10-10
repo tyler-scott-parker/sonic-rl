@@ -129,14 +129,18 @@ SS_LOG_FILE = os.path.expanduser(
 #                                 For boards that need it; run d4 onward.
 #   SS_ENV_VERSION=6           -> v5 + a ring pickup restarts the stall clock
 #                                 too (see below). Stage 5 onward.
+#   SS_ENV_VERSION=7           -> v6 + 'up' / 'up-now' (turn round after a
+#                                 bumper), 'late-jump', and an obs bit "a turn
+#                                 now fires in this cell" (see below). PROTOTYPE.
 ENV_VERSION = int(os.environ.get('SS_ENV_VERSION', '2'))
-if ENV_VERSION not in (1, 2, 3, 4, 5, 6):
-    raise ValueError(f'SS_ENV_VERSION must be 1-6, got {ENV_VERSION}')
+if ENV_VERSION not in (1, 2, 3, 4, 5, 6, 7):
+    raise ValueError(f'SS_ENV_VERSION must be 1-7, got {ENV_VERSION}')
 V2 = ENV_VERSION >= 2       # v3 keeps every v2 fix
 V3 = ENV_VERSION >= 3       # v4 keeps the stall rule
 V4 = ENV_VERSION >= 4       # v5 keeps the corner choices
 V5 = ENV_VERSION >= 5       # v6 keeps turn-then-jump
-V6 = ENV_VERSION >= 6
+V6 = ENV_VERSION >= 6       # v7 keeps the ring clock
+V7 = ENV_VERSION >= 7
 
 # ── env v3 (2026-09-30), found by run d1 (per-frame, env v2) ─────────────────
 #   - FRAME_SKIP: the agent chooses every 4 frames and the action is held.
@@ -214,8 +218,9 @@ STALL_FRAMES  = 600
 #   left+jump / right+jump: tap the turn (until taken), wait for the rotation
 #   to start, then press B until the game buffers it.
 CORNER_ACTIONS     = (('straight', 'left', 'right', 'jump')
-                      + (('left+jump', 'right+jump') if V5 else ()))
-CORNER_TAP         = (None, 2, 3, 1, 2, 3)  # the ACTION_BUTTONS index pressed first
+                      + (('left+jump', 'right+jump') if V5 else ())
+                      + (('up', 'late-jump', 'up-now') if V7 else ()))
+CORNER_TAP         = (None, 2, 3, 1, 2, 3, 4, 1, 4)  # the ACTION_BUTTONS index pressed first
 CORNER_TAP_MAX     = 3                  # frames a tap is held at most (lag frames)
 CORNER_MAX_FRAMES  = 240                # a step never runs longer (spring flights)
 
@@ -229,6 +234,47 @@ CORNER_MAX_FRAMES  = 240                # a step never runs longer (spring fligh
 #   Replays of his recordings skip the stall rule: it cuts off the agent, not
 #   ground truth. Stage 6's clear ran 1,159 frames with neither while he
 #   hunted its last sphere (1,745 without a sphere, 135 cells travelled).
+
+# ── env v7 (2026-10-10, PROTOTYPE), found by Tyler's stages 5, 6, 9, 10 ──────
+#   - up: every bumper hit in his recordings (stages 5, 6, 9, 10, 11, 14;
+#     none on 1-4) leaves Sonic running BACKWARDS when the lock releases,
+#     until Up: speed winds -4096 -> 0 -> +4096 over ~16 frames. One frame of
+#     Up does it whenever he is moving; it is ignored while he rotates at a
+#     corner, and does nothing running forwards (checked in the emulator from
+#     stage 5 frames 900 / 1000-1017). Pressed once past the cell's centre, as
+#     he does (+52..+92 on stages 5, 6, 11), so the turn-round comes back
+#     through the centre and that corner can still be taken. Running
+#     backwards, the first move after standing still (a bounce's lock, a
+#     corner's rotation) is a decision point, and so is the first move
+#     forwards after Up — in an already-decided cell.
+#   - landing is a decision point too (first grounded move after a jump or
+#     spring). A jump covers ~512 units at any speed (32 frames at 4096, 26
+#     at 5120, 22 at 6144, 19 at 7168 — so v4's "32 frames" was base speed),
+#     and B tapped in the air queues another that fires on landing: 18 of his
+#     20 stage-6 jumps are such hops, 1-3 frames on the ground between. A
+#     landing past the centre gave no decision, so the env couldn't hop.
+#   - late-jump: straight, then B once he is past the cell's centre. A plain
+#     jump takes off on the frame after the decision point (~110 units before
+#     the centre); his 52 jumps took off anywhere from -124 to +116. At base
+#     speed (512 units a jump) both land two cells on; faster, a late take-off
+#     lands a cell further. A sphere is collected as Sonic ENTERS its cell
+#     (-128..-108 from the centre), so neither timing skips the cell's own.
+#   Settled by measurement 2026-10-10 (rules agreed with Tyler BEFORE it ran;
+#   attic/one_off_tools/measure_v7_decisions.py, 314 bounces, 7,647 decisions):
+#   - up-now: Up pressed at once, as he does when he holds it through the
+#     lock. Against up (past the centre) it saves 1.75 frames on average
+#     where both reach the same corner, but loses a corner up reaches in 4.1%
+#     of bounces (and is slower in some): neither dominates, so both exist.
+#   - turn_here, the last obs feature: 1 when this decision's cell still has
+#     its turn window ahead along Sonic's actual motion, i.e. a turn chosen
+#     now fires here; 0 when it would be queued to the next cell. Away from
+#     bumpers it predicts that at 99.3% / 97.9% (random agent); from the obs
+#     it already had plus its own last action, the best predictor managed
+#     90.9% held out (landings 81.7%, the move after an Up 72.2%), under the
+#     agreed 98% bar. On a bumper cell the bounce decides: the patch shows it.
+#   - kept: a decision on a bumper cell's entry frame and one offered while a
+#     turn is still queued. Some action ends elsewhere than straight in 99% /
+#     98% of them (a turn chosen there fires after the bounce): real choices.
 
 # ── Observation shape (env-var driven; see OBSERVATION PRESETS below) ───────
 #   SS_USE_PIXELS=1  -> include the 84x84x3 pixel stream (pre-v4 obs).
@@ -301,7 +347,9 @@ DROP_POSITION = os.environ.get('SS_DROP_POSITION', '1') == '1'
 POINTER       = os.environ.get('SS_POINTER', '0') == '1'
 # 11 core features (10 in v2, which drops total_progress); +4 (sin/cos of x,y)
 # at indices 2-5 only when position is kept; +3 pointer features LAST.
-NUM_RAM_FEATURES = (11 if DROP_POSITION else 15) - (1 if V2 else 0) + (3 if POINTER else 0)
+# v7: + turn_here, the very last feature.
+NUM_RAM_FEATURES = ((11 if DROP_POSITION else 15) - (1 if V2 else 0) + (3 if POINTER else 0)
+                    + (1 if V7 else 0))
 _STAGE_IDS    = [s for s in os.environ.get('SS_STAGES', '').split(',') if s.strip()]
 
 
@@ -450,6 +498,21 @@ class SpecialStageEnv(gym.Env):
             return False
         x, y = int(info.get('ss_x', 0)), int(info.get('ss_y', 0))
         prev, self._prev_xy = self._prev_xy, (x, y)
+        if V7:
+            # v7: running backwards, the first move after standing still (a
+            # bounce's lock, a corner's rotation) is a choice, so Up can turn
+            # him round there; so is the first move forwards after Up
+            speed = int(info.get('ss_move_speed', 0))
+            air = bool(int(self._ram()[ADDR_JUMPING]) & 0x80)
+            if speed > 0 and self._v7_back:
+                self._v7_pending = True
+            elif speed < 0 and (prev is None or prev == (x, y)):
+                self._v7_pending = True
+            elif self._v7_air and not air:
+                self._v7_pending = True     # landed: he can hop again at once
+            if speed:
+                self._v7_back = speed < 0
+            self._v7_air = air
         if prev is None or int(self._ram()[ADDR_JUMPING]) != 0:
             return False                    # airborne, spring, or a buffered jump
         # travel = the actual move this frame. Not heading x speed sign: in a
@@ -459,9 +522,6 @@ class SpecialStageEnv(gym.Env):
         if mx == my == 0:
             return False                    # standing, or rotating at a corner
         cell = self._cell(x, y)
-        if cell == self._decided:
-            return False
-        self._decided = cell
         # signed offset from the cell's centre along the travel, board-wrapped
         ox = (x - (cell[1] << 8) + 4096) % 8192 - 4096
         oy = (y - (cell[0] << 8) + 4096) % 8192 - 4096
@@ -472,7 +532,17 @@ class SpecialStageEnv(gym.Env):
         # choice is pressed on the NEXT frame, so that frame must still end
         # in or before the window, or the turn fires a corner late. Moving
         # down that means at least one frame's travel (v) above the centre
-        return off < 0 if up else off >= v
+        ahead = off < 0 if up else off >= v
+        if V7 and self._v7_pending and not int(info.get('bumper_contact', 0)):
+            self._decided, self._v7_pending = cell, False
+            self._turn_here = ahead         # v7 obs: does a turn fire here?
+            return True                     # Up needs no turn window
+        if cell == self._decided:
+            return False
+        self._decided = cell
+        if V7 and ahead:
+            self._turn_here = True
+        return ahead
 
     @staticmethod
     def _quadrant(heading):
@@ -558,11 +628,15 @@ class SpecialStageEnv(gym.Env):
     def _snapshot_fields(self):
         """Episode bookkeeping a demo start restores besides the emulator state
         (the rest is re-read from RAM, or is logging only)."""
-        return dict(steps=self.steps, speed_level=self.speed_level,
-                    prev_speed_timer=self.prev_speed_timer,
-                    bumper_hit=self.bumper_hit,
-                    prev_bumper_lock=self.prev_bumper_lock,
-                    spheres=self._spheres_collected)
+        f = dict(steps=self.steps, speed_level=self.speed_level,
+                 prev_speed_timer=self.prev_speed_timer,
+                 bumper_hit=self.bumper_hit,
+                 prev_bumper_lock=self.prev_bumper_lock,
+                 spheres=self._spheres_collected)
+        if V7:
+            f.update(v7_pending=self._v7_pending, v7_back=self._v7_back,
+                     v7_air=self._v7_air, turn_here=self._turn_here)
+        return f
 
     def _build_demos(self):
         """Replay each demo once through this env's own step logic, keeping the
@@ -639,6 +713,10 @@ class SpecialStageEnv(gym.Env):
         self.prev_speed_timer = f['prev_speed_timer']
         self.bumper_hit = f['bumper_hit']
         self.prev_bumper_lock = f['prev_bumper_lock']
+        if V7:
+            self._v7_pending, self._v7_back = f['v7_pending'], f['v7_back']
+            self._v7_air = f['v7_air']
+            self._turn_here = f['turn_here']
         self.prev_blue_spheres = info.get('blue_spheres_remaining')
         self._stage_total = demo['total']
         self._from_restart = True
@@ -781,6 +859,10 @@ class SpecialStageEnv(gym.Env):
         self._stall_rings = None         # v6: ring count when the clock last restarted
         self._stalled = False
         self._decided = None             # v4: the cell whose corner was last offered
+        self._v7_pending = False         # v7: a choice on the next move (see _at_decision)
+        self._v7_back = False            # v7: running backwards (after a bounce)
+        self._v7_air = False             # v7: airborne last frame (a jump or spring)
+        self._turn_here = True           # v7 obs: a turn chosen now fires in this cell
         self._last_buttons = None        # v4: held on the last frame (presses need an edge)
         self._prev_xy = None             # v4: last frame's position, for the travel
         self.prev_blue_spheres = None
@@ -903,12 +985,31 @@ class SpecialStageEnv(gym.Env):
                 raise RuntimeError('episode ended before its first decision point')
         raise RuntimeError(f'no decision point within {CORNER_MAX_FRAMES} frames of reset')
 
-    def _tap_taken(self, button, info):
+    def _tap_taken(self, button, info, speed_before=0):
         """v4: did the game register this press? (A lag frame drops it.)
-        button: 'left', 'right' or 'jump'."""
-        if button == 'jump':
+        button: 'left', 'right', 'jump' or (v7) 'up' / 'up-now'."""
+        if button == 'jump' or button == 'late-jump':
             return int(self._ram()[ADDR_JUMPING]) != 0
+        if button in ('up', 'up-now'):
+            # backwards, the turn-round has begun; forwards Up does nothing
+            speed = int(info.get('ss_move_speed', 0))
+            return speed >= 0 or speed > speed_before
         return int(info.get('ss_next_corner', 0)) == (4 if button == 'left' else -4)
+
+    def _past_centre(self, cell, info):
+        """v7: has this frame's move carried Sonic past the centre of `cell`?
+        (Along his actual motion, from the last frame's position.)"""
+        if cell is None or self._prev_xy is None:
+            return False
+        x, y = int(info.get('ss_x', 0)), int(info.get('ss_y', 0))
+        mx = (x - self._prev_xy[0] + 4096) % 8192 - 4096
+        my = (y - self._prev_xy[1] + 4096) % 8192 - 4096
+        if mx == my == 0:
+            return False
+        ox = (x - (cell[1] << 8) + 4096) % 8192 - 4096
+        oy = (y - (cell[0] << 8) + 4096) % 8192 - 4096
+        off = (ox if mx > 0 else -ox) if abs(mx) >= abs(my) else (oy if my > 0 else -oy)
+        return 0 <= off < 128
 
     def step(self, action):
         if V4:
@@ -922,11 +1023,14 @@ class SpecialStageEnv(gym.Env):
         turn+jump presses B as soon as the turn's rotation starts."""
         presses = CORNER_ACTIONS[action].split('+')   # e.g. ['left', 'jump']
         tap = CORNER_TAP[action]
-        held, n_held = tap is not None, 0
+        late = presses[0] in ('late-jump', 'up')      # v7: press once past the centre
+        held, n_held = tap is not None and not late, 0
         then_jump = len(presses) == 2                 # v5: jump out of the turn
         h0 = int(self._ram()[ADDR_HEADING])
+        cell = self._decided
         total = 0.0
         for t in range(CORNER_MAX_FRAMES):
+            speed_before = self._last_pose[3] if self._last_pose else 0
             # a press only counts on a fresh edge: if its button is still down
             # from the frame before (a demo start mid-press, a short bounce
             # step), let go for one frame first
@@ -937,7 +1041,10 @@ class SpecialStageEnv(gym.Env):
                 self._actions[tap if pressing else 0])
             total += reward
             n_held += pressing
-            if pressing and (n_held >= CORNER_TAP_MAX or self._tap_taken(presses[0], info)):
+            if late and not held and n_held == 0 and self._past_centre(cell, info):
+                held = True                       # press on the next frame
+            if pressing and (n_held >= CORNER_TAP_MAX
+                             or self._tap_taken(presses[0], info, speed_before)):
                 held = False
                 if presses[0] == 'jump':
                     then_jump = False
@@ -1052,7 +1159,8 @@ class SpecialStageEnv(gym.Env):
             bumper_lock,
             float(self.bumper_hit),
             jumping,
-        ] + pointer                                             # (last 3 if SS_POINTER)
+        ] + pointer + (                                         # (3 if SS_POINTER)
+            [float(self._turn_here)] if V7 else [])             # (v7: the last one)
 
         obs = {'ram': np.array(feats, dtype=np.float32), 'grid': grid_patch}
         if USE_PIXELS:

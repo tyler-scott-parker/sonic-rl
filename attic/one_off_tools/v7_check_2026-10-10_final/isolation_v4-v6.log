@@ -1,0 +1,9 @@
+35:             n=env.action_space.n, envfile=sse.__file__)
+67:                  f'obs + rewards identical to git HEAD ({str(h["envfile"]).split("/")[-2]} vs {str(t["envfile"]).split("/")[-2]})',
+  ok   v4 pointer=0: 1200 steps, 4 actions, obs + rewards identical to git HEAD (old_env vs sonic-rl)
+  ok   v4 pointer=1: 1200 steps, 4 actions, obs + rewards identical to git HEAD (old_env vs sonic-rl)
+  ok   v5 pointer=0: 1200 steps, 6 actions, obs + rewards identical to git HEAD (old_env vs sonic-rl)
+  ok   v6 pointer=0: 1200 steps, 6 actions, obs + rewards identical to git HEAD (old_env vs sonic-rl)
+
+ALL CHECKS PASS
+

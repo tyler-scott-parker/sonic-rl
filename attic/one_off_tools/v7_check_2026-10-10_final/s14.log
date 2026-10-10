@@ -1,0 +1,9 @@
+stage14_20261010-105034.npz: stage 14, 71 spheres, 3427 frames, outcome clear
+  193 corners: left 17, right 22, straight 144, jump 3, late-jump 3, up 4
+  ok   every corner is a move env v7 has
+  ok   your corners from a fresh start: (71, True) in 3423 frames (recorded: 71 spheres, cleared=True, 3427 frames)
+  ok   all 83 start points begin on your decision point and your choices from there reproduce your finish
+  jump timings tried: 223, swapped to the other timing: 0, neither reached your next corner: 0
+  up timings tried: 211, swapped to up-now: 84, neither reached your next corner: 31
+
+ALL CHECKS PASS

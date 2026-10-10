@@ -1,0 +1,40 @@
+A: 14 back-restart decisions in his recordings (130s)
+  100 episodes, A 59, B1 1140, B2 bumper 172 queued 169 (405s)
+  200 episodes, A 97, B1 2117, B2 bumper 200 queued 200 (506s)
+  300 episodes, A 145, B1 3261, B2 bumper 200 queued 200 (588s)
+  400 episodes, A 220, B1 4427, B2 bumper 200 queued 200 (681s)
+  500 episodes, A 275, B1 5506, B2 bumper 200 queued 200 (757s)
+  600 episodes, A 314, B1 6509, B2 bumper 200 queued 200 (830s)
+  700 episodes, A 314, B1 7647, B2 bumper 200 queued 200 (897s)
+
+A. Up timing: 314 bounces (14 his, 300 random); snapshot yardstick 20/20 identical
+   Up-now loses an outcome Up-late reaches in 13 (4.1%)
+   frames saved by Up-now where both reach the same outcome: mean 1.75, median 2, min -4, max 3 (n=1163)
+   his s10: up-step frames late 8 / now 8; lost nothing
+   his s10: up-step frames late 10 / now 9; lost nothing
+   his s10: up-step frames late 10 / now 9; lost nothing
+   his s10: up-step frames late 10 / now 9; lost nothing
+   his s11: up-step frames late 8 / now 11; lost ["(('(13, 26)', '1'), '')"]
+   his s14: up-step frames late 10 / now 9; lost nothing
+   his s14: up-step frames late 10 / now 9; lost nothing
+   his s14: up-step frames late 12 / now 11; lost nothing
+   his s14: up-step frames late 8 / now 11; lost ["(('(11, 27)', '0'), '')"]
+   his s5: up-step frames late 10 / now 9; lost nothing
+   his s5: up-step frames late 10 / now 9; lost nothing
+   his s6: up-step frames late 7 / now 11; lost ["(('(11, 18)', '0'), '')"]
+   his s6: up-step frames late 4 / now 4; lost nothing
+   his s9: up-step frames late 8 / now 11; lost ["(('(29, 21)', '1'), '')"]
+
+B1. Inferability: 7647 decisions, 700 episodes (1585 held out); bit=1 share 67.1%; always-majority 65.9%
+   held-out accuracy: MLP 90.91%, lookup table 80.82%
+     back-restart  n=   78 bit=1 0.0%  MLP 87.18%
+     fwd-after-up  n=   36 bit=1 66.7%  MLP 72.22%
+     landing       n=  618 bit=1 27.0%  MLP 81.72%
+     normal        n=  713 bit=1 100.0%  MLP 98.46%
+     start         n=  140 bit=1 100.0%  MLP 100.00%
+
+B2. Pointless decisions (every action, then straight at the next decision):
+   queued        200 states: some action ends elsewhere than straight in 197 (98%); by action {'jump': 197, 'left+jump': 153, 'right+jump': 152, 'late-jump': 123, 'left': 80, 'right': 80, 'up': 1}
+   bumper-entry  200 states: some action ends elsewhere than straight in 198 (99%); by action {'jump': 195, 'left+jump': 184, 'left': 180, 'right+jump': 180, 'right': 177, 'late-jump': 144}
+
+wrote /home/tyler/Projects/sonic-rl/attic/one_off_tools/measure_v7_decisions_out.json (914s)

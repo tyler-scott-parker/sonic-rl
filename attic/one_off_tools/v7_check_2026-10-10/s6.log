@@ -1,0 +1,8 @@
+stage6_20261010-092841.npz: stage 6, 128 spheres, 6829 frames, outcome clear
+  442 corners: straight 327, left 33, right 60, jump 6, up 2, late-jump 14
+  ok   every corner is a move env v7 has
+  FAIL your corners from a fresh start: (128, True) in 6834 frames (recorded: 128 spheres, cleared=True, 6829 frames)
+  ok   all 184 start points begin on your decision point and your choices from there reproduce your finish
+  jump timings tried: 3179, swapped to the other timing: 502, neither reached your next corner: 0
+
+1 CHECK(S) FAILED
