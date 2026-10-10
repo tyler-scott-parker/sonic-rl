@@ -164,8 +164,8 @@ RUNS = {
         demos=['stage1_20260930-165817'], demo_prob=0.75,
         ppo=dict(gamma=0.95),           # per CORNER now: ~20 corners, the same
                                         # ~20-cell horizon d2 had at base speed
-        result='PAUSED 2026-10-09 at 537,616 steps (~12.4M frames): start point '
-               '56%, fresh-start mean 80.8/102, best 98, 0 clears. Resumed twice '
+        result='PAUSED 2026-10-09 at 821,424 steps (17.31M frames): start point '
+               '56% since 11.62M frames, fresh-start mean 84.6/102, best 99, 0 clears. Resumed twice '
                'onto env fixes (lag frames; turn window + fresh press). d2 on '
                'env v4: one choice per corner (straight / '
                'left / right / jump), so going straight is one choice like a '

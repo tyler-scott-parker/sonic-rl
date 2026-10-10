@@ -63,6 +63,13 @@ recording of Tyler's own playthrough and improved on (`coordinator.py`).
   logs/main_aiz1.log 2>&1 &`. He stopped 0:08 into AIZ2 inside a hidden
   giant-ring room — `record_play.py --resume ...` + 3 Backspace presses gets
   back before the tree. See "Base game rebuild 2026-09-30".
+- **PAUSED by Tyler 2026-10-09 21:18 — nothing is training.** d3 stopped
+  cleanly at **821,424 steps / 17.31M frames**, start point still **56%**
+  (since 11.62M frames), fresh starts mean 84.6/102, best 99, 0 clears. Its
+  25M-frame gate and stall stop were NOT reached. **d5** (below) is defined
+  and smoke-passed, NOT started; its criteria are still PROPOSED (Tyler had
+  not OK'd them). On resume: either resume d3 to its checks (`--resume >>`),
+  or go straight to d5 — Tyler's call.
 - **2026-10-09 20:16: d3 RESUMED** (marker in its log). Frames counted exactly
   from `ss_log_d3.jsonl` (`steps` − demo_frac × 2925): **11.84M** at resume
   (the ~12.4M below was steps × 23), so the 25M-frame gate is ~22:00.
