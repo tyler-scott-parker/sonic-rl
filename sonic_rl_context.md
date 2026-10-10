@@ -128,6 +128,44 @@ recording of Tyler's own playthrough and improved on (`coordinator.py`).
   v6 smoke (scratch copy of smoke_corners on d4's setup, one demo, CHK_ENV=6):
   s1, s2, s3, s4, s8 ALL PASS; s5, s6 fail (3), s9 fails (4); s7, s10 not
   yet run. Nothing has trained on v6; d4 (v5, stages 1-4) is untouched.
+- **PAUSED by Tyler 2026-10-10 ~13:40 — nothing training** (he wanted the
+  machine for games). d7 stopped cleanly at **975,008 steps (22.70M frames)**;
+  start point 1% (ckpt 0) since 13.17M — the curriculum walked all the way
+  back; last 300 fresh starts: **203 clears**, mean 93.7/102. The 15M stall
+  stop is moot at ckpt 0 (nothing left to move); the 50M gate read is still
+  formally open (bar long met). What next for d7 is Tyler's call. Resume:
+  `source venv/bin/activate && nohup python3 train_ss_multistage.py d7
+  --resume >> logs/ss_multistage_d7.log 2>&1 &`.
+  **Env v7 is an UNCOMMITTED PROTOTYPE in the working tree** (Tyler: prototype
+  and report before any commit or training; backup patch
+  attic/v7_prototype_2026-10-10.patch, untracked). v7 = v6 + `up` (pressed
+  once past the cell's centre, as he does) + `late-jump` (B once past the
+  centre) + extra decision points: running backwards, the first move after
+  standing still (bounce lock / corner rotation); the first move forwards
+  after Up; and every landing (jump or spring). Findings behind it, all
+  measured on his recordings / in the emulator: every bumper hit leaves Sonic
+  running BACKWARDS until Up (Up ignored while rotating, 1 frame enough when
+  moving, nothing going forwards); a sphere is collected on ENTERING its
+  cell; a jump covers ~512 units at any speed (32/26/22/19 frames at
+  4096/5120/6144/7168 — v4's "32 frames" was base speed); B tapped in the air
+  queues a hop on landing (18 of 20 stage-6 jumps, 1-3 frames grounded).
+  smoke_corners v7 reading (also uncommitted): Up turn-round ONSETS (once
+  each, on a decision's own frame too); jumps early/late, and a take-off on
+  entering the next cell = straight here + jump there; at each jump it TRIES
+  jump / late-jump / straight-then-jump from a snapshot and keeps the one
+  reaching your next corner in the frames you took (snapshot yardstick: no
+  "restore not faithful" warnings seen); v7 allows 2 frames late per Up.
+  Verified on this prototype: v4/v5/v6 seeded trajectories byte-identical to
+  HEAD (stages 1, 5, 10); smoke_corners d3 + d4 ALL PASS. Last full v7 run
+  BEFORE the landing-decision change: 12 of 14 pass; stage 10 clears 5
+  frames slow (2 Ups — he holds Up through a lock, the env presses on the
+  first move); stage 6 died at 127/128 on chained hops (→ landing decisions).
+  After adding landing decisions the checker had to pick jump timing by
+  landing TIME, not cell (else it never switched; stage 4 regressed) — that
+  version is written but its stage 4 / 6 tests were stopped by the pause.
+  **Next on resume:** rerun all 14 on v7 (scratch copy of smoke_corners on
+  d4's setup, one demo, CHK_ENV=7 — recipe in this session's notes: replace
+  HOME/run/cfg lines), then write the v7 report for Tyler before committing.
 - **2026-10-10 10:40: d7 PASSED ITS MAIN TEST** — first fresh-start clear of
   stage 1 at 10.3M frames (102/102 in 5,064 frames), a second soon after in
   3,471 frames (Tyler's demo: 2,925). Bar: within 100M frames. d5: none in
