@@ -163,9 +163,10 @@ recording of Tyler's own playthrough and improved on (`coordinator.py`).
   After adding landing decisions the checker had to pick jump timing by
   landing TIME, not cell (else it never switched; stage 4 regressed) — that
   version is written but its stage 4 / 6 tests were stopped by the pause.
-  **Next on resume:** rerun all 14 on v7 (scratch copy of smoke_corners on
-  d4's setup, one demo, CHK_ENV=7 — recipe in this session's notes: replace
-  HOME/run/cfg lines), then write the v7 report for Tyler before committing.
+  **Next on resume:** rerun all 14 on v7 — `python3 attic/one_off_tools/
+  make_smoke_one_demo.py` (regenerates from smoke_corners.py), then per
+  recording `CHK_ENV=7 python3 attic/one_off_tools/smoke_one_demo.py <stage>
+  <demo basename>` — then write the v7 report for Tyler before committing.
 - **2026-10-10 10:40: d7 PASSED ITS MAIN TEST** — first fresh-start clear of
   stage 1 at 10.3M frames (102/102 in 5,064 frames), a second soon after in
   3,471 frames (Tyler's demo: 2,925). Bar: within 100M frames. d5: none in
