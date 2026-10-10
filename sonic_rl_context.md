@@ -1185,6 +1185,19 @@ Frontier climb is **decelerating** at the top (gained_avg ~1.6–2.1, three buck
 
 Written down *before* the data, to read the same way later:
 
+### Run d9 (all 14 boards on env v7) — DRAFT, criteria PROPOSED by Claude 2026-10-10 ~21:00; NOT agreed, NOT started
+**Setup (RUNS 'd9'):** stages 1-14, one recording each (all flawless, pinned by name), env v7 (up / up-now, late-jump, landing decisions, turn_here), d7's recipe: compass (SS_POINTER), gamma 0.99 per decision, LSTM 512, lr 3e-4, demo_prob 0.75, backward curriculum per recording, NUM_ENVS 8. Fresh weights (v7's 14 ram feats and 9 actions don't fit d7's network). No stages held out: Tyler's goal is all 14 boards, and the special stages are exactly those 14, so learning those boards IS the goal; generalization beyond them isn't needed. Checked: the 14 demo names resolve to stages 1-14 in order.
+**Choices for Tyler (recommendation first):**
+1. **Speed bonus: NOT in d9; a speed phase afterwards** (d9's save → a d10 with SS_SPEED_BONUS, as d7 → d8), once d8 vs d8c shows whether the bonus works and what it costs in clears. One variable at a time; the bonus pays nothing until a board clears anyway. Alternative: include it from the start (k=7). Caveat for either: 7/frame is ~0.3% of a stage-1 clear per 100 frames but ~0.9% on stage 10 (37 spheres), so its strength varies by board.
+2. **All 14 at once** (as above). Alternative: a smaller set first (d6 ran 4 boards: start points 64-79% at ~4.1M frames each, 0 fresh clears at 16.5M total).
+**Proposed criteria (frames counted as for d4/d6: per stage from ss_log_d9.jsonl, steps - demo_frac x that demo's length; fresh = steps):**
+- **Gate at 70M total frames (~5M per board):** every board's start point has moved off its recording's end, every board is below 90%, and the median board is below 75% (d6 reached 64-79% at ~4.1M frames per board). If not, 14 boards are too thin a mix: fall back to a smaller set.
+- **Interference read (report, not a stop):** stage 1's start point at equal stage-1 frames vs d7 (single board, same recipe); within 5 checkpoints = none.
+- **Main test: a fresh-start clear on ALL 14 boards within 280M total frames** (~20M per board, 2x d7's 10.3M to its first stage-1 clear). Also report how many boards have one at 140M (d7's pace per board).
+- **Stall stop:** no board's start point moves for 15M total frames (the rule from the d4/d6 overnight fallback).
+- **Clear time:** reported per board against his recordings as a reference, never a bar (Tyler: his play is a starting guide).
+**Before launch:** `smoke_corners.py d9` must pass (14 recordings, all start points; ~2.5 CPU-hours; the per-recording v7 check already passed on d4's setup, and d9 differs only in the compass obs). Wall time is unknown until measured: the window fix (eda22d4) changed speed. Guess 3,000+ frames/s on 8 cores → gate ~6-7 h, main-test budget ~26 h.
+
 ### Env v7 open questions: Up timing and turn queueing, settled by MEASUREMENT — AGREED with Tyler 2026-10-10 ~18:00, before measuring
 Tyler: "I'll trust good data more than anything." These rules are fixed before any of the measurements run. Script: `attic/one_off_tools/measure_v7_decisions.py` (env v7 prototype, d7's obs preset + v7, run at nice 19 while he plays).
 - **Up timing.** States: every back-restart decision (running backwards after a bounce) in his 14 recordings, plus random-agent ones across all 14 stages. From each, Up-now (press at once, as he does) vs Up-late (env v7: once past the cell's centre), then every corner option (straight / left / right / jump). Record frames, and the outcomes reachable (cell + heading at the next decision after that).

@@ -244,6 +244,26 @@ RUNS = {
                'when paused (median fresh clear 3,310 -> 3,202), so d8 is read '
                'against this at equal frames, not against d7\'s pause.',
     ),
+    'd9': dict(
+        stages=ALL_14, lstm=512, lr=3e-4,
+        obs=dict(SS_ENV_VERSION='7',
+                 SS_USE_PIXELS='0', SS_PATCH_R='7', SS_DROP_POSITION='1',
+                 SS_POINTER='1'),           # d7's obs (+ v7's turn_here bit)
+        demos=['stage1_20260930-165817', 'stage2_20261009-170251',
+               'stage3_20261009-170931', 'stage4_20261009-172620',
+               'stage5_20261010-091532', 'stage6_20261010-092841',
+               'stage7_20261010-095111', 'stage8_20261010-100029',
+               'stage9_20261010-102154', 'stage10_20261010-102523',
+               'stage11_20261010-103921', 'stage12_20261010-104326',
+               'stage13_20261010-104726', 'stage14_20261010-105034'],
+        demo_prob=0.75,
+        ppo=dict(gamma=0.99),
+        result='DRAFT 2026-10-10 — NOT STARTED; criteria PROPOSED in the doc, '
+               'launch only on Tyler\'s go. All 14 boards on env v7, one '
+               'recording each (all flawless), d7\'s recipe (compass, gamma '
+               '0.99 per decision, backward curriculum). Fresh weights: v7\'s '
+               'obs (14 feats) and 9 actions don\'t fit d7\'s network.',
+    ),
     'd6': dict(
         stages=[1, 2, 3, 4], lstm=512, lr=3e-4,
         obs=dict(SS_ENV_VERSION='5',
