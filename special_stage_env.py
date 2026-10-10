@@ -117,13 +117,16 @@ SS_LOG_FILE = os.path.expanduser(
 #                                 Run d3 onward.
 #   SS_ENV_VERSION=5           -> v4 + turn-then-jump (left+jump, right+jump).
 #                                 For boards that need it; run d4 onward.
+#   SS_ENV_VERSION=6           -> v5 + a ring pickup restarts the stall clock
+#                                 too (see below). Stage 5 onward.
 ENV_VERSION = int(os.environ.get('SS_ENV_VERSION', '2'))
-if ENV_VERSION not in (1, 2, 3, 4, 5):
-    raise ValueError(f'SS_ENV_VERSION must be 1-5, got {ENV_VERSION}')
+if ENV_VERSION not in (1, 2, 3, 4, 5, 6):
+    raise ValueError(f'SS_ENV_VERSION must be 1-6, got {ENV_VERSION}')
 V2 = ENV_VERSION >= 2       # v3 keeps every v2 fix
 V3 = ENV_VERSION >= 3       # v4 keeps the stall rule
 V4 = ENV_VERSION >= 4       # v5 keeps the corner choices
-V5 = ENV_VERSION >= 5
+V5 = ENV_VERSION >= 5       # v6 keeps turn-then-jump
+V6 = ENV_VERSION >= 6
 
 # ── env v3 (2026-09-30), found by run d1 (per-frame, env v2) ─────────────────
 #   - FRAME_SKIP: the agent chooses every 4 frames and the action is held.
@@ -206,6 +209,17 @@ CORNER_TAP         = (None, 2, 3, 1, 2, 3)  # the ACTION_BUTTONS index pressed f
 CORNER_TAP_MAX     = 3                  # frames a tap is held at most (lag frames)
 CORNER_MAX_FRAMES  = 240                # a step never runs longer (spring flights)
 
+# ── env v6 (2026-10-10), found by Tyler's stage-5 demo ───────────────────────
+#   The stall rule counted only spheres. Stage 5's last blues sit far apart:
+#   his clear ran 1,116 frames (76 cells) and 657 frames without a sphere, so
+#   v5 ends his own route at frame 2,448 as a death. Rings line those runs,
+#   and each ring is picked up once (no farming, so d1's hop-to-survive is
+#   still cut off). With a ring OR a sphere restarting the clock, his longest
+#   gap is 379 frames on stage 5 and <= 393 on stages 1-4 (all under 600).
+#   Replays of his recordings skip the stall rule: it cuts off the agent, not
+#   ground truth. Stage 6's clear ran 1,159 frames with neither while he
+#   hunted its last sphere (1,745 without a sphere, 135 cells travelled).
+
 # ── Observation shape (env-var driven; see OBSERVATION PRESETS below) ───────
 #   SS_USE_PIXELS=1  -> include the 84x84x3 pixel stream (pre-v4 obs).
 #                       Default 0: dropped. Rationale — pixels are a rotating
@@ -227,6 +241,7 @@ CORNER_MAX_FRAMES  = 240                # a step never runs longer (spring fligh
 #                -> 10 feats, 5-channel grid
 #   d2         : SS_ENV_VERSION=3, otherwise as v6 (same obs; 4-frame choices)
 #   d7         : SS_ENV_VERSION=4 ... SS_POINTER=1 (d5 + 3 compass feats -> 13)
+#   v6 env     : same obs as v5 (the stall rule isn't in the observation)
 #
 # NOT reproducible here (deliberate): the dead v1/v2/v3 multistage runs used
 # DROP_POSITION=1 with the position slots still present as CONSTANT ZEROS, i.e.
@@ -747,6 +762,7 @@ class SpecialStageEnv(gym.Env):
     def _reset_state(self):
         self.steps = 0
         self._last_pickup = 0            # frame of the last sphere (v3 stall rule)
+        self._stall_rings = None         # v6: ring count when the clock last restarted
         self._stalled = False
         self._decided = None             # v4: the cell whose corner was last offered
         self._last_buttons = None        # v4: held on the last frame (presses need an edge)
@@ -1099,7 +1115,7 @@ class SpecialStageEnv(gym.Env):
             return reward, True
 
         # v3: STALL_FRAMES without a sphere counts as touching red
-        stalled = (V3 and not (exiting or left)
+        stalled = (V3 and not (exiting or left) and not (V6 and self._replaying)
                    and self.steps - self._last_pickup >= STALL_FRAMES)
         if exiting or left or stalled:
             n = self._spheres_collected   # this-episode only
@@ -1146,6 +1162,14 @@ class SpecialStageEnv(gym.Env):
                     self.ss_best_streak = self.ss_current_streak
 
         self.prev_blue_spheres = blue_spheres
+
+        if V6:
+            # a ring restarts the stall clock too; the first frame of an
+            # episode (fresh or demo start) only reads the count
+            rings = int(info.get('ss_rings_collected', 0))
+            if self._stall_rings is not None and rings > self._stall_rings:
+                self._last_pickup = self.steps
+            self._stall_rings = rings
 
         # Board cleared = remaining hit zero after collecting >=1 this episode.
         # Stage-agnostic, restart-safe win signal: the emerald award lags via

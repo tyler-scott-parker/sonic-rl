@@ -20,6 +20,7 @@ you had (fine only if you went straight there).
 """
 import os
 import sys
+import contextlib
 import glob
 import random
 
@@ -32,8 +33,8 @@ exec(src[src.index('ALL_14 ='):src.index('# ── Shared config')], ns)
 if run not in ns['RUNS']:
     sys.exit(f'unknown run {run!r}. Known: {", ".join(ns["RUNS"])}')
 cfg = ns['RUNS'][run]
-if cfg['obs']['SS_ENV_VERSION'] not in ('4', '5'):
-    sys.exit(f'{run} is not on a corner env (v4/v5)')
+if cfg['obs']['SS_ENV_VERSION'] not in ('4', '5', '6'):
+    sys.exit(f'{run} is not on a corner env (v4-v6)')
 DEMOS = [p for pat in cfg.get('demos', [])
          for p in sorted(glob.glob(os.path.join(HOME, 'demos', f'{pat}.npz')))]
 os.environ.update(cfg['obs'], SS_STAGES=','.join(map(str, cfg['stages'])),
@@ -54,25 +55,37 @@ def check(ok, msg):
     print(f"  {'ok  ' if ok else 'FAIL'} {msg}")
 
 
+@contextlib.contextmanager
+def replaying():
+    """Your run, not an episode: no logging, and v6 skips the stall rule."""
+    env._replaying = True
+    try:
+        yield
+    finally:
+        env._replaying = False
+
+
 def his_corners(actions, stage):
     """Your decision points (frame, cell, choice) along the recorded run.
     choice = an index into CORNER_ACTIONS, or the name of a move it lacks."""
     env.reset(options={'stage_file': sse.stage_file(stage), 'replay': True})
     points, traj = [], []
-    for j, a in enumerate(actions):
-        _, _, done, trunc, info = env._step_frames(int(a), 1)
-        ram = env._ram()
-        traj.append((int(ram[sse.ADDR_HEADING]), int(ram[sse.ADDR_JUMPING])))
-        if not done and env._at_decision(info):
-            points.append(dict(f=j, cell=env._decided))
-        if done or trunc:
-            break
+    with replaying():
+        for j, a in enumerate(actions):
+            _, _, done, trunc, info = env._step_frames(int(a), 1)
+            ram = env._ram()
+            traj.append((int(ram[sse.ADDR_HEADING]), int(ram[sse.ADDR_JUMPING])))
+            if not done and env._at_decision(info):
+                points.append(dict(f=j, cell=env._decided))
+            if done or trunc:
+                break
     for k, p in enumerate(points):
         seg = traj[p['f']:(points[k + 1]['f'] if k + 1 < len(points) else len(traj) - 1) + 1]
         turn = {0: '', 1: 'left', 3: 'right'}.get(
             (env._quadrant(seg[-1][0]) - env._quadrant(seg[0][0])) % 4, 'reverse')
         t_rot = next((i for i, (h, _) in enumerate(seg) if h != seg[0][0]), None)
-        t_air = next((i for i, (_, j) in enumerate(seg) if j & 0x80), None)
+        # $80 = a jump (B); $81 = a spring launch, which no button chose (stage 8)
+        t_air = next((i for i, (_, j) in enumerate(seg) if j & 0x81 == 0x80), None)
         if t_air is None:
             name = turn or 'straight'
         elif not turn:
@@ -120,7 +133,8 @@ for path, d in zip(DEMOS, env._demos):
                        + (f' — it lacks: {lacking}' if lacking else ''))
 
     env.reset(options={'stage_file': sse.stage_file(meta['stage'])})
-    got = follow(points, 0)
+    with replaying():
+        got = follow(points, 0)
     # v4 may finish a few frames SOONER, never later: it queues each turn before
     # the corner's window, and a human tap on the window's last frame fires one
     # frame late (stage 2, 2026-10-09: 3 frames over 213 corners)
@@ -142,7 +156,8 @@ for path, d in zip(DEMOS, env._demos):
             env._demos = all_demos
         k = at.get(ck['fields']['steps'] - 1)
         queued = int(env._ram()[0xE42A]) if env._ram_swapped is not None else None
-        res = follow(points, k) if k is not None else None
+        with replaying():
+            res = follow(points, k) if k is not None else None
         target = env._demo_episode['target'] if env._demo_episode else None
         if k is None or queued or res is None or res[0] != target or res[1] != cleared:
             bad.append((i, k, queued, res, target))

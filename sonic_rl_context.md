@@ -86,6 +86,43 @@ recording of Tyler's own playthrough and improved on (`coordinator.py`).
   from 21% on d5's final save is the stall's diagnosis (tag `d5_v4_21`); the
   56% probe's model copy is kept as `attic/one_off_tools/d5_v4_56_model.*`.
   Resume d5 later with `--resume >>` if wanted — its save is intact.
+- **2026-10-10 09:15-10:25: Tyler recorded stages 5-10** (d7 training
+  alongside), all flawless clears, every one reproduced by the recorder:
+  stage5_20261010-091532 (58, 4,148 frames), stage6_20261010-092841 (128,
+  6,829), stage7_20261010-095111 (60, 5,339), stage8_20261010-100029 (64,
+  3,227), stage9_20261010-102154 (155, 2,988), stage10_20261010-102523 (37,
+  2,558). Stages 11-14 not recorded yet. What they exposed:
+  1. **Stall rule vs long runs → env v6 (Tyler chose both parts).** v3+'s 600
+     frames without a sphere ended his stage-5 clear at frame 2,448 (1,116- and
+     657-frame ring-lined runs across the board). v6 = v5 + a ring pickup
+     restarts the clock (longest sphere-or-ring gap: s1 257, s2 248, s3 253, s4
+     393, s5 379, s8 318 [753 spheres-only], s9 91) + replays of his recordings
+     skip the rule (s6 1,159 and s7 738 with neither while hunting the LAST
+     spheres; the agent still gets 600). At s5's long gaps a red-free route
+     (walk + 2-cell jumps, a lower bound) was 19-21 cells vs his 47-77: route
+     choice, not necessity. Verified: v4/v5 seeded trajectories byte-identical
+     to e5e27a1 (stages 1 and 5); stage 5 as an EPISODE on v6 clears at
+     STALL_FRAMES 380 and stalls at 378 (its 379 gap), v5 still stalls at
+     2,448; v6 random-agent episodes still stall; smoke_corners d3/d4 pass.
+  2. **smoke_corners read spring launches as jumps** (fixed): $E432 = $80 is a
+     B jump (always with B), $81 a spring launch (never). Stage 8 is the first
+     route over springs (4; stage 9 has 6).
+  3. **OPEN — bumper bounce → running BACKWARDS.** Every bumper hit in his
+     recordings (6: s5 x1, s6 x2, s9 x1, s10 x2; s1-s4 have none) flips speed
+     negative when the lock releases, and he runs backwards until he presses
+     Up (speed winds -4096 → 0 → +4096 over ~16 frames; 5 of 6, s9's came 27
+     frames before the clear). Up during the lock doesn't prevent it. The env
+     has no Up action, and the header's "runs forward again on his own" does
+     not match any of these. smoke_corners reads the reversal as "straight"
+     (heading doesn't change). Breaks s5 (dies at 18 spheres) and s6 (52).
+  4. **OPEN — jump timing.** A v4-v6 jump fires at the decision point (~half
+     a cell before the centre). His 52 jumps take off anywhere from -124 to
+     +116 units from the centre (26 before, 26 at/after). Breaks s9: at
+     (13,27) he collected the blue, then jumped; the env takes off first,
+     skips it and lands on red at (11,27) (dies at 129).
+  v6 smoke (scratch copy of smoke_corners on d4's setup, one demo, CHK_ENV=6):
+  s1, s2, s3, s4, s8 ALL PASS; s5, s6 fail (3), s9 fails (4); s7, s10 not
+  yet run. Nothing has trained on v6; d4 (v5, stages 1-4) is untouched.
 - **2026-10-10 09:07: d7 RESUMED by Claude** (Tyler: "please resume the sonic
   rl project"); same `--resume >>` command, PID 151406, banner ram_feats=13.
   Launch inside `venv` (`source venv/bin/activate`): the first attempt used
