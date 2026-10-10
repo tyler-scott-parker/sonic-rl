@@ -63,6 +63,39 @@ recording of Tyler's own playthrough and improved on (`coordinator.py`).
   logs/main_aiz1.log 2>&1 &`. He stopped 0:08 into AIZ2 inside a hidden
   giant-ring room — `record_play.py --resume ...` + 3 Backspace presses gets
   back before the tree. See "Base game rebuild 2026-09-30".
+- **2026-10-09 20:16: d3 RESUMED** (marker in its log). Frames counted exactly
+  from `ss_log_d3.jsonl` (`steps` − demo_frac × 2925): **11.84M** at resume
+  (the ~12.4M below was steps × 23), so the 25M-frame gate is ~22:00.
+- **Why d3 stalls at 56% — MEASURED 2026-10-09 (on the 537,624-step save,
+  before the gate): a mistake whose penalty lands ~100 corners later, at
+  γ = 0.95 per corner.** `attic/one_off_tools/probe_steering_v4.py [eps]
+  [start frac]` + `steering_analyze_v4.py <tag>` (v3 probe's scoring copied
+  unchanged; each decision paired with the intersection it chose for).
+  Yardsticks held: 99% of 9,894 decisions paired; straight/left/right choice
+  = the move made at 5,296 of 5,298; turn byte 807/807; pickups on blue.
+  - **The d2 mechanism is fixed.** Where only straight was right, while
+    collecting: straight **64%** (d2 on v3: 6-9%), jump 34%. Turns due: 72%.
+    Airborne 39% of frames (d2 46%), 24% from 78%.
+  - **From 78%: 90/100 clears. From 56%: 6 clears, 90 stalls, 4 red.** 78
+    of the 90 stalls are in ONE place: the zigzag staircase of blues between
+    bumper columns 24 and 27 (rows 12-19, cols 25-26; exits only top and
+    bottom). Once all of it is red, nothing in it can be turned on, so Sonic
+    pinballs between the bumpers and hops over red until the stall rule.
+  - Chain: at **(26,21)** (Tyler takes it at 62% of his run) the policy
+    jumps east with **P = 0.998** (74 of 87 episodes) instead of turning
+    left onto blue (25,21), one step away — the rest of the time it takes a
+    1-step blue 99%. **53 of 90 stalls end with exactly that one sphere
+    left.** Later, at (15,26), it jumps over bumper (14,26) (97/100
+    episodes), stranding (15,25)/(14,25)/(13,25); it goes back for them,
+    which seals it in the red staircase. From 78% that "pocket last" plan
+    works (16 of 21 jumpers cleared) because the pocket IS the last of the
+    board; from 56% (25,21) is still out there.
+  - **The penalty for the (26,21) jump arrives a median 101 decisions later
+    (82-120): 0.95^101 = 0.006.** A sphere is worth the same whenever it is
+    collected, so skipping it costs nothing until then: the error is
+    invisible to d3's credit assignment. (At γ 0.99: 0.36.) The
+    VecNormalize `clip_reward=10` (open since 2026-09-29) caps that penalty
+    as well. d4 has γ 0.95 too.
 - **PAUSED by Tyler 2026-10-09 ~19:30 — nothing is training.** Pick up here:
   - **d3** (env v4, stage 1) saved at **537,616 steps (~12.4M frames)**: start
     point **56%** of Tyler's run (d2 stalled at 78% after 22.8M frames);
