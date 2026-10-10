@@ -74,6 +74,34 @@ recording of Tyler's own playthrough and improved on (`coordinator.py`).
   rules: **d4** (γ 0.95) if d5 never got below 56%, **d6** (= d4 with γ 0.99)
   if it did. Criteria: Pre-Committed Criteria, "Overnight fallback". Watch log
   `logs/d5_watch.log` (git-ignored).
+- **2026-10-10 ~00:45: d5 PASSED d3's 56% wall** (ckpt 33 at 19.88M frames;
+  d3 sat at ckpt 34 from 11.62M to 17.31M and never left). The pointer only
+  moves back, so the 40M-frame gate's bar ("below 56%") is already met; d5
+  keeps running. Its path: 97%→72% at d3's pace (+2 to +4 ckpts behind), then
+  **stuck at 72% (ckpt 47) for 8.6M frames** (8.09M→16.69M; 0 of 377
+  episodes from ckpt 47 reached the target of 31, 81% ended by the stall
+  rule), then 72%→36% in ~4M frames (36% at 20.66M). Frames:
+  `attic/one_off_tools/watch_demo_run.py d5 d3` (frames, pointer = running min
+  of `demo_start`, d3 at equal stage-1 frames; reproduces d3's 17.31M / 56%
+  since 11.62M exactly).
+- **d5's mechanism check FAILED as written, while the outcome improved.**
+  Probe on the first save after 56% (00:49:50; by then the pointer was at
+  **36%**, so this measures a model 12 points past the wall):
+  `probe_steering_d5_v4_56.log`, steer_*_d5_v4_56.json; analyzer yardsticks
+  held (choice = move made 100% of 7,671; 99% paired). From 56%:
+  **30 clears / 55 stalls / 15 red** (d3: 6 / 90 / 4). But at (26,21) with
+  (25,21) still blue, **0 of 49 first visits step onto (25,21)** (pass needed
+  left as the majority): arriving from the west it jumps east 21 of 26 (as
+  d3, 65 of 65); arriving from the east (new in d5, 23 of 49) it goes
+  straight 23 of 23 where right would take it. Instead d5 **comes back for
+  (25,21) along row 25** — entered from (25,20) 31, (25,22) 16, (24,21) 4
+  (d3: (24,21) 20, (25,20) 6, (25,22) 3); collected in 51 of 100 episodes
+  (d3: 29); stalls with only (25,21) left 11 of 55 (d3: 46 of 90). So γ 0.99
+  got it past the wall by a different plan than predicted: it still skips
+  (25,21) at (26,21) but no longer seals itself in before returning.
+  Tools: `attic/one_off_tools/pocket_choice.py` (first choice at (26,21);
+  reproduces d3's 74 of 87 / P 0.998), `pocket_next.py` (next cell actually
+  entered), `pocket_fate.py` (how/whether (25,21) gets collected).
 - **d3 is PARKED, not resumed:** saved at **821,424 steps / 17.31M frames**,
   start point **56%** since 11.62M frames, fresh starts mean 84.6/102, best
   99, 0 clears. It never reached its 25M-frame gate or its 26.62M stall stop;
@@ -982,6 +1010,11 @@ episode's `stage`.
   clear — not overnight.
 
 ### Run d5 (d3 with γ 0.99 per corner) — AGREED with Tyler 2026-10-09 21:53, before launch (proposed earlier that evening)
+**RESULTS so far (2026-10-10 ~01:00):** gate bar met early (below 56% at
+19.88M frames, pointer can't move forward); mechanism check **FAILED as
+written** (left onto (25,21) 0 of 49 — it got past by returning along row 25;
+see "Current state"). Stall stop and main test still open.
+
 d5 differs from d3 ONLY in γ (0.95 → 0.99), so a difference is γ's. The
 question: does a ~100-corner horizon get past d3's 56% wall (the (26,21)
 jump whose penalty lands ~101 corners later)? Frames counted as for d3.
