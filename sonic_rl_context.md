@@ -1013,7 +1013,11 @@ episode's `stage`.
 **RESULTS so far (2026-10-10 ~01:00):** gate bar met early (below 56% at
 19.88M frames, pointer can't move forward); mechanism check **FAILED as
 written** (left onto (25,21) 0 of 49 — it got past by returning along row 25;
-see "Current state"). Stall stop and main test still open.
+see "Current state"). **GATE PASSED at 40.11M frames (03:59): start point
+21% (ckpt 13)**. Pace read: 97%→56% took 18.80M frames vs d3's 11.62M
+(1.6x — inside the 2-3x allowance), incl. 8.6M stuck at 72%. Stall stop
+and main test (fresh clear within 100M) still open; 0 fresh clears at 40M
+(fresh mean ~85/102, best 98).
 
 d5 differs from d3 ONLY in γ (0.95 → 0.99), so a difference is γ's. The
 question: does a ~100-corner horizon get past d3's 56% wall (the (26,21)
