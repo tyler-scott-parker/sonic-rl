@@ -63,13 +63,17 @@ recording of Tyler's own playthrough and improved on (`coordinator.py`).
   logs/main_aiz1.log 2>&1 &`. He stopped 0:08 into AIZ2 inside a hidden
   giant-ring room — `record_play.py --resume ...` + 3 Backspace presses gets
   back before the tree. See "Base game rebuild 2026-09-30".
-- **PAUSED by Tyler 2026-10-09 21:18 — nothing is training.** d3 stopped
-  cleanly at **821,424 steps / 17.31M frames**, start point still **56%**
-  (since 11.62M frames), fresh starts mean 84.6/102, best 99, 0 clears. Its
-  25M-frame gate and stall stop were NOT reached. **d5** (below) is defined
-  and smoke-passed, NOT started; its criteria are still PROPOSED (Tyler had
-  not OK'd them). On resume: either resume d3 to its checks (`--resume >>`),
-  or go straight to d5 — Tyler's call.
+- **2026-10-09 21:53: Tyler chose to go straight to d5 and OK'd its
+  criteria as written** (Pre-Committed Criteria, now AGREED). d5 launched
+  fresh, alone on the machine, into `logs/ss_multistage_d5.log`. Progress:
+  `demo_progress.py --run d5`. Gate at 40M frames (~5 h alone); probe
+  (`PROBE_RUN=d5 probe_steering_v4.py 100 0.56`) when the start point first
+  reaches 56%.
+- **d3 is PARKED, not resumed:** saved at **821,424 steps / 17.31M frames**,
+  start point **56%** since 11.62M frames, fresh starts mean 84.6/102, best
+  99, 0 clears. It never reached its 25M-frame gate or its 26.62M stall stop;
+  Tyler skipped the remaining ~70 min because the 56% wall was already
+  measured (below). It passed the gate's bar (past 78%) long before 25M.
 - **2026-10-09 20:16: d3 RESUMED** (marker in its log). Frames counted exactly
   from `ss_log_d3.jsonl` (`steps` − demo_frac × 2925): **11.84M** at resume
   (the ~12.4M below was steps × 23), so the 25M-frame gate is ~22:00.
@@ -109,7 +113,8 @@ recording of Tyler's own playthrough and improved on (`coordinator.py`).
   still at 56%, its stall stop at **26.62M frames** (56% since 11.62M); then
   `touch STOP_d3` and launch fresh:
   `nohup python3 train_ss_multistage.py d5 > logs/ss_multistage_d5.log 2>&1 &`.
-  Its criteria are in Pre-Committed Criteria (proposed, awaiting Tyler's OK).
+  Its criteria are in Pre-Committed Criteria (AGREED 21:53; d3 was not run
+  to its gate/stall stop after all — see the top of "Current state").
   d4 (γ 0.95) waits on d5's answer.
 - **PAUSED by Tyler 2026-10-09 ~19:30 — nothing is training.** Pick up here:
   - **d3** (env v4, stage 1) saved at **537,616 steps (~12.4M frames)**: start
@@ -945,7 +950,7 @@ Frontier climb is **decelerating** at the top (gained_avg ~1.6–2.1, three buck
 
 Written down *before* the data, to read the same way later:
 
-### Run d5 (d3 with γ 0.99 per corner) — PROPOSED 2026-10-09 before launch; needs Tyler's OK
+### Run d5 (d3 with γ 0.99 per corner) — AGREED with Tyler 2026-10-09 21:53, before launch (proposed earlier that evening)
 d5 differs from d3 ONLY in γ (0.95 → 0.99), so a difference is γ's. The
 question: does a ~100-corner horizon get past d3's 56% wall (the (26,21)
 jump whose penalty lands ~101 corners later)? Frames counted as for d3.
