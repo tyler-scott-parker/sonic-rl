@@ -86,6 +86,12 @@ recording of Tyler's own playthrough and improved on (`coordinator.py`).
   from 21% on d5's final save is the stall's diagnosis (tag `d5_v4_21`); the
   56% probe's model copy is kept as `attic/one_off_tools/d5_v4_56_model.*`.
   Resume d5 later with `--resume >>` if wanted — its save is intact.
+- **2026-10-10 07:35: d6 STOPPED by Tyler** (clean save at 614,400 steps,
+  ~16.5M frames), to try a pointer toward the nearest sphere next. Nothing
+  training. d6 at the stop: start points s1 74% / s2 64% / s3 79% / s4 73%,
+  0 fresh clears (bests 81/102, 102/127, 96/118, 82/115); stage 1 was 6
+  ckpts AHEAD of d5 at equal stage-1 frames (74% vs 83% at 5.2M) — an early
+  read, not the agreed 50M-frame interference read, which it never reached.
 - **d5's 21% stall, DIAGNOSED 2026-10-10 05:30 (probe on its final save,
   tag `d5_v4_21`; caveat: `probe_steering_v4.py 100 0.21` starts its band at
   ckpt 12 = 19%, one point behind training's ckpt 13).** Analyzer yardsticks

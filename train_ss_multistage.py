@@ -210,7 +210,9 @@ RUNS = {
                'stage3_20261009-170931', 'stage4_20261009-172620'],
         demo_prob=0.75,
         ppo=dict(gamma=0.99),           # d5's gamma; everything else is d4
-        result='RUNNING since 2026-10-10 05:04 (fresh) — the overnight fallback '
+        result='STOPPED by Tyler 2026-10-10 07:35 at 614,400 steps (~16.5M frames; '
+               'start points s1 74% s2 64% s3 79% s4 73%, 0 fresh clears) to make '
+               'room for the nearest-sphere pointer. Was the overnight fallback '
                'agreed with Tyler 2026-10-09, launched because d5 got below 56% '
                'and then hit its stall stop. d4 with gamma 0.99 (d5\'s), so d6 vs d5 '
                'isolates training four boards at once.',
