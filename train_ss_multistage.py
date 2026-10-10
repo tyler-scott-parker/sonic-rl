@@ -194,8 +194,10 @@ RUNS = {
                                         # (26,21) whose penalty lands a median 101
                                         # corners later (0.95^101 = 0.006; 0.99^101
                                         # = 0.36) — probe_steering_v4.py
-        result='RUNNING since 2026-10-09 21:53 (fresh; criteria agreed, see the '
-               'context doc). d3 with gamma 0.99 per corner instead of 0.95; '
+        result='STOPPED 2026-10-10 05:04 by its stall stop at 2,113,600 steps '
+               '(~46.7M frames): passed d3\'s 56% wall at 19.9M frames and its '
+               '40M gate at 21%, then 21% unmoved 15.4M frames; 0 fresh clears '
+               '(best 100/102). d3 with gamma 0.99 per corner instead of 0.95; '
                'everything else identical, fresh start. d3 stalled at 56%: it '
                'skips blue (25,21) with a P 0.998 jump and seals itself in the '
                'red staircase ~100 corners later, too far for gamma 0.95 to see.',
@@ -208,9 +210,9 @@ RUNS = {
                'stage3_20261009-170931', 'stage4_20261009-172620'],
         demo_prob=0.75,
         ppo=dict(gamma=0.99),           # d5's gamma; everything else is d4
-        result='NOT STARTED — overnight fallback agreed with Tyler 2026-10-09: '
-               'launched instead of d4 only if d5 gets below 56% and is then '
-               'stopped by a rule. d4 with gamma 0.99 (d5\'s), so d6 vs d5 '
+        result='RUNNING since 2026-10-10 05:04 (fresh) — the overnight fallback '
+               'agreed with Tyler 2026-10-09, launched because d5 got below 56% '
+               'and then hit its stall stop. d4 with gamma 0.99 (d5\'s), so d6 vs d5 '
                'isolates training four boards at once.',
     ),
 }

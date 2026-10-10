@@ -74,6 +74,18 @@ recording of Tyler's own playthrough and improved on (`coordinator.py`).
   rules: **d4** (γ 0.95) if d5 never got below 56%, **d6** (= d4 with γ 0.99)
   if it did. Criteria: Pre-Committed Criteria, "Overnight fallback". Watch log
   `logs/d5_watch.log` (git-ignored).
+- **2026-10-10 05:04: d5 STOPPED by its stall stop; d6 LAUNCHED (fallback).**
+  d5's start point sat at **21% (ckpt 13) from 31.36M to 46.72M frames**
+  (15.36M ≥ the agreed 15M) → `touch STOP_d5`, clean save at **2,113,600
+  steps (~46.7M frames)**. Its full path: 97%→72% (8.09M), stuck at 72% 8.6M
+  frames, 72%→24% (24.56M), 24% 5.2M frames, 23%/21% (31.36M), then stuck.
+  Fresh starts: 0 clears in ~46.7M frames, mean ~80-88/102 late, best 100
+  (main test — first fresh clear within 100M — left open, not failed). It
+  got below 56%, so the fallback is **d6** (d4 with γ 0.99), launched fresh
+  at 05:04 into `logs/ss_multistage_d6.log`; baseline d5. A read-only probe
+  from 21% on d5's final save is the stall's diagnosis (tag `d5_v4_21`); the
+  56% probe's model copy is kept as `attic/one_off_tools/d5_v4_56_model.*`.
+  Resume d5 later with `--resume >>` if wanted — its save is intact.
 - **2026-10-10 ~00:45: d5 PASSED d3's 56% wall** (ckpt 33 at 19.88M frames;
   d3 sat at ckpt 34 from 11.62M to 17.31M and never left). The pointer only
   moves back, so the 40M-frame gate's bar ("below 56%") is already met; d5
@@ -989,6 +1001,9 @@ Frontier climb is **decelerating** at the top (gained_avg ~1.6–2.1, three buck
 Written down *before* the data, to read the same way later:
 
 ### Overnight fallback d4 / d6 — AGREED with Tyler 2026-10-09 ~22:10, before either launches
+**LAUNCHED: d6, 2026-10-10 05:04** (d5 got below 56%, then its stall stop
+fired). Baseline d5. Smoke: `smoke_corners.py d6` ALL CHECKS PASS 22:58.
+
 Only if d5 is stopped by one of its rules overnight (gate, stall stop); Claude
 launches it then without waiting. **Which:** d5 never got below 56% → **d4**
 (γ 0.95), baseline **d3**. d5 got below 56%, then a rule stopped it → **d6**
@@ -1018,6 +1033,9 @@ see "Current state"). **GATE PASSED at 40.11M frames (03:59): start point
 (1.6x — inside the 2-3x allowance), incl. 8.6M stuck at 72%. Stall stop
 and main test (fresh clear within 100M) still open; 0 fresh clears at 40M
 (fresh mean ~85/102, best 98).
+**STALL STOP fired 2026-10-10 05:04** (21% unmoved 31.36M→46.72M frames);
+stopped cleanly at 2,113,600 steps. Main test left open (0 fresh clears at
+~46.7M of its 100M; best 100/102).
 
 d5 differs from d3 ONLY in γ (0.95 → 0.99), so a difference is γ's. The
 question: does a ~100-corner horizon get past d3's 56% wall (the (26,21)
