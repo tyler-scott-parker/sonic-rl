@@ -1180,6 +1180,19 @@ Frontier climb is **decelerating** at the top (gained_avg ~1.6–2.1, three buck
 
 Written down *before* the data, to read the same way later:
 
+### Env v7 open questions: Up timing and turn queueing, settled by MEASUREMENT — AGREED with Tyler 2026-10-10 ~18:00, before measuring
+Tyler: "I'll trust good data more than anything." These rules are fixed before any of the measurements run. Script: `attic/one_off_tools/measure_v7_decisions.py` (env v7 prototype, d7's obs preset + v7, run at nice 19 while he plays).
+- **Up timing.** States: every back-restart decision (running backwards after a bounce) in his 14 recordings, plus random-agent ones across all 14 stages. From each, Up-now (press at once, as he does) vs Up-late (env v7: once past the cell's centre), then every corner option (straight / left / right / jump). Record frames, and the outcomes reachable (cell + heading at the next decision after that).
+  - Up-now loses no outcome Up-late reaches in >= 99% of bounces → **replace** Up-late with Up-now (no new action).
+  - Up-now loses outcomes in > 1% of bounces but saves frames → **offer both** (a 9th action).
+  - Up-now saves < 1 frame on average → **keep** Up-late, and set smoke_corners' per-Up allowance from the measured worst case.
+- **Turn queueing, inferability.** Random-agent decisions on v7; target = the "window still ahead" bit (it predicts in-step vs a-cell-late at 99.3% / 97.9% away from bumpers). Features = what the agent already has: the ram obs + its own last action (+ the centre cell of the patch, i.e. "am I on a bumper"). Classifiers: a small MLP and a lookup table, scored on held-out episodes.
+  - >= 98% held-out accuracy → **no fix** (its memory can learn it).
+  - < 98% → **add the obs bit** (dynamics unchanged; the 14 recordings replay as now).
+- **Pointless decisions.** At bumper-entry decisions and at decisions offered while a turn is already queued: try every action from the same snapshot (snapshot yardstick: the same action twice gives identical results).
+  - No action ever changes the outcome vs straight → **remove** those decision points, then re-verify all 14 recordings.
+  - Some action does → they're real choices; **keep** them.
+
 ### Run d8 (d7 + clear-time bonus) — agreed with Tyler 2026-10-10 (~17:40, "Go ahead and build d8", replying to this proposal); speed bar corrected before launch
 **Tyler's goal (2026-10-10): optimize for faster clear times; rings don't matter; his play is a starting guide, not the target** ("I'm far from the most skilled. I'm sure there are routes way better than mine"). Before d8 the reward paid almost nothing for speed: −0.1/frame and a clear time bonus of at most 300, against +2,000 per sphere (500 frames faster ≈ 58; invisible after VecNormalize, return std ~28K). Only the per-corner discount (γ 0.99) favoured shorter routes, and it counts cells, not frames.
 d8 differs from d7 ONLY by `SS_SPEED_BONUS=7`: a clear also pays 7 × (SS_MAX_STEPS 18,000 − frames), so each frame saved is worth 7 and 100 frames ≈ 0.3% of a stage-1 clear. It is absolute: his time is not in the reward. It is paid only on a clear, so it is inert until the agent clears, and it can't reward dying early. (Deaths net −2,500 however long they take; a per-frame cost would make long failures cost more.) Rings stay out of the reward. d8 starts from d7's save (new `init` field in RUNS: weights, VecNormalize and curriculum pointer, at 975,008 steps, ckpt 0); its frame count and log start at zero. Verified by `check_speed_bonus.py` (ALL CHECKS PASS): with the flag off, the same 3,670 steps under git HEAD's env give identical rewards and observations. With it on, the observations and trajectory are identical and the reward differs only on the 2 clearing steps (his replay and his corners through step(), both at 2,925 frames), by exactly 105,525. `smoke_corners.py d8` ALL CHECKS PASS. Frames counted as for d7.
