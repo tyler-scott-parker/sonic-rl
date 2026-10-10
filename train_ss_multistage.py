@@ -231,6 +231,19 @@ RUNS = {
                'steps (curriculum at ckpt 0; last 300 fresh: 67.7% clears, '
                'median 3,202 frames, best 3,014).',
     ),
+    'd8c': dict(
+        stages=[1], lstm=512, lr=3e-4,
+        obs=dict(SS_ENV_VERSION='4',
+                 SS_USE_PIXELS='0', SS_PATCH_R='7', SS_DROP_POSITION='1',
+                 SS_POINTER='1'),           # d7 exactly: no clear-time bonus
+        demos=['stage1_20260930-165817'], demo_prob=0.75,
+        ppo=dict(gamma=0.99),
+        init='d7',
+        result='CONTROL for d8: d7 with no change, started from d7\'s save '
+               'exactly as d8 is, frames from 0. d7 was still getting faster '
+               'when paused (median fresh clear 3,310 -> 3,202), so d8 is read '
+               'against this at equal frames, not against d7\'s pause.',
+    ),
     'd6': dict(
         stages=[1, 2, 3, 4], lstm=512, lr=3e-4,
         obs=dict(SS_ENV_VERSION='5',
