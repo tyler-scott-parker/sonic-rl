@@ -86,6 +86,27 @@ recording of Tyler's own playthrough and improved on (`coordinator.py`).
   from 21% on d5's final save is the stall's diagnosis (tag `d5_v4_21`); the
   56% probe's model copy is kept as `attic/one_off_tools/d5_v4_56_model.*`.
   Resume d5 later with `--resume >>` if wanted — its save is intact.
+- **d5's 21% stall, DIAGNOSED 2026-10-10 05:30 (probe on its final save,
+  tag `d5_v4_21`; caveat: `probe_steering_v4.py 100 0.21` starts its band at
+  ckpt 12 = 19%, one point behind training's ckpt 13).** Analyzer yardsticks
+  held (choice = move 100% of 15,292; 99% paired). **0 of 100 reach the
+  target; 88 stalls, 12 red.** (25,21) is no longer the problem (collected
+  in 94, entering from (25,20) 93). The leftovers sit on the far side of the
+  board, columns 5-6 rows 12-17 (e.g. (15,5)/(16,5)/(17,5) in 11 stalls). In
+  the stall window it wanders (distinct cells/intersection 0.79, vs d3's 0.06
+  pinballing) at chance (53% vs 51% on a shortest route), nearest blue a
+  median 22 intersections away.
+  **The leftover blues are OUT OF VIEW when it stalls — MEASURED** with
+  `attic/one_off_tools/stall_view.py` (same rule as probe_visibility.py:
+  toroidal Chebyshev distance <= PATCH_R 7). Yardstick: while collecting a
+  blue is in view 98-99% of frames. Stall windows, median share of the window
+  with a blue in view: **d5 at 21%: 0%** (18 of 88 windows have it >= half
+  the time; nearest blue median 12 cells); d5 at 56%: 0% (8 cells); d3 at
+  56%: 0% (10 cells — the sealed-in staircase is ~10 rows from (25,21)).
+  This REOPENS for the v4 runs what the d2 probe refuted on v3 (there a blue
+  was in view ~95% of the window): "Don't propose a wider patch /
+  sphere-direction feature" was written from d2 and does not hold for d3/d5
+  stalls. Not acted on — Tyler's call.
 - **2026-10-10 ~00:45: d5 PASSED d3's 56% wall** (ckpt 33 at 19.88M frames;
   d3 sat at ckpt 34 from 11.62M to 17.31M and never left). The pointer only
   moves back, so the 40M-frame gate's bar ("below 56%") is already met; d5
