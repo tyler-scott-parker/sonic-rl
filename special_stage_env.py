@@ -363,9 +363,15 @@ class SpecialStageEnv(gym.Env):
             raise FileNotFoundError(
                 f'special-stage state file(s) not found: {missing}')
 
+        # render_mode: stable-retro defaults to 'human', which opens a window
+        # and redraws it on EVERY step and reset: every env (8 per training
+        # run, one per check script) popped up a window that stole focus from
+        # Tyler's game, and spent CPU drawing it (found 2026-10-10). Frames
+        # don't depend on it; watch_ss.py draws render()'s array itself.
         self.base_env = stable_retro.make(
             game='SonicAndKnuckles3-Genesis-v0',
-            use_restricted_actions=stable_retro.Actions.FILTERED
+            use_restricted_actions=stable_retro.Actions.FILTERED,
+            render_mode='rgb_array',
         )
 
         self.action_space = spaces.Discrete(
