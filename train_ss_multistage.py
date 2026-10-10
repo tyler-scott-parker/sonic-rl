@@ -164,7 +164,7 @@ RUNS = {
         demos=['stage1_20260930-165817'], demo_prob=0.75,
         ppo=dict(gamma=0.95),           # per CORNER now: ~20 corners, the same
                                         # ~20-cell horizon d2 had at base speed
-        result='PAUSED 2026-10-09 at 821,424 steps (17.31M frames): start point '
+        result='PARKED 2026-10-09 at 821,424 steps (17.31M frames) for d5: start point '
                '56% since 11.62M frames, fresh-start mean 84.6/102, best 99, 0 clears. Resumed twice '
                'onto env fixes (lag frames; turn window + fresh press). d2 on '
                'env v4: one choice per corner (straight / '
@@ -194,8 +194,8 @@ RUNS = {
                                         # (26,21) whose penalty lands a median 101
                                         # corners later (0.95^101 = 0.006; 0.99^101
                                         # = 0.36) — probe_steering_v4.py
-        result='NOT STARTED — launch after d3\'s gate / stall stop (Tyler\'s go '
-               '2026-10-09). d3 with gamma 0.99 per corner instead of 0.95; '
+        result='RUNNING since 2026-10-09 21:53 (fresh; criteria agreed, see the '
+               'context doc). d3 with gamma 0.99 per corner instead of 0.95; '
                'everything else identical, fresh start. d3 stalled at 56%: it '
                'skips blue (25,21) with a P 0.998 jump and seals itself in the '
                'red staircase ~100 corners later, too far for gamma 0.95 to see.',
