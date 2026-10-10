@@ -86,6 +86,13 @@ recording of Tyler's own playthrough and improved on (`coordinator.py`).
   from 21% on d5's final save is the stall's diagnosis (tag `d5_v4_21`); the
   56% probe's model copy is kept as `attic/one_off_tools/d5_v4_56_model.*`.
   Resume d5 later with `--resume >>` if wanted — its save is intact.
+- **2026-10-10 09:07: d7 RESUMED by Claude** (Tyler: "please resume the sonic
+  rl project"); same `--resume >>` command, PID 151406, banner ram_feats=13.
+  Launch inside `venv` (`source venv/bin/activate`): the first attempt used
+  the bare pyenv python3 and died at `import torch` (noted in the log). Watch
+  as for d5: 30-min summaries in `logs/d7_watch.log`; events = process death,
+  first reach of 21% (ckpt <= 13) + the save after it (probe due), first fresh
+  clear, 50M-frame gate, 15M stall stop. At 1.29M frames: 90%, level with d5.
 - **PAUSED by Tyler 2026-10-10 08:01 — nothing training** (he's using the
   machine for games). d7 stopped cleanly at **49,200 steps (~1.1M frames,
   start point 91%)**. Resume: `nohup python3 train_ss_multistage.py d7
