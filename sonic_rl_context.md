@@ -128,6 +128,7 @@ recording of Tyler's own playthrough and improved on (`coordinator.py`).
   v6 smoke (scratch copy of smoke_corners on d4's setup, one demo, CHK_ENV=6):
   s1, s2, s3, s4, s8 ALL PASS; s5, s6 fail (3), s9 fails (4); s7, s10 not
   yet run. Nothing has trained on v6; d4 (v5, stages 1-4) is untouched.
+- **2026-10-10 17:37: d8 PAUSED at Tyler's request** (he wanted the v7 reruns done before using the machine for games). Clean save at **21,800 steps** (~0.5M frames; 12 clears in its first 17 fresh starts). Resume with the `--resume >>` command below; nothing else changes. The control (d7 resumed, no bonus) runs AFTER d8 (Tyler's choice).
 - **2026-10-10 ~17:50: run d8 LAUNCHED** (Tyler: "Go ahead and build d8"). d8 = d7 + a clear-time bonus (`SS_SPEED_BONUS=7`), starting from d7's save; criteria under Pre-Committed Criteria, "Run d8". Log `logs/ss_multistage_d8.log`, episodes `ss_log_d8.jsonl`; stop `touch STOP_d8`; resume `source venv/bin/activate && nohup python3 train_ss_multistage.py d8 --resume >> logs/ss_multistage_d8.log 2>&1 &`. The v7 prototype was stashed while building d8 (git stash "v7 prototype 2026-10-10") so d8 is committed on clean code, then popped back into the working tree (still uncommitted). v7 rerun on the lookahead checker (same afternoon): stage 4 now PASSES (115/115, 2 frames sooner); 8, 9, 12 and 14 still pass. Stage 6 REGRESSED (died at 127/128 in 6,743 frames; 42 jumps where neither timing reached his next corner): the lookahead plays his next choice at its nominal timing, and on stage 6 that choice is usually another hop. To fix: skip the lookahead (or try both timings) when his next choice is a jump.
 - **PAUSED by Tyler 2026-10-10 ~16:50 — nothing training; v7 still an
   UNCOMMITTED prototype, report NOT yet given to Tyler.** That afternoon:
@@ -1186,7 +1187,7 @@ d8 differs from d7 ONLY by `SS_SPEED_BONUS=7`: a clear also pays 7 × (SS_MAX_ST
 - **Speed (main test):** median frames of d8's fresh-start clears (last 300 fresh starts) **below 3,202 within 20M frames** of d8's own training.
 - **Reliability guard:** fresh-start clear rate (last 300) **≥ 50%**. Below that, the bonus is too strong (it trades clears for speed).
 - **Reference, not a bar:** Tyler's 2,925; d7's best 3,014. Report where d8 lands relative to both.
-- **Attribution — OPEN, ask Tyler:** d7 alone was still getting faster, so d8 beating 3,202 doesn't by itself credit the bonus. A control would be d7 resumed (no bonus) for the same frames: side by side on the box (each ~half speed), or after. Without one, the read is only "faster than d7 at its pause".
+- **Attribution — DECIDED by Tyler 2026-10-10 ~17:35: run the control AFTER d8** (d7 resumed, no bonus, for the same frames d8 gets). Original note: d7 alone was still getting faster, so d8 beating 3,202 doesn't by itself credit the bonus. A control would be d7 resumed (no bonus) for the same frames: side by side on the box (each ~half speed), or after. Without one, the read is only "faster than d7 at its pause".
 
 ### Run d7 (d5 + compass to the nearest blue) — AGREED with Tyler 2026-10-10 07:52, before launch
 d7 differs from d5 ONLY by `SS_POINTER=1`: 3 features appended to the ram
