@@ -209,7 +209,7 @@ RUNS = {
                  SS_POINTER='1'),           # the only change from d5
         demos=['stage1_20260930-165817'], demo_prob=0.75,
         ppo=dict(gamma=0.99),
-        result='RUNNING since 2026-10-10 (fresh; criteria agreed, context doc). d5 plus a compass to the nearest '
+        result='PAUSED by Tyler 2026-10-10 08:01 at 49,200 steps (91%); resume with --resume. d5 plus a compass to the nearest '
                'blue (straight line, heading frame, + distance). d5 stalled at '
                '21% with every leftover blue outside its 15x15 view '
                '(stall_view.py), 71 of 88 still reachable red-free '

@@ -86,6 +86,12 @@ recording of Tyler's own playthrough and improved on (`coordinator.py`).
   from 21% on d5's final save is the stall's diagnosis (tag `d5_v4_21`); the
   56% probe's model copy is kept as `attic/one_off_tools/d5_v4_56_model.*`.
   Resume d5 later with `--resume >>` if wanted — its save is intact.
+- **PAUSED by Tyler 2026-10-10 08:01 — nothing training** (he's using the
+  machine for games). d7 stopped cleanly at **49,200 steps (~1.1M frames,
+  start point 91%)**. Resume: `nohup python3 train_ss_multistage.py d7
+  --resume >> logs/ss_multistage_d7.log 2>&1 &` (append, not `>`). Tyler
+  wants Claude to watch d7 when it resumes, as with d5 overnight: the
+  21% probe, gate at 50M frames, stall stop, first fresh clear.
 - **2026-10-10 07:53: d7 LAUNCHED** (d5 + compass to the nearest blue; Tyler's
   choice of straight-line compass on d5's setup). Criteria AGREED before
   launch: Pre-Committed Criteria, "Run d7". Log `logs/ss_multistage_d7.log`;
