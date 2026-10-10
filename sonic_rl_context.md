@@ -91,7 +91,12 @@ recording of Tyler's own playthrough and improved on (`coordinator.py`).
   stage5_20261010-091532 (58, 4,148 frames), stage6_20261010-092841 (128,
   6,829), stage7_20261010-095111 (60, 5,339), stage8_20261010-100029 (64,
   3,227), stage9_20261010-102154 (155, 2,988), stage10_20261010-102523 (37,
-  2,558). Stages 11-14 not recorded yet. What they exposed:
+  2,558). Then 10:39-10:50: stage11_20261010-103921 (67, 4,013),
+  stage12_20261010-104326 (72, 2,702), stage13_20261010-104726 (54, 4,116),
+  stage14_20261010-105034 (71, 3,427) — ALL 14 BOARDS RECORDED, all flawless.
+  11-14: longest sphere-or-ring gap 555 / 361 / 921 (s13's last sphere) /
+  368; bumper hits 1 / 0 / 0 / 4 (all → backwards); B jumps 0 / 3 / 9 / 6.
+  What they exposed:
   1. **Stall rule vs long runs → env v6 (Tyler chose both parts).** v3+'s 600
      frames without a sphere ended his stage-5 clear at frame 2,448 (1,116- and
      657-frame ring-lined runs across the board). v6 = v5 + a ring pickup
@@ -123,6 +128,12 @@ recording of Tyler's own playthrough and improved on (`coordinator.py`).
   v6 smoke (scratch copy of smoke_corners on d4's setup, one demo, CHK_ENV=6):
   s1, s2, s3, s4, s8 ALL PASS; s5, s6 fail (3), s9 fails (4); s7, s10 not
   yet run. Nothing has trained on v6; d4 (v5, stages 1-4) is untouched.
+- **2026-10-10 10:40: d7 PASSED ITS MAIN TEST** — first fresh-start clear of
+  stage 1 at 10.3M frames (102/102 in 5,064 frames), a second soon after in
+  3,471 frames (Tyler's demo: 2,925). Bar: within 100M frames. d5: none in
+  46.7M; no earlier run ever cleared stage 1 from the start. At 10.05M frames
+  its start point was 41% vs d5's 72% at equal frames (21 ckpts ahead). Still
+  open: the 21% probe and the 50M gate. Watch continues.
 - **2026-10-10 09:07: d7 RESUMED by Claude** (Tyler: "please resume the sonic
   rl project"); same `--resume >>` command, PID 151406, banner ram_feats=13.
   Launch inside `venv` (`source venv/bin/activate`): the first attempt used
