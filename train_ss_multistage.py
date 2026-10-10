@@ -202,6 +202,19 @@ RUNS = {
                'skips blue (25,21) with a P 0.998 jump and seals itself in the '
                'red staircase ~100 corners later, too far for gamma 0.95 to see.',
     ),
+    'd7': dict(
+        stages=[1], lstm=512, lr=3e-4,
+        obs=dict(SS_ENV_VERSION='4',
+                 SS_USE_PIXELS='0', SS_PATCH_R='7', SS_DROP_POSITION='1',
+                 SS_POINTER='1'),           # the only change from d5
+        demos=['stage1_20260930-165817'], demo_prob=0.75,
+        ppo=dict(gamma=0.99),
+        result='RUNNING since 2026-10-10 (fresh; criteria agreed, context doc). d5 plus a compass to the nearest '
+               'blue (straight line, heading frame, + distance). d5 stalled at '
+               '21% with every leftover blue outside its 15x15 view '
+               '(stall_view.py), 71 of 88 still reachable red-free '
+               '(stall_reach.py).',
+    ),
     'd6': dict(
         stages=[1, 2, 3, 4], lstm=512, lr=3e-4,
         obs=dict(SS_ENV_VERSION='5',

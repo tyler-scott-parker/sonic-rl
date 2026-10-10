@@ -86,6 +86,10 @@ recording of Tyler's own playthrough and improved on (`coordinator.py`).
   from 21% on d5's final save is the stall's diagnosis (tag `d5_v4_21`); the
   56% probe's model copy is kept as `attic/one_off_tools/d5_v4_56_model.*`.
   Resume d5 later with `--resume >>` if wanted — its save is intact.
+- **2026-10-10 07:53: d7 LAUNCHED** (d5 + compass to the nearest blue; Tyler's
+  choice of straight-line compass on d5's setup). Criteria AGREED before
+  launch: Pre-Committed Criteria, "Run d7". Log `logs/ss_multistage_d7.log`;
+  progress `attic/one_off_tools/watch_demo_run.py d7 d5`.
 - **2026-10-10 07:35: d6 STOPPED by Tyler** (clean save at 614,400 steps,
   ~16.5M frames), to try a pointer toward the nearest sphere next. Nothing
   training. d6 at the stop: start points s1 74% / s2 64% / s3 79% / s4 73%,
@@ -1026,6 +1030,34 @@ Frontier climb is **decelerating** at the top (gained_avg ~1.6–2.1, three buck
 ## Pre-Committed Criteria / Open Decisions
 
 Written down *before* the data, to read the same way later:
+
+### Run d7 (d5 + compass to the nearest blue) — AGREED with Tyler 2026-10-10 07:52, before launch
+d7 differs from d5 ONLY by `SS_POINTER=1`: 3 features appended to the ram
+vector — unit vector (forward, right) from Sonic's cell to the nearest blue
+cell, straight line on the wrapping board, in the patch's heading frame, and
+distance/16. Tyler chose the straight-line compass over a red-free route
+pointer and d5 (stage 1) as the base. Why: d5's 21% stalls had every
+leftover blue outside the 15x15 view (stall_view.py), 71 of 88 still
+reachable red-free, route median 27 cells (stall_reach.py).
+Verified by `check_pointer.py` (ALL CHECKS PASS): flag off = git HEAD's env
+(ram, grid, rewards identical over a seeded 600-step trajectory); flag on
+changes only the 3 appended features; on all 488 observations whose nearest
+blue was inside the patch, the patch has a blue exactly where the pointer
+says (all 4 headings, all 8 direction signs); never a nearer patch blue.
+`smoke_corners.py d7` ALL CHECKS PASS. Frames counted as for d3/d5.
+- **Gate at 50M frames:** start point **below 21%** (ckpt <= 12) — further
+  than d5 ever got (d5 reached 21% at 31.36M and sat there 15.4M frames). If
+  not → the compass isn't the fix (or not alone).
+- **Mechanism, when the start point first reaches 21% (ckpt <= 13), on the
+  next save:** `PROBE_RUN=d7 probe_steering_v4.py 100 0.21` (same start band
+  as d5's probe). **Pass = >= 25 of 100 reach the target** (the curriculum's
+  own advance bar; d5: 0 of 100). Also read `stall_view.py`: blue in view in
+  stall windows (d5: median 0%).
+- **Pace (read, not a stop rule):** frames to 56% and to 21% vs d5's 18.80M
+  and 31.36M.
+- **Stall stop:** start point unmoved for 15M frames.
+- **Main test:** first fresh-start clear of stage 1 within **100M frames**
+  (d5: none in 46.7M).
 
 ### Overnight fallback d4 / d6 — AGREED with Tyler 2026-10-09 ~22:10, before either launches
 **LAUNCHED: d6, 2026-10-10 05:04** (d5 got below 56%, then its stall stop

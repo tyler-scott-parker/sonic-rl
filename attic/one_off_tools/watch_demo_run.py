@@ -55,6 +55,10 @@ for did, p in sorted(ptr.items(), key=lambda kv: kv[1]['stage']):
     print(f'  stage {p["stage"]} start point {round(100 * p["frac"])}% (ckpt {p["ckpt"]}) since {p["since"] / 1e6:.2f}M '
           f'({(total - p["since"]) / 1e6:.2f}M frames unmoved, {own / 1e6:.2f}M of its own)')
     print(f'    moves (M frames, %): {p["hist"][-8:]}')
+if len(ptr) > 1:
+    last_move = max(p['since'] for p in ptr.values())
+    print(f'  run-wide: last start-point move on any stage at {last_move / 1e6:.2f}M '
+          f'({(total - last_move) / 1e6:.2f}M frames ago; stall stop at 15M)')
 for s in sorted({r['stage'] for r in fresh}):
     last = [r for r in fresh if r['stage'] == s][-300:]
     allf = [r for r in fresh if r['stage'] == s]

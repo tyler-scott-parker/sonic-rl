@@ -23,8 +23,13 @@ DEMO = os.path.join(REPO, 'demos', 'stage1_20260930-165817.npz')
 N_EPISODES = int(sys.argv[1]) if len(sys.argv) > 1 else 100
 FRAC = float(sys.argv[2]) if len(sys.argv) > 2 else None
 TAG = (f'{RUN}_' if RUN != 'd3' else '') + (f'v4_{round(100 * FRAC)}' if FRAC is not None else 'v4_ptr')
-os.environ.update(SS_ENV_VERSION='4', SS_USE_PIXELS='0', SS_PATCH_R='7',
-                  SS_DROP_POSITION='1', SS_STAGES='1', SS_RESTART_PROB='0',
+# the run's own obs preset (d7 adds SS_POINTER); read from the trainer's source, as smoke_corners does
+_src = open(os.path.join(REPO, 'train_ss_multistage.py')).read()
+_ns = {}
+exec(_src[_src.index('ALL_14 ='):_src.index('# ── Shared config')], _ns)
+_obs = _ns['RUNS'][RUN]['obs']
+assert _obs['SS_ENV_VERSION'] == '4' and _ns['RUNS'][RUN]['stages'] == [1], f'{RUN}: not a stage-1 env-v4 run'
+os.environ.update(_obs, SS_STAGES='1', SS_RESTART_PROB='0',
                   SS_LOG=os.path.join(OUT, f'probe_ss_log_{TAG}.jsonl'),
                   SS_DEMOS=DEMO, SS_DEMO_PROB='1.0', CUDA_VISIBLE_DEVICES='')
 

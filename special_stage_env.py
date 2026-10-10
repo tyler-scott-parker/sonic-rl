@@ -226,6 +226,7 @@ CORNER_MAX_FRAMES  = 240                # a step never runs longer (spring fligh
 #   v6, d1     : SS_ENV_VERSION=2 SS_USE_PIXELS=0 SS_PATCH_R=7 SS_DROP_POSITION=1
 #                -> 10 feats, 5-channel grid
 #   d2         : SS_ENV_VERSION=3, otherwise as v6 (same obs; 4-frame choices)
+#   d7         : SS_ENV_VERSION=4 ... SS_POINTER=1 (d5 + 3 compass feats -> 13)
 #
 # NOT reproducible here (deliberate): the dead v1/v2/v3 multistage runs used
 # DROP_POSITION=1 with the position slots still present as CONSTANT ZEROS, i.e.
@@ -264,9 +265,18 @@ SPEED_SCALE   = 8192.0 if V2 else 4096.0
 #   SS_STAGES=1,2        -> comma list of stage state files to sample on fresh
 #                           starts (default: single stage_1).
 DROP_POSITION = os.environ.get('SS_DROP_POSITION', '1') == '1'
+#   SS_POINTER=1         -> append a compass to the nearest blue sphere (run d7
+#                           on; default 0 = every earlier preset unchanged):
+#                           forward, right = unit vector from Sonic's cell to the
+#                           nearest blue cell, straight line on the wrapping
+#                           32x32 board, in the patch's heading frame (same
+#                           rounded quadrant); then distance / 16 cells. All 0
+#                           when no blue is left. Added because d5's 21% stalls
+#                           had every leftover blue outside the 15x15 patch.
+POINTER       = os.environ.get('SS_POINTER', '0') == '1'
 # 11 core features (10 in v2, which drops total_progress); +4 (sin/cos of x,y)
-# at indices 2-5 only when position is kept.
-NUM_RAM_FEATURES = (11 if DROP_POSITION else 15) - (1 if V2 else 0)
+# at indices 2-5 only when position is kept; +3 pointer features LAST.
+NUM_RAM_FEATURES = (11 if DROP_POSITION else 15) - (1 if V2 else 0) + (3 if POINTER else 0)
 _STAGE_IDS    = [s for s in os.environ.get('SS_STAGES', '').split(',') if s.strip()]
 
 
@@ -711,6 +721,27 @@ class SpecialStageEnv(gym.Env):
         out[..., 1] = ~known
         return out, heading
 
+    def _pointer(self, info, heading):
+        """[forward, right, distance / 16] to the nearest blue cell (SS_POINTER).
+        Same cell and rounded quadrant as _grid_patch, so a blue inside the
+        patch sits where the pointer says (checked by check_pointer.py)."""
+        grid = self._cur_grid if self._cur_grid is not None \
+            else self._read_grid()
+        blues = np.argwhere(grid == 2)
+        if not len(blues):
+            return [0.0, 0.0, 0.0]
+        cr, cx = self._cell(int(info.get('ss_x', 0)), int(info.get('ss_y', 0)))
+        dy = (blues[:, 0] - cr + 16) % 32 - 16      # rows: + is south
+        dx = (blues[:, 1] - cx + 16) % 32 - 16      # cols: + is east
+        i = int(np.argmin(dx * dx + dy * dy))
+        d = float(np.hypot(dx[i], dy[i]))
+        if d == 0:
+            return [0.0, 0.0, 0.0]
+        hx, hy = HEADING_DELTA[self._quadrant(heading)]
+        fwd = dx[i] * hx + dy[i] * hy
+        right = -dx[i] * hy + dy[i] * hx            # right of (hx, hy) is (-hy, hx)
+        return [fwd / d, right / d, d / 16.0]
+
     # ── Episode state ────────────────────────────────────────────────────
 
     def _reset_state(self):
@@ -939,10 +970,12 @@ class SpecialStageEnv(gym.Env):
         if self._ram_swapped is not None:
             grid_patch, heading = self._grid_patch(info)
             jumping = float(self._ram()[ADDR_JUMPING] != 0)
+            pointer = self._pointer(info, heading) if POINTER else []
         else:
             grid_patch = np.zeros(
                 (PATCH_SIZE, PATCH_SIZE, GRID_CHANNELS), dtype=np.float32)
             heading, jumping = 0, 0.0
+            pointer = [0.0, 0.0, 0.0] if POINTER else []
 
         blue_remaining = float(info.get('blue_spheres_remaining', 102))
         ss_next_corner = float(info.get('ss_next_corner', 0))
@@ -987,7 +1020,7 @@ class SpecialStageEnv(gym.Env):
             bumper_lock,
             float(self.bumper_hit),
             jumping,
-        ]
+        ] + pointer                                             # (last 3 if SS_POINTER)
 
         obs = {'ram': np.array(feats, dtype=np.float32), 'grid': grid_patch}
         if USE_PIXELS:
