@@ -1119,6 +1119,24 @@ says (all 4 headings, all 8 direction signs); never a nearer patch blue.
 - **Stall stop:** start point unmoved for 15M frames.
 - **Main test:** first fresh-start clear of stage 1 within **100M frames**
   (d5: none in 46.7M).
+- **RESULTS (2026-10-10, Claude watching; frames counted as for d5 — the same
+  code reproduces d5's 18.80M / 31.36M):**
+  - **Main test: PASSED at 10.3M frames** (10:40, 102/102 in 5,064 frames; a
+    second at 3,471; Tyler's demo 2,925). By 12.68M: 19 clears in the last 300
+    fresh starts, mean 68.8/102.
+  - **Gate bar met early:** ckpt 12 (below 21%) at 11.72M frames; 12% (ckpt 7)
+    at 12.59M. The formal read at 50M frames is still to come.
+  - **Pace:** 56% at 9.31M (d5 18.80M), 21% at 11.33M (d5 31.36M).
+  - **Mechanism probe at 21%: FAILS AS WRITTEN, narrowly — 22 of 100 reach
+    the target (bar >= 25; d5 0).** Save 10:53:19, 500K steps, band [12, 16]
+    (ckpt 12 = 19%, one behind training's 13 — d5's caveat). 22 cleared, 41
+    stalled, 37 red (d5: 0 / 88 / 12). The curriculum's own 25% bar was met
+    on the very next stretch: 21% -> 19% at 11.72M, 0.39M frames after.
+    stall_view: blue in view median 13% of a stall window (d5 0%), 10 of 41
+    windows >= half (yardstick 96% while collecting). Stall windows: route
+    distance 25 -> 8 -> 16 (closer in 25 of 41), but with the nearest blue 9+
+    cells away its moves are on a shortest route 51% vs 56% chance — the
+    compass gets it near, not onto. Tag d7_v4_21 (steer_*_d7_v4_21.json).
 
 ### Overnight fallback d4 / d6 — AGREED with Tyler 2026-10-09 ~22:10, before either launches
 **LAUNCHED: d6, 2026-10-10 05:04** (d5 got below 56%, then its stall stop
