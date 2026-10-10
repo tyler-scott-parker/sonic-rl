@@ -65,6 +65,7 @@ import os
 import sys
 import glob
 import json
+import shutil
 import signal
 import argparse
 import collections
@@ -214,6 +215,21 @@ RUNS = {
                '21% with every leftover blue outside its 15x15 view '
                '(stall_view.py), 71 of 88 still reachable red-free '
                '(stall_reach.py).',
+    ),
+    'd8': dict(
+        stages=[1], lstm=512, lr=3e-4,
+        obs=dict(SS_ENV_VERSION='4',
+                 SS_USE_PIXELS='0', SS_PATCH_R='7', SS_DROP_POSITION='1',
+                 SS_POINTER='1',
+                 SS_SPEED_BONUS='7'),       # the only change from d7
+        demos=['stage1_20260930-165817'], demo_prob=0.75,
+        ppo=dict(gamma=0.99),
+        init='d7',                          # first launch starts from d7's save
+        result='d7 + a clear-time bonus: a clear also pays 7 per frame under '
+               'SS_MAX_STEPS. Tyler 2026-10-10: optimize clear time; his play is '
+               'a starting guide, not the target. Starts from d7 at 975,008 '
+               'steps (curriculum at ckpt 0; last 300 fresh: 67.7% clears, '
+               'median 3,202 frames, best 3,014).',
     ),
     'd6': dict(
         stages=[1, 2, 3, 4], lstm=512, lr=3e-4,
@@ -540,7 +556,8 @@ if __name__ == '__main__':
           f"pixels={special_stage_env.USE_PIXELS} "
           f"patch={special_stage_env.PATCH_SIZE}x{special_stage_env.PATCH_SIZE}"
           f"x{special_stage_env.GRID_CHANNELS} "
-          f"ram_feats={special_stage_env.NUM_RAM_FEATURES}")
+          f"ram_feats={special_stage_env.NUM_RAM_FEATURES} "
+          f"speed_bonus={special_stage_env.SPEED_BONUS:g}")
     print(f"  restart_prob : {args.restart_prob}")
     if DEMOS:
         print(f"  demos        : {len(DEMOS)} at {CFG.get('demo_prob', 0.5):.0%} of "
@@ -590,9 +607,28 @@ if __name__ == '__main__':
         os.remove(P['stop'])
         print(f"[startup] cleared stale {P['stop']}")
 
+    # `init`: a run's first launch starts from another run's save (weights,
+    # VecNormalize, curriculum pointer) instead of random weights; its frame
+    # count and log start at zero. --resume afterwards uses its own save.
+    init = CFG.get('init') if not resuming else None
+    if init:
+        src = paths(init)
+        for f in (f"{src['zip']}.zip", src['pkl']):
+            if not os.path.exists(f):
+                sys.exit(f'\nREFUSING TO LAUNCH: {args.run} starts from {init}, '
+                         f'but {f} is missing.\n')
+        if os.path.exists(src['demo_state']) and DEMOS:
+            shutil.copyfile(src['demo_state'], P['demo_state'])
+        print(f"  init         : starting from {init}'s save "
+              f"({src['zip']}.zip, its VecNormalize and curriculum pointer)")
+
     env = SubprocVecEnv([make_env() for _ in range(NUM_ENVS)])
 
-    if os.path.exists(P['pkl']):
+    if init:
+        env = VecNormalize.load(paths(init)['pkl'], env)
+        env.training = True
+        print(f"Loaded VecNormalize from {paths(init)['pkl']}")
+    elif os.path.exists(P['pkl']):
         env = VecNormalize.load(P['pkl'], env)
         env.training = True
         print(f"Resumed VecNormalize from {P['pkl']}")
@@ -613,6 +649,16 @@ if __name__ == '__main__':
         print(f'Resuming multistage {args.run} at {model.num_timesteps} steps '
               f'| gamma {model.gamma} lr {model.learning_rate}'
               + (f' | LR OVERRIDDEN -> {_lr}' if _lr else ''))
+    elif init:
+        model = RecurrentPPO.load(f"{paths(init)['zip']}.zip", env=env, device='auto',
+                                  tensorboard_log=tb_dir)
+        for k, v in {'learning_rate': CFG['lr'], **PPO_KWARGS, **CFG.get('ppo', {})}.items():
+            got = getattr(model, k)
+            got = got(1.0) if callable(got) else got      # clip_range loads as a schedule
+            if got != v:
+                sys.exit(f'\nREFUSING TO LAUNCH: {init} has {k}={got}, {args.run} wants {v}.\n')
+        print(f'Starting {args.run} from {init} (its weights at {model.num_timesteps} '
+              f'steps; {args.run} counts from 0) | gamma {model.gamma} lr {model.learning_rate}')
     else:
         model = RecurrentPPO(
             policy='MultiInputLstmPolicy',
@@ -638,7 +684,7 @@ if __name__ == '__main__':
 
     try:
         model.learn(total_timesteps=TOTAL_STEPS, callback=callbacks,
-                    reset_num_timesteps=False)
+                    reset_num_timesteps=bool(init))   # an init run counts from 0
     except BaseException as e:
         # crash, KeyboardInterrupt that slipped through, anything — save first
         print(f'\n[exit] {type(e).__name__}: {e!r} — emergency save...', flush=True)

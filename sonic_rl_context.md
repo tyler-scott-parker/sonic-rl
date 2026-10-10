@@ -128,6 +128,7 @@ recording of Tyler's own playthrough and improved on (`coordinator.py`).
   v6 smoke (scratch copy of smoke_corners on d4's setup, one demo, CHK_ENV=6):
   s1, s2, s3, s4, s8 ALL PASS; s5, s6 fail (3), s9 fails (4); s7, s10 not
   yet run. Nothing has trained on v6; d4 (v5, stages 1-4) is untouched.
+- **2026-10-10 ~17:50: run d8 LAUNCHED** (Tyler: "Go ahead and build d8"). d8 = d7 + a clear-time bonus (`SS_SPEED_BONUS=7`), starting from d7's save; criteria under Pre-Committed Criteria, "Run d8". Log `logs/ss_multistage_d8.log`, episodes `ss_log_d8.jsonl`; stop `touch STOP_d8`; resume `source venv/bin/activate && nohup python3 train_ss_multistage.py d8 --resume >> logs/ss_multistage_d8.log 2>&1 &`. The v7 prototype was stashed while building d8 (git stash "v7 prototype 2026-10-10") so d8 is committed on clean code, then popped back into the working tree (still uncommitted). v7 rerun on the lookahead checker (same afternoon): stage 4 now PASSES (115/115, 2 frames sooner); 8, 9, 12 and 14 still pass. Stage 6 REGRESSED (died at 127/128 in 6,743 frames; 42 jumps where neither timing reached his next corner): the lookahead plays his next choice at its nominal timing, and on stage 6 that choice is usually another hop. To fix: skip the lookahead (or try both timings) when his next choice is a jump.
 - **PAUSED by Tyler 2026-10-10 ~16:50 — nothing training; v7 still an
   UNCOMMITTED prototype, report NOT yet given to Tyler.** That afternoon:
   the full 14-recording v7 check ran (logs kept in
@@ -1177,6 +1178,15 @@ Frontier climb is **decelerating** at the top (gained_avg ~1.6–2.1, three buck
 ## Pre-Committed Criteria / Open Decisions
 
 Written down *before* the data, to read the same way later:
+
+### Run d8 (d7 + clear-time bonus) — agreed with Tyler 2026-10-10 (~17:40, "Go ahead and build d8", replying to this proposal); speed bar corrected before launch
+**Tyler's goal (2026-10-10): optimize for faster clear times; rings don't matter; his play is a starting guide, not the target** ("I'm far from the most skilled. I'm sure there are routes way better than mine"). Before d8 the reward paid almost nothing for speed: −0.1/frame and a clear time bonus of at most 300, against +2,000 per sphere (500 frames faster ≈ 58; invisible after VecNormalize, return std ~28K). Only the per-corner discount (γ 0.99) favoured shorter routes, and it counts cells, not frames.
+d8 differs from d7 ONLY by `SS_SPEED_BONUS=7`: a clear also pays 7 × (SS_MAX_STEPS 18,000 − frames), so each frame saved is worth 7 and 100 frames ≈ 0.3% of a stage-1 clear. It is absolute: his time is not in the reward. It is paid only on a clear, so it is inert until the agent clears, and it can't reward dying early. (Deaths net −2,500 however long they take; a per-frame cost would make long failures cost more.) Rings stay out of the reward. d8 starts from d7's save (new `init` field in RUNS: weights, VecNormalize and curriculum pointer, at 975,008 steps, ckpt 0); its frame count and log start at zero. Verified by `check_speed_bonus.py` (ALL CHECKS PASS): with the flag off, the same 3,670 steps under git HEAD's env give identical rewards and observations. With it on, the observations and trajectory are identical and the reward differs only on the 2 clearing steps (his replay and his corners through step(), both at 2,925 frames), by exactly 105,525. `smoke_corners.py d8` ALL CHECKS PASS. Frames counted as for d7.
+- **d7's baseline, measured from ss_log_d7.jsonl (last 300 fresh starts):** clear rate 67.7%, median clear 3,202 frames (p25 3,128, p75 3,335), best 3,014. Last 1,000: 49.5%, median 3,310 — **d7 was still improving when paused.** The proposal to Tyler said "below 3,471 (d7's)"; that was one early clear, not d7's level, so the bar below uses the measured median (stricter).
+- **Speed (main test):** median frames of d8's fresh-start clears (last 300 fresh starts) **below 3,202 within 20M frames** of d8's own training.
+- **Reliability guard:** fresh-start clear rate (last 300) **≥ 50%**. Below that, the bonus is too strong (it trades clears for speed).
+- **Reference, not a bar:** Tyler's 2,925; d7's best 3,014. Report where d8 lands relative to both.
+- **Attribution — OPEN, ask Tyler:** d7 alone was still getting faster, so d8 beating 3,202 doesn't by itself credit the bonus. A control would be d7 resumed (no bonus) for the same frames: side by side on the box (each ~half speed), or after. Without one, the read is only "faster than d7 at its pause".
 
 ### Run d7 (d5 + compass to the nearest blue) — AGREED with Tyler 2026-10-10 07:52, before launch
 d7 differs from d5 ONLY by `SS_POINTER=1`: 3 features appended to the ram

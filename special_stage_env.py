@@ -94,6 +94,16 @@ SS_MAX_STEPS            = 18000
 CHAOS_EMERALD_REWARD    = 10000.0
 SUPER_EMERALD_REWARD    = 15000.0
 TIME_PENALTY            = 0.1
+#   SS_SPEED_BONUS=k     -> a clear also pays k x (SS_MAX_STEPS - frames), so
+#                           every frame saved is worth k (run d8 on, k=7;
+#                           default 0 = every earlier run unchanged). Tyler,
+#                           2026-10-10: optimize clear TIME, his play is only a
+#                           starting guide — so absolute frames, never his time.
+#                           Paid only on a clear: a per-frame cost would make a
+#                           long failing episode cost more than a short one
+#                           (deaths net the same -2,500), i.e. pay for dying
+#                           early. Before it, 500 frames faster was worth ~58.
+SPEED_BONUS             = float(os.environ.get('SS_SPEED_BONUS', '0'))
 
 # Paths are relative to this file. The repo moved ~/sonic-rl -> ~/Projects/
 # sonic-rl, and every hardcoded ~/sonic-rl path broke without an error.
@@ -1110,6 +1120,8 @@ class SpecialStageEnv(gym.Env):
             time_bonus = max(0.0, (SS_MAX_STEPS - self.steps)
                              / SS_MAX_STEPS) * SS_TIME_BONUS_MAX
             reward += SS_COMPLETION_BASE + time_bonus + emerald_reward
+            if SPEED_BONUS:
+                reward += SPEED_BONUS * max(0, SS_MAX_STEPS - self.steps)
             self._log_episode(success=True,
                               emerald_type=emerald_type or "cleared")
             return reward, True
