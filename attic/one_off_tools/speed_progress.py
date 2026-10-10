@@ -3,7 +3,7 @@ Frames as the context doc counts them (per episode: steps - demo_frac x demo
 length; fresh: steps). Fresh starts = episodes without a demo start. Prints
 the last `window` (default 300) fresh starts — clear rate, median / p25 / best
 clear frames — and the same read per 2M-frame bucket, so the trend shows."""
-import json, os, statistics as st, sys
+import json, os, random, statistics as st, sys
 REPO = '/home/tyler/Projects/sonic-rl'
 sys.path.insert(0, REPO)
 import demos                                     # noqa: E402
@@ -20,7 +20,21 @@ def demo_len(did):
     return _len[did]
 
 
-def read(rows):
+def ci(rows, n=2000, seed=0):
+    """Bootstrap 95% intervals over fresh starts: (median clear frames, clear rate)."""
+    rng = random.Random(seed)
+    meds, rates = [], []
+    for _ in range(n):
+        b = [rows[rng.randrange(len(rows))] for _ in rows]
+        c = [r['steps'] for r in b if r['success']]
+        rates.append(len(c) / len(b))
+        if c:
+            meds.append(st.median(c))
+    q = lambda v: (sorted(v)[int(0.025 * len(v))], sorted(v)[int(0.975 * len(v)) - 1])
+    return q(meds) if meds else None, q(rates)
+
+
+def read(rows, with_ci=False):
     clears = [r['steps'] for r in rows if r['success']]
     if not rows:
         return 'no fresh starts yet'
@@ -28,6 +42,10 @@ def read(rows):
     if clears:
         q = st.quantiles(clears, n=4) if len(clears) > 1 else [clears[0]] * 3
         s += f', median {st.median(clears):.0f} frames (p25 {q[0]:.0f}), best {min(clears)}'
+    if with_ci and len(rows) >= 20:
+        m, r = ci(rows)
+        s += (f'\n    95% CI: median clear {m[0]:.0f}-{m[1]:.0f} frames' if m else '\n    95% CI: -') \
+             + f', clear rate {r[0]:.1%}-{r[1]:.1%}'
     return s
 
 
@@ -42,6 +60,6 @@ for line in open(os.path.join(REPO, f'ss_log_{RUN}.jsonl')):
     if not did:
         fresh.append(r)
         buckets.setdefault(int(total // BUCKET), []).append(r)
-print(f'{RUN}: {total / 1e6:.2f}M frames; last {WIN} {read(fresh[-WIN:])}')
+print(f'{RUN}: {total / 1e6:.2f}M frames; last {WIN} {read(fresh[-WIN:], with_ci=True)}')
 for b, rows in sorted(buckets.items()):
     print(f'  {b * BUCKET / 1e6:4.0f}-{(b + 1) * BUCKET / 1e6:.0f}M: {read(rows)}')
