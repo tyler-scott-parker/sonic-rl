@@ -1,5 +1,5 @@
 # Sonic 3 & Knuckles Special Stage RL — Full Project Context
-*Last updated: 2026-10-09 ~19:30 — PAUSED by Tyler, nothing training. d3 (env v4) saved at 537,616 steps (~12.4M frames): start point 56%, fresh-start mean 80.8/102 (best 98), 0 clears. Env v5 + run d4 built, not started. Branch `corner-decisions` (see "Current state")*
+*Last updated: 2026-10-10 ~16:50 — PAUSED by Tyler, nothing training. d7 parked at 975,008 steps (main test passed). Env v7 = uncommitted prototype: 11/14 recordings pass, stage 4 = checker bug (fixed, rerun pending), stages 6/10 = Up timing; a turn-queueing env problem needs Tyler's call before any v7 training. Branch `corner-decisions` (see "Current state")*
 
 ---
 
@@ -128,6 +128,53 @@ recording of Tyler's own playthrough and improved on (`coordinator.py`).
   v6 smoke (scratch copy of smoke_corners on d4's setup, one demo, CHK_ENV=6):
   s1, s2, s3, s4, s8 ALL PASS; s5, s6 fail (3), s9 fails (4); s7, s10 not
   yet run. Nothing has trained on v6; d4 (v5, stages 1-4) is untouched.
+- **PAUSED by Tyler 2026-10-10 ~16:50 — nothing training; v7 still an
+  UNCOMMITTED prototype, report NOT yet given to Tyler.** That afternoon:
+  the full 14-recording v7 check ran (logs kept in
+  `attic/one_off_tools/v7_check_2026-10-10/`; working tree == backup patch,
+  refreshed). **11 of 14 PASS** (1, 2, 3, 5, 7, 8, 9, 11, 12, 13, 14; s1,
+  s7, s12, s13 frame-exact, s2/s5/s11 3-7 frames sooner, s14 8 frames slow
+  on 4 Ups = exactly at the allowance). **Stages 6 and 10 clear every sphere
+  but run 5 frames slow on 2 Ups** (allowance 2 per Up = 4): stage 6 now
+  clears 128/128 (before the landing decisions it died at 127). Traced on
+  s10 (`v7_drift.py`): the first Up costs ~4 frames (he holds Up through the
+  bounce lock; the env presses once past the cell's centre), the second ~1;
+  so the "2 per Up" allowance was set too tight. Open choice for Tyler:
+  accept (allowance 4 per Up, with this as the reason) or add a second,
+  immediate Up timing. **Stage 4 FAILED on a CHECKER bug, not a missing
+  move** (`v7_dbg_follow.py`): at (21,23) jump and late-jump both land in
+  (19,23); the checker took late-jump (landing time closest to his) but
+  that landing is past (19,23)'s turn window, so his right turn queued and
+  fired at (18,23). Fixed in smoke_corners (uncommitted): best_jump now
+  prefers the timing from which his NEXT choice reaches the corner after
+  it, then landing time. The rerun of the 10 jump stages on that fix was
+  STOPPED by the pause before any finished — rerun them first (`make_smoke_
+  one_demo.py`, then stages 4-10, 12-14 with CHK_ENV=7).
+  **An ENV problem found while tracing stage 4 — must be decided before any
+  v7 training** (`attic/one_off_tools/measure_v7_turn_outcome.py`, random
+  agent, 25 eps x 14 stages; MV=6 for the baseline). When the agent picks a
+  turn, does it fire in that step, or is it still queued when the next
+  decision arrives (fires a cell late)?
+  | decision kind | v7 decision points | turns fired in-step | queued (a cell late) |
+  |---|---|---|---|
+  | normal | 1,782 | 87% | 13% (v6: same 13%) |
+  | landing (v7) | 1,508 | 38% | **62%** |
+  | backwards restart (v7) | 201 | 0% | **100%** |
+  | forwards after Up (v7) | 100 | 61% | 39% |
+  Why it matters: the obs has no position within the cell (dropped for
+  generalization), so at a landing the agent cannot tell whether "right"
+  turns here or a cell later; ss_next_corner (in the obs) shows a queued
+  turn only afterwards, and the next cell then offers a SECOND decision with
+  that turn already queued. The 13% on normal decisions is PRE-EXISTING
+  (v4-v6, so d3/d5/d7 had it): a decision is offered on the frame Sonic
+  ENTERS a bumper cell (checked: stage 1 (12,4), stage 2 (25,14) are code
+  3), and the push-back moves him into the previous cell the next frame,
+  which counts as a new decision. Directions, none built: (a) never stop
+  for a decision while a turn is queued (needs an exception running
+  backwards: the game doesn't turn then, so the step would run to
+  CORNER_MAX_FRAMES and Up would be impossible); (b) one obs bit "a turn
+  now fires in this cell" (window still ahead); (c) no decision on a bumper
+  cell's entry frame. Ask Tyler before building any of them.
 - **PAUSED by Tyler 2026-10-10 ~13:40 — nothing training** (he wanted the
   machine for games). d7 stopped cleanly at **975,008 steps (22.70M frames)**;
   start point 1% (ckpt 0) since 13.17M — the curriculum walked all the way
