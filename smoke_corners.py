@@ -36,10 +36,16 @@ if run not in ns['RUNS']:
 cfg = ns['RUNS'][run]
 if cfg['obs']['SS_ENV_VERSION'] not in ('4', '5', '6', '7'):
     sys.exit(f'{run} is not on a corner env (v4-v7)')
-if cfg.get('demos') == 'book':        # d10: the route book's current routes
-    sys.path.insert(0, HOME)
+if cfg.get('demos') == 'book':        # d10: the route book's current routes,
+    sys.path.insert(0, HOME)             # frozen at the start (the harvest may promote
+    import shutil                        # a route mid-run: the 2026-10-11 run read new
+    import tempfile                      # routes against start points built from old ones)
     import route_book
-    DEMOS = [route_book.book_path(b) for b in cfg['stages']]
+    _frozen = tempfile.mkdtemp()
+    DEMOS = []
+    for b in cfg['stages']:
+        DEMOS.append(os.path.join(_frozen, f'board{b:02d}.npz'))
+        shutil.copy2(route_book.book_path(b), DEMOS[-1])
 else:
     DEMOS = [p for pat in cfg.get('demos', [])
              for p in sorted(glob.glob(os.path.join(HOME, 'demos', f'{pat}.npz')))]
@@ -88,9 +94,13 @@ def his_corners(actions, stage):
             if done or trunc:
                 break
     # v7: frames where a backward run's speed starts climbing (Up) — the onset
-    # only, so a turn-round that carries him into the next cell counts once
+    # only, so a turn-round that carries him into the next cell counts once.
+    # Only where Up was pressed (on the onset frame in all 10 of Tyler's; up to 2
+    # frames allowed): a jump out of a backward run also turns him round, mid-air
+    # (d9's board-7 route, 2026-10-11: jump at 3,137, forwards at 3,141, no Up)
     onsets = {k for k in range(2, len(traj)) if traj[k - 1][4] < 0
-              and traj[k][4] > traj[k - 1][4] and traj[k - 1][4] <= traj[k - 2][4]}
+              and traj[k][4] > traj[k - 1][4] and traj[k - 1][4] <= traj[k - 2][4]
+              and 4 in actions[max(0, k - 2):k + 1]}
     for k, p in enumerate(points):
         seg = traj[p['f']:(points[k + 1]['f'] if k + 1 < len(points) else len(traj) - 1) + 1]
         turn = {0: '', 1: 'left', 3: 'right'}.get(

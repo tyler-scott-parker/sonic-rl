@@ -763,6 +763,7 @@ class SpecialStageEnv(gym.Env):
         self._demo_files = list(paths)
         self._demos_kept = {d['id']: d for d in (self._demos or [])}
         self._demos = None
+        self._route_best = None         # the book changed: re-read its frames at the next save
 
     def set_demo_pointers(self, pointers):
         """Called by the trainer (VecEnv.env_method) as the curriculum moves."""
