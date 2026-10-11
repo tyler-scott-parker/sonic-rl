@@ -60,6 +60,14 @@ PRIOR_N = 100               # the SS agent's last fresh starts per board, as the
 # Emerald slot ($FFB2 + slot) -> the board it starts, by our curriculum_stage_N
 # numbering (measured 2026-10-11 by touching each one; boards named by layout)
 SUPER_SLOT_BOARD = {0: 11, 1: 10, 2: 12, 3: 9, 4: 13, 5: 8, 6: 14}
+# How shrine() reaches each emerald: (take-off x offset from the emerald, run
+# direction, frames to hold the jump that way before steering to it). The two
+# high emeralds (slots 3, 4) sit on pedestals that are solid from below: a jump
+# from under them bounces off and lands on the next emerald out (boards 8, 14
+# loaded instead of 9, 13). Found by search (2026-10-11): take off outward of
+# the emerald, jump outward, then steer back onto its top; offsets 40-64 px all
+# loaded the right board from 4 arrival timings. The rest: walk under, jump.
+SHRINE_PLAN = {3: (-48, -1, 30), 4: (48, 1, 30)}
 SS_KEYS = ('SS_ENV_VERSION', 'SS_USE_PIXELS', 'SS_PATCH_R', 'SS_DROP_POSITION',
            'SS_POINTER', 'SS_SPEED_BONUS')
 
@@ -278,23 +286,34 @@ class SSPilot:
         game's {name: mask}. Returns (frames stepped, slot, expected board);
         the next call is play(), on the stage's entry frame."""
         target = slot = info = None
-        held = False
+        held, jumping, t_air = False, False, 0
         for f in range(SHRINE_CAP):
             if target is None and info is not None and int(info['mg_game_mode']) == 0x0C:
                 gray = self.gray_emeralds()
                 order = [sl for b in prefer for sl, bb in SUPER_SLOT_BOARD.items() if bb == b and sl in gray]
-                if order:
-                    slot = order[0]
+                if order or gray:
+                    slot = order[0] if order else min(gray)
                     target = gray[slot]
-                elif gray:
-                    slot = min(gray)
-                    target = gray[slot]
+                    off, run, hold = SHRINE_PLAN.get(slot, (0, 0, 0))
             if target is None:
                 btn = 'noop'
             else:
-                dx = target[0] - int(info['x'])
+                x, air = int(info['x']), bool(int(info['mg_status']) & 2)
+                dx = target[0] - x
                 side = 'right' if dx > 0 else 'left'
-                if not int(info['mg_status']) & 2:          # on the ground
+                if run:                                     # a high emerald: take off outward
+                    go = 'right' if run > 0 else 'left'
+                    if jumping:
+                        t_air += 1
+                        btn = (f'jump+{go}' if t_air <= hold else
+                               f'jump+{side}' if abs(dx) > 2 else 'jump')
+                        if not air and t_air > 3:
+                            jumping = False                 # landed short: line up again
+                    elif not air and abs(target[0] + off - x) <= 4:
+                        jumping, t_air, btn = True, 0, f'jump+{go}'
+                    else:
+                        btn = 'right' if target[0] + off > x else 'left'
+                elif not air:                               # walk under it, jump
                     if abs(dx) > 3:
                         btn, held = side, False
                     else:
