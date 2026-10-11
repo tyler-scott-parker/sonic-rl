@@ -1,0 +1,5 @@
+play_20261011-095800.npz: 1 acts, env v2, segments built in 18 s
+  DDZ1   T= 21386  start points 0 19 37 56 75 93 112 131 149 168 187 206 224 243 262 280 299 318 336 355
+20 episodes, 214,720 frames, 160 s
+
+ALL ACTS PASS

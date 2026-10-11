@@ -15,7 +15,10 @@ state that run passed through, until:
            capsule come after, on a stopped clock. The timer then holds the
            act's time. Terminated, + CLEAR_BONUS. (LBZ2's timer stops at its
            boss and runs again for the Big Arm fight: part_name makes that
-           its own act, 'LBZ2b'.)
+           its own act, 'LBZ2b'.) Doomsday Zone never stops the clock: it
+           clears on the first frame of the ending zone ($0D), ~240 frames
+           after the final hit (Tyler's recording: hit 21,220, white-out
+           21,421, ending 21,463).
   death    Sonic's routine becomes 6 (dying), 8 (restarting) or $C (drowned)
            — on that frame. The lives counter drops ~80 frames later and the
            level reloads ~290 frames later; waiting for either would repeat
@@ -242,6 +245,8 @@ RAM_VARS = {
     'mg_signpost':     (0xFFFAA6, '>u2'),   # Signpost_addr (test fixture)
 }
 GM_LEVEL       = 0x0C
+ZONE_DDZ       = 0x0C      # Doomsday: no timer stop; cleared when the game moves on
+ZONE_ENDING    = 0x0D      # ... to the ending (Tyler's recording, 2026-10-11)
 STAGE_MODES    = (0x34, 0x48)              # special stage, its results
 DEAD_ROUTINES  = (6, 8, 0xC)
 
@@ -390,9 +395,10 @@ class ActSplitter:
 
     An act starts on the first frame the in-game timer runs with Sonic alive
     in the level, and clears on the first frame the timer stops with Sonic
-    alive in the level. Its demo time `t` counts every frame since the start
-    except those in a special or bonus stage (the in-game timer doesn't run
-    there either); deaths and the reloads after them do count."""
+    alive in the level (Doomsday: the first frame of the ending zone). Its
+    demo time `t` counts every frame since the start except those in a
+    special or bonus stage (the in-game timer doesn't run there either);
+    deaths and the reloads after them do count."""
 
     def __init__(self):
         self.acts = []              # finished (cleared) acts
@@ -423,7 +429,8 @@ class ActSplitter:
             if dead and not self._dead:
                 cur['deaths'].append(i)
                 event = 'death'
-            if in_level and not dead and not timer_on:
+            if not dead and ((in_level and not timer_on) or
+                             (cur['zone'] == ZONE_DDZ and int(info['zone']) == ZONE_ENDING)):
                 cur['clear'] = i
                 cur['time'] = fmt_time(game_time(info))
                 self.acts.append(cur)
@@ -689,6 +696,7 @@ class SonicCoordinator(gym.Env):
         self._last_raw = None
 
         self._seg, self._k, self._ck = seg, k, ck
+        self._ddz = int(seg['route']['zone'][0]) == ZONE_DDZ
         self._route = RouteProgress(seg['route'], ck['t'], ck['boss'])
         self._target = seg['T'] - ck['t']
         self._max_frames = int(self._target * TIMEOUT_MULT + TIMEOUT_ADD)
@@ -719,7 +727,7 @@ class SonicCoordinator(gym.Env):
                 event = 'stage'
             elif dead:
                 event = 'death'
-            elif in_level and not timer_on:
+            elif (in_level and not timer_on) or (self._ddz and int(info['zone']) == ZONE_ENDING):
                 event = 'clear'
             if event:
                 break
