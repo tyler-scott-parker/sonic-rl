@@ -19,6 +19,8 @@ Controls
   P .................. pause           1 2 3 4 ... speed 25 / 50 / 75 / 100 %
   Enter .............. save and quit   R ......... restart the stage (discards)
   Esc ................ quit without saving
+  M .................. sound on/off (the game's own sound; it plays at 100 % speed
+                       only, so it's quiet in slow motion; --no-sound starts muted)
   Gamepad: d-pad or stick to turn/advance, face buttons jump, LB rewinds,
            Start pauses.
 
@@ -169,6 +171,8 @@ def main():
     ap.add_argument('stage', type=int, help='special stage 1-14')
     ap.add_argument('--speed', type=int, choices=sorted(SPEEDS.values()), default=50,
                     help='game speed in %% (default 50; 1-4 change it while playing)')
+    ap.add_argument('--no-sound', action='store_true',
+                    help='start with the game sound off (M toggles it)')
     args = ap.parse_args()
 
     import pygame
@@ -179,6 +183,13 @@ def main():
     pygame.display.set_caption(f'record_demo — stage {args.stage}')
     font = pygame.font.SysFont('monospace', 18, bold=True)
     clock = pygame.time.Clock()
+    audio = None
+    try:
+        import game_audio
+        audio = game_audio.GameAudio(rec.env.em.get_audio_rate())
+    except Exception as e:                      # no sound device: play on silently
+        print(f'no sound ({e!r}); recording works the same', flush=True)
+    sound = audio is not None and not args.no_sound
     pad = None
     if pygame.joystick.get_count():
         pad = pygame.joystick.Joystick(0)
@@ -210,6 +221,8 @@ def main():
                 elif ev.key == pygame.K_r:
                     rec.restart()
                     paused, msg = True, 'restarted — any move key (or P) resumes'
+                elif ev.key == pygame.K_m and audio is not None:
+                    sound = not sound
                 elif pygame.K_1 <= ev.key <= pygame.K_4:
                     speed = SPEEDS[ev.key - pygame.K_0]
                 elif ev.key in move_keys and paused and not rec.ended:
@@ -236,8 +249,11 @@ def main():
             jump |= any(pad.get_button(b) for b in (0, 1, 2, 3)
                         if b < pad.get_numbuttons())
 
-        if not paused and not rec.ended:
+        playing = not paused and not rec.ended
+        if playing:
             rec.step(keys_to_action(left, right, up, jump))
+            if audio is not None and sound and speed == 100:
+                audio.push(rec.env.em.get_audio())
             if rec.ended == 'clear':
                 msg = 'BOARD CLEARED — Enter saves, Backspace rewinds to improve'
             elif rec.ended == 'death':
@@ -250,15 +266,25 @@ def main():
         screen.blit(pygame.transform.scale(surf, (320 * SCALE, 224 * SCALE)), (0, 0))
         state = 'ENDED' if rec.ended else 'PAUSED' if paused else 'REC'
         hud = (f'{state}  stage {args.stage}  spheres {rec.collected}/{rec.total}  '
-               f'frame {len(rec.actions)}  speed {speed}%  rewinds {rec.rewinds}')
+               f'frame {len(rec.actions)}  speed {speed}%  rewinds {rec.rewinds}'
+               + ('' if audio is None else '  sound' if sound and speed == 100
+                  else '  (sound at 100%)' if sound else '  muted'))
         screen.blit(font.render(hud, True, (255, 255, 0)), (8, 8))
         screen.blit(font.render(msg[:80], True, (0, 255, 128)), (8, 30))
-        screen.blit(font.render('Bksp rewind  P pause  1-4 speed  Enter save  '
+        screen.blit(font.render('Bksp rewind  P pause  1-4 speed  M sound  Enter save  '
                                 'R restart  Esc quit', True, (200, 200, 200)),
                     (8, 224 * SCALE - 26))
         pygame.display.flip()
-        clock.tick(60 * speed / 100)
+        if audio is not None and not (playing and sound and speed == 100):
+            audio.clear()                       # paused, ended, slowed or muted
+        if audio is not None and sound and speed == 100 and playing:
+            audio.pace()                        # the sound card keeps the time
+            clock.tick()
+        else:
+            clock.tick(60 * speed / 100)
 
+    if audio is not None:
+        audio.close()
     pygame.quit()
     rec.close()
     if saved:

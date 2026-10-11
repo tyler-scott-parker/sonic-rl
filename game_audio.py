@@ -1,5 +1,5 @@
 """game_audio.py — the emulator's sound, streamed to the speakers while a
-recorder runs (record_play.py; record_demo.py can use it the same way).
+recorder runs (record_play.py, record_demo.py).
 
 stable-retro hands back each frame's samples (`em.get_audio()`: int16 stereo,
 ~735 per frame at `em.get_audio_rate()` = 44,100 Hz). SDL pulls them from a
