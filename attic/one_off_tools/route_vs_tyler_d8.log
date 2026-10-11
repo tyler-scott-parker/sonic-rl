@@ -1,0 +1,82 @@
+Tyler: {'frames': 2925, 'quarters': [826, 1495, 2272, 2925], 'cells': 146, 'jumps': 0, 'bumps': 0, 'turns': 55, 'still': 825, 'air': 0, 'multi': 4, 'converted': 16, 'final': 102}
+  ep   0 clear=True frames=3058 spheres=102 cells=155 turns=56 still=840 jumps=25 air=766 bumps=0 converted=16
+  ep   1 clear=True frames=3111 spheres=102 cells=155 turns=60 still=900 jumps=23 air=696 bumps=0 converted=16
+  ep   2 clear=True frames=3160 spheres=102 cells=157 turns=62 still=930 jumps=24 air=728 bumps=0 converted=16
+  ep   3 clear=True frames=3216 spheres=102 cells=159 turns=64 still=960 jumps=24 air=722 bumps=0 converted=16
+  ep   4 clear=True frames=3086 spheres=102 cells=151 turns=62 still=930 jumps=23 air=670 bumps=0 converted=16
+  ep   5 clear=True frames=3345 spheres=102 cells=174 turns=59 still=885 jumps=30 air=858 bumps=0 converted=14
+  ep   6 clear=True frames=3056 spheres=102 cells=151 turns=60 still=900 jumps=24 air=702 bumps=0 converted=16
+  ep   7 clear=False frames=1115 spheres=20 cells=43 turns=29 still=435 jumps=2 air=64 bumps=0 converted=4
+  ep   8 clear=True frames=3196 spheres=102 cells=159 turns=62 still=930 jumps=25 air=728 bumps=0 converted=16
+  ep   9 clear=True frames=3112 spheres=102 cells=155 turns=60 still=900 jumps=22 air=673 bumps=0 converted=16
+  ep  10 clear=True frames=3136 spheres=102 cells=157 turns=60 still=900 jumps=23 air=702 bumps=0 converted=16
+  ep  11 clear=True frames=3212 spheres=102 cells=157 turns=66 still=990 jumps=23 air=646 bumps=0 converted=16
+  ep  12 clear=True frames=3318 spheres=102 cells=163 turns=68 still=1020 jumps=24 air=672 bumps=0 converted=16
+  ep  13 clear=True frames=3317 spheres=102 cells=163 turns=68 still=1020 jumps=24 air=678 bumps=0 converted=16
+  ep  14 clear=True frames=3112 spheres=102 cells=153 turns=62 still=930 jumps=24 air=728 bumps=0 converted=16
+  ep  15 clear=True frames=3136 spheres=102 cells=155 turns=62 still=930 jumps=23 air=664 bumps=0 converted=16
+  ep  16 clear=True frames=3160 spheres=102 cells=157 turns=62 still=930 jumps=25 air=754 bumps=0 converted=16
+  ep  17 clear=True frames=3238 spheres=102 cells=161 turns=64 still=960 jumps=26 air=742 bumps=0 converted=16
+  ep  18 clear=True frames=3136 spheres=102 cells=157 turns=60 still=900 jumps=25 air=760 bumps=0 converted=16
+  ep  19 clear=True frames=2952 spheres=102 cells=147 turns=56 still=840 jumps=23 air=682 bumps=0 converted=16
+  ep  20 clear=True frames=3111 spheres=102 cells=155 turns=60 still=900 jumps=22 air=670 bumps=0 converted=16
+  ep  21 clear=True frames=3130 spheres=102 cells=157 turns=60 still=900 jumps=24 air=728 bumps=0 converted=16
+  ep  22 clear=True frames=3082 spheres=102 cells=155 turns=58 still=870 jumps=23 air=699 bumps=0 converted=16
+  ep  23 clear=True frames=3160 spheres=102 cells=157 turns=62 still=930 jumps=23 air=702 bumps=0 converted=16
+  ep  24 clear=True frames=3082 spheres=102 cells=155 turns=58 still=870 jumps=22 air=635 bumps=0 converted=16
+  ep  25 clear=True frames=3186 spheres=102 cells=159 turns=62 still=930 jumps=25 air=722 bumps=0 converted=16
+  ep  26 clear=True frames=3130 spheres=102 cells=157 turns=60 still=900 jumps=25 air=752 bumps=0 converted=16
+  ep  27 clear=True frames=3159 spheres=102 cells=159 turns=60 still=900 jumps=23 air=688 bumps=0 converted=16
+  ep  28 clear=True frames=3160 spheres=102 cells=157 turns=62 still=930 jumps=24 air=728 bumps=0 converted=16
+  ep  29 clear=True frames=3082 spheres=102 cells=155 turns=58 still=870 jumps=24 air=734 bumps=0 converted=16
+  ep  30 clear=True frames=3186 spheres=102 cells=159 turns=62 still=930 jumps=23 air=690 bumps=0 converted=16
+  ep  31 clear=True frames=3160 spheres=102 cells=157 turns=62 still=930 jumps=24 air=696 bumps=0 converted=16
+  ep  32 clear=True frames=3368 spheres=102 cells=165 turns=70 still=1050 jumps=23 air=645 bumps=0 converted=16
+  ep  33 clear=False frames=3390 spheres=90 cells=166 turns=70 still=1050 jumps=19 air=536 bumps=0 converted=14
+  ep  34 clear=True frames=3136 spheres=102 cells=157 turns=60 still=900 jumps=24 air=728 bumps=0 converted=16
+  ep  35 clear=True frames=3158 spheres=102 cells=157 turns=62 still=930 jumps=25 air=716 bumps=0 converted=16
+  ep  36 clear=True frames=3160 spheres=102 cells=157 turns=62 still=930 jumps=23 air=670 bumps=0 converted=16
+  ep  37 clear=True frames=3130 spheres=102 cells=157 turns=60 still=900 jumps=25 air=722 bumps=0 converted=16
+  ep  38 clear=False frames=2426 spheres=70 cells=111 turns=53 still=795 jumps=13 air=386 bumps=1 converted=12
+  ep  39 clear=True frames=3160 spheres=102 cells=157 turns=62 still=930 jumps=24 air=690 bumps=0 converted=16
+  ep  40 clear=True frames=3216 spheres=102 cells=159 turns=64 still=960 jumps=25 air=754 bumps=0 converted=16
+  ep  41 clear=True frames=3160 spheres=102 cells=157 turns=62 still=930 jumps=24 air=690 bumps=0 converted=16
+  ep  42 clear=True frames=3056 spheres=102 cells=151 turns=60 still=900 jumps=23 air=700 bumps=0 converted=16
+  ep  43 clear=True frames=3167 spheres=102 cells=157 turns=62 still=930 jumps=23 air=696 bumps=0 converted=16
+  ep  44 clear=True frames=3111 spheres=102 cells=155 turns=60 still=900 jumps=23 air=696 bumps=0 converted=16
+  ep  45 clear=True frames=3111 spheres=102 cells=155 turns=60 still=900 jumps=22 air=670 bumps=0 converted=16
+  ep  46 clear=True frames=3031 spheres=102 cells=153 turns=56 still=840 jumps=23 air=676 bumps=0 converted=16
+  ep  47 clear=True frames=3160 spheres=102 cells=157 turns=62 still=930 jumps=26 air=754 bumps=0 converted=16
+  ep  48 clear=True frames=3130 spheres=102 cells=157 turns=60 still=900 jumps=24 air=728 bumps=0 converted=16
+  ep  49 clear=True frames=3162 spheres=102 cells=157 turns=62 still=930 jumps=24 air=693 bumps=0 converted=16
+  ep  50 clear=True frames=3160 spheres=102 cells=157 turns=62 still=930 jumps=24 air=728 bumps=0 converted=16
+  ep  51 clear=True frames=3172 spheres=102 cells=153 turns=66 still=990 jumps=21 air=650 bumps=0 converted=16
+  ep  52 clear=True frames=3186 spheres=102 cells=159 turns=62 still=930 jumps=25 air=748 bumps=0 converted=16
+  ep  53 clear=True frames=3031 spheres=102 cells=153 turns=56 still=840 jumps=22 air=650 bumps=0 converted=16
+  ep  54 clear=True frames=3112 spheres=102 cells=153 turns=62 still=930 jumps=23 air=664 bumps=0 converted=16
+  ep  55 clear=True frames=3106 spheres=102 cells=153 turns=62 still=930 jumps=23 air=664 bumps=0 converted=15
+  ep  56 clear=True frames=3158 spheres=102 cells=157 turns=62 still=930 jumps=22 air=632 bumps=0 converted=16
+  ep  57 clear=True frames=3440 spheres=102 cells=167 turns=72 still=1080 jumps=24 air=728 bumps=0 converted=16
+  ep  58 clear=True frames=3000 spheres=102 cells=149 turns=58 still=870 jumps=22 air=644 bumps=0 converted=16
+  ep  59 clear=True frames=3086 spheres=102 cells=151 turns=62 still=930 jumps=23 air=670 bumps=0 converted=16
+  ep  60 det clear=True frames=3160 spheres=102 cells=157 turns=62 still=930 jumps=25 air=754 bumps=0 converted=16
+  ep  61 det clear=True frames=3160 spheres=102 cells=157 turns=62 still=930 jumps=25 air=754 bumps=0 converted=16
+  ep  62 det clear=True frames=3160 spheres=102 cells=157 turns=62 still=930 jumps=25 air=754 bumps=0 converted=16
+  ep  63 det clear=True frames=3160 spheres=102 cells=157 turns=62 still=930 jumps=25 air=754 bumps=0 converted=16
+  ep  64 det clear=True frames=3160 spheres=102 cells=157 turns=62 still=930 jumps=25 air=754 bumps=0 converted=16
+
+d8: 57/60 stochastic fresh starts cleared
+                            Tyler    d8 median
+frames to clear              2925         3158
+frames to 25% spheres         826          966
+frames to 50% spheres        1495         1573
+frames to 75% spheres        2272         2550
+frames to 100% spheres       2925         3158
+cells travelled               146        157.0
+turns                          55         62.0
+frames standing still         825        930.0
+jumps                           0         24.0
+frames in the air               0        696.0
+bumper hits                     0          0.0
+multi-sphere frames             4          4.0
+spheres by outline             16         16.0
