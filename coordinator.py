@@ -56,6 +56,13 @@ ends. A detour's net (demo frames gained minus frames spent) then lands as
 one number when it pays off, instead of a run of -1s now and a lump later
 that discounting (gamma 0.995 per step, a ~13 s horizon) mostly erases.
 Every episode's undiscounted return is unchanged (check_mg_v2.py).
+v2 also breaks ties in the route match by the clock: of the route points
+about equally near the agent (within ROUTE_TIE px of the nearest), the one
+closest to the last match + the frames since. Where the demo stays in one
+place — AIZ2's bombing run, boss fights the game never raises Boss_flag for
+(MGZ1, SOZ1, SOZ2, SSZ1, DEZ3) — every point of the arena was visited many
+times, and the plain nearest point (the earliest of the ties) froze progress,
+so `stuck` cut even the demo's own inputs (check_play_acts.py, 2026-10-10).
 
 ACTIONS — ACTION_BUTTONS, each held for FRAME_SKIP frames.
 OBSERVATION — the last STACK agent frames: 84x84 grayscale, each the max of
@@ -170,6 +177,8 @@ if MG_ENV_VERSION not in (1, 2):
     raise ValueError(f'MG_ENV_VERSION must be 1 or 2, got {MG_ENV_VERSION}')
 MG_V2 = MG_ENV_VERSION >= 2
 BLOCK_SHIFT = 7          # v2 new ground: 128x128-px blocks
+ROUTE_TIE = 16           # v2: route points within this many px of the nearest
+                         # count as tied; the clock picks among them
 
 # ── RAM ──────────────────────────────────────────────────────────────────────
 # Registered on top of the integration's variables (zone, act, x, y, rings,
@@ -402,6 +411,7 @@ class RouteProgress:
         self.fight = None
         self.miss = 0
         self.on = True       # matched the route this step
+        self.since = 0       # frames since the last match (v2's clock)
         if boss_on:
             self._enter_fight()
 
@@ -417,9 +427,10 @@ class RouteProgress:
         _, e = self.fight
         self.fight = None
         self.best = self.p = max(self.best, e)
+        self.since = 0
         self.floor, self.cap = e, int(self.r['T'])
 
-    def _nearest(self, lo, hi, zone, act, x, y):
+    def _nearest(self, lo, hi, zone, act, x, y, clock=None):
         t = self.r['t']
         i0 = int(np.searchsorted(t, lo, 'left'))
         i1 = int(np.searchsorted(t, hi, 'right'))
@@ -432,6 +443,9 @@ class RouteProgress:
         k = int(np.argmin(d2))
         if d2[k] > ROUTE_RADIUS ** 2:
             return None
+        if clock is not None:               # v2: of the tied points, the one nearest the clock
+            tied = np.flatnonzero(d2 <= (np.sqrt(d2[k]) + ROUTE_TIE) ** 2)
+            k = int(tied[np.argmin(np.abs(t[i0 + tied] - clock))])
         return int(t[i0 + k])
 
     def update(self, zone, act, x, y, boss_on):
@@ -442,16 +456,19 @@ class RouteProgress:
         elif not boss_on and self.fight is not None:
             self._leave_fight()
         args = (int(zone), int(act), int(x), int(y))
+        self.since += FRAME_SKIP            # one update per agent step
+        clock = self.p + self.since if MG_V2 else None
         t = self._nearest(max(self.floor, self.p - ROUTE_BACK),
-                          min(self.cap, self.p + ROUTE_AHEAD), *args)
+                          min(self.cap, self.p + ROUTE_AHEAD), *args, clock=clock)
         if t is None:
             self.miss += 1
             if self.miss >= REACQUIRE:
-                t = self._nearest(self.floor, self.cap, *args)
+                t = self._nearest(self.floor, self.cap, *args, clock=clock)
         self.on = t is not None
         if t is not None:
             self.miss = 0
             self.p = t
+            self.since = 0
             self.best = max(self.best, t)
         return self.best - before
 

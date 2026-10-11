@@ -1,0 +1,31 @@
+play_20261010-202923.npz: 27 acts, env v2, segments built in 382 s
+  AIZ1   T=  5098  start points 0 17 34 50 67 84
+  AIZ2   T=  9866  start points 0 33 65 98 130 163
+  HCZ1   T=  9154  start points 0 30 61 91 122 152
+  HCZ2   T= 16829  start points 0 56 112 167 223 279
+  MGZ1   T= 13815  start points 0 46 92 137 183 229
+  MGZ2   T= 19140  start points 0 64 127 191 254 318
+  CNZ1   T= 10445  start points 0 35 69 104 138 173
+  CNZ2   T= 22257  start points 0 74 148 222 296 370
+  ICZ1   T= 16514  start points 0 55 110 164 219 274
+  ICZ2   T= 10611  start points 0 35 70 106 141 176
+  LBZ1   T= 17307  start points 0 57 115 172 230 287
+  LBZ2   T= 17184  start points 0 57 114 171 228 285
+  LBZ2b  T=  1275  start points 0 4 8 12 16 20
+  MHZ1   T=  9032  start points 0 30 60 90 120 150
+  MHZ2   T= 11549  start points 0 38 76 115 153 191
+  FBZ1   T= 18561  start points 0 62 123 185 246 308
+  FBZ2   T= 17442  start points 0 58 116 174 232 290
+  SOZ1   T= 21636  start points 0 72 144 216 288 360
+  SOZ2   T= 23667  start points 0 79 157 236 314 393
+  LRZ1   T= 20123  start points 0 67 134 200 267 334
+  LRZ2   T= 16321  start points 0 54 108 163 217 271
+  LRZ3   T=  8448  start points 0 28 56 84 112 140
+  HPZ1   T=  3470  start points 0 11 23 34 46 57
+  SSZ1   T= 18792  start points 0 62 125 187 250 312
+  DEZ1   T= 14169  start points 0 47 94 141 188 235
+  DEZ2   T= 21902  start points 0 73 146 218 291 364
+  DEZ3   T=  5907  start points 0 19 39 58 78 97
+162 episodes, 1,146,924 frames, 1189 s
+
+ALL ACTS PASS
