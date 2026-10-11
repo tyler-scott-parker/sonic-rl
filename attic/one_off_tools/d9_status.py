@@ -7,7 +7,9 @@ clear frames vs his recording. Totals, and the run's agreed rules: gate at
 70M total frames (every board off its recording's end, all < 90%, median
 < 75%), stall stop (no board's start point moves for 15M total frames, tracked
 in --state across calls), main test (a fresh clear on all 14 within 280M).
-Prints ALERT lines for: stall stop reached, gate reached."""
+Prints ALERT lines for: stall stop reached, gate reached, and a possible collapse
+(demo-start success below a quarter of its recent level; on d8c it fires right after
+the collapse, on d8 once at its 8-10M dip, which recovered: a cue to look, not a stop)."""
 import json, os, re, statistics as st, sys
 REPO = '/home/tyler/Projects/sonic-rl'
 sys.path.insert(0, REPO)
@@ -31,6 +33,7 @@ def demo_meta(did):
 
 total = 0.0
 per = {}
+demo_ok = []                                     # success of each demo-start episode, in order
 for line in open(os.path.join(REPO, f'ss_log_{RUN}.jsonl')):
     try:
         r = json.loads(line)
@@ -42,6 +45,8 @@ for line in open(os.path.join(REPO, f'ss_log_{RUN}.jsonl')):
     f = r['steps'] - r['demo_frac'] * demo_meta(did)['frames'] if did else r['steps']
     p['frames'] += f
     total += f
+    if did:
+        demo_ok.append(bool(r['success']))
     if not did:
         p['fresh'] += 1
         p['best'] = max(p['best'], r['spheres'])
@@ -83,7 +88,8 @@ for s in sorted(per):
           f'{len(p["clears"]):6d} {p["best"]:4d}/{p["total"] or 0:<3d} {med:>9s} {his.get(s, 0):5d}')
 fs = [fracs[s] for s in sorted(fracs)]
 if fs:
-    print(f'  boards off their recording\'s end: {sum(fracs[s] < init.get(str(s), 1) for s in fracs)}/{len(fracs)}')
+    if STATE:                                    # needs the state's record of each board's first start point
+        print(f'  boards off their recording\'s end: {sum(fracs[s] < init.get(str(s), 1) for s in fracs)}/{len(fracs)}')
     print(f'  start points: median {st.median(fs):.1%}, max {max(fs):.1%}, min {min(fs):.1%}; '
           f'boards with a fresh clear: {sum(1 for p in per.values() if p["clears"])}/{len(per)}')
 if moved:
@@ -91,6 +97,12 @@ if moved:
     print(f'  last start-point move: {since / 1e6:.2f}M frames ago (stall stop at {STALL / 1e6:.0f}M)')
     if since >= STALL:
         print('ALERT stall stop: no board\'s start point moved for 15M frames')
+# collapse check (d8c lost every clear in one update): demo-start success, last 400 vs the 2,000 before
+if len(demo_ok) >= 2400:
+    now, before = sum(demo_ok[-400:]) / 400, sum(demo_ok[-2400:-400]) / 2000
+    print(f'  demo-start success: last 400 {now:.1%}, the 2,000 before {before:.1%}')
+    if before >= 0.10 and now < 0.25 * before:
+        print('ALERT collapse? demo-start success fell below a quarter of its recent level')
 if gate_alert:
     print(f'ALERT gate reached ({total / 1e6:.1f}M >= 70M): all off their end? '
           f'{all(fracs[s] < init.get(str(s), 1) for s in fracs)}; every board < 90%? {all(f < 0.9 for f in fs)}; '
