@@ -399,7 +399,10 @@ class SpecialStageEnv(gym.Env):
 
     metadata = {'render_modes': ['human', 'rgb_array']}
 
-    def __init__(self, state_path=None):
+    def __init__(self, state_path=None, base_env=None):
+        """base_env: an emulator someone else owns (stable_retro allows one per
+        process): the main game's, when ss_pilot plays a special stage inside a
+        main-game episode. None = make our own."""
         super().__init__()
 
         self.state_path = state_path or stage_file(1)
@@ -416,7 +419,7 @@ class SpecialStageEnv(gym.Env):
         # run, one per check script) popped up a window that stole focus from
         # Tyler's game, and spent CPU drawing it (found 2026-10-10). Frames
         # don't depend on it; watch_ss.py draws render()'s array itself.
-        self.base_env = stable_retro.make(
+        self.base_env = base_env if base_env is not None else stable_retro.make(
             game='SonicAndKnuckles3-Genesis-v0',
             use_restricted_actions=stable_retro.Actions.FILTERED,
             render_mode='rgb_array',
@@ -905,11 +908,16 @@ class SpecialStageEnv(gym.Env):
         # frame in v4, for replaying a demo's frames
         forced = (options or {}).get('stage_file')
         replay = bool((options or {}).get('replay'))
-        if forced is None and self._demos and random.random() < DEMO_PROB:
+        # options={'state': bytes, 'stage': n}: a fresh start from a live
+        # emulator state instead of a file (ss_pilot: a giant ring in the main
+        # game, handed over one frame before the stage takes Up)
+        live = (options or {}).get('state')
+        if forced is None and live is None and self._demos and random.random() < DEMO_PROB:
             return self._reset_from_demo()
 
         restart_file = None
-        if forced is None and self._original_grids and random.random() < RESTART_PROB:
+        if (forced is None and live is None and self._original_grids
+                and random.random() < RESTART_PROB):
             files = glob.glob(os.path.join(POOL_DIR, '*.state'))
             if files:
                 restart_file = self._weighted_pick(files)
@@ -927,7 +935,10 @@ class SpecialStageEnv(gym.Env):
             except Exception:
                 restart_file = None
 
-        if not restart_file:
+        if not restart_file and live is not None:
+            self._cur_stage = int((options or {}).get('stage') or 0)
+            self.base_env.em.set_state(live)
+        elif not restart_file:
             # Multi-stage: pick a stage at random for this fresh episode.
             # Falls back to the single state_path when SS_STAGES is unset.
             load_path = forced or (random.choice(STAGE_FILES) if STAGE_FILES
