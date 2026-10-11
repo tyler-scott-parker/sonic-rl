@@ -397,6 +397,12 @@ DEMO_CKPT_EVERY = 30    # frames between start points (~2 cells at base speed)
 DEMO_DECISIONS_EVERY = 2    # v4: decision points between start points (~2 cells)
 DEMO_TAIL       = 60    # the latest start point is this many frames before the end
 DEMO_BAND       = 4     # starts are drawn from checkpoints [pointer, pointer + band]
+# SS_DEMO_MIX=q: that share of demo starts is drawn from ANY start point between
+# the pointer and the end instead, so the later stretches stay practised once
+# the pointer has walked past them (measured 2026-10-11 on d10: board 14 cleared
+# 0/30 from 70-80% of its route, board 13 0/30, while 4, 6, 7 rose to 90-100%
+# near the end). The curriculum ignores those episodes (outside its band).
+DEMO_MIX        = float(os.environ.get('SS_DEMO_MIX', '0'))
 if DEMO_FILES and not V2:
     raise ValueError('demos need SS_ENV_VERSION=2')
 
@@ -718,7 +724,10 @@ class SpecialStageEnv(gym.Env):
         demo = random.choice(self._demos)
         last = len(demo['ckpts']) - 1
         ptr = min(self._demo_ptr.get(demo['id'], last), last)
-        k = random.randint(ptr, min(last, ptr + DEMO_BAND))
+        if DEMO_MIX and random.random() < DEMO_MIX:
+            k = random.randint(ptr, last)
+        else:
+            k = random.randint(ptr, min(last, ptr + DEMO_BAND))
         ck = demo['ckpts'][k]
         self.base_env.em.set_state(zlib.decompress(ck['state']))
         self._cur_stage = demo['stage']
