@@ -27,6 +27,8 @@ Controls
   Backspace ......... rewind ~2 s (hold)     P ............. pause
   1 2 3 4 ........... speed 25/50/75/100 %   F5 ............ save now, keep playing
   Enter ............. save and quit          Esc (twice) ... quit without saving
+  M ................. sound on/off (the game's own sound; it plays at 100 % speed
+                      only, and is quiet in slow motion, paused or rewinding)
   Gamepad: d-pad or stick, face buttons jump, LB rewinds, Start pauses,
            Back saves now.
 
@@ -230,6 +232,8 @@ def main():
     ap.add_argument('--resume', help='a playthrough to continue (demos/play_*.npz)')
     ap.add_argument('--speed', type=int, choices=sorted(SPEEDS.values()), default=50,
                     help='game speed in %% (default 50; 1-4 change it while playing)')
+    ap.add_argument('--no-sound', action='store_true',
+                    help='start with the game sound off (M toggles it)')
     args = ap.parse_args()
 
     if args.resume:
@@ -245,6 +249,13 @@ def main():
     pygame.display.set_caption(f'record_play — {os.path.basename(rec.path)}')
     font = pygame.font.SysFont('monospace', 18, bold=True)
     clock = pygame.time.Clock()
+    audio = None
+    try:
+        import game_audio
+        audio = game_audio.GameAudio(rec.env.em.get_audio_rate())
+    except Exception as e:                      # no sound device: play on silently
+        print(f'no sound ({e!r}); recording works the same', flush=True)
+    sound = audio is not None and not args.no_sound
     pad = None
     if pygame.joystick.get_count():
         pad = pygame.joystick.Joystick(0)
@@ -279,6 +290,8 @@ def main():
                     paused, msg = True, 'rewound — any move key (or P) resumes'
                 elif ev.key == pygame.K_p:
                     paused = not paused
+                elif ev.key == pygame.K_m and audio is not None:
+                    sound = not sound
                 elif pygame.K_1 <= ev.key <= pygame.K_4:
                     speed = SPEEDS[ev.key - pygame.K_0]
                 elif ev.key in move_keys and paused:
@@ -310,6 +323,10 @@ def main():
 
         if not paused:
             event = rec.step(keys_to_action(left, right, up, down, jump, rec.spindashing))
+            if audio is not None and sound and speed == 100:
+                audio.push(rec.env.em.get_audio())
+            elif audio is not None:
+                audio.clear()
             if event == 'death':
                 paused = True
                 msg = 'died — Backspace rewinds (recommended), P plays on'
@@ -331,14 +348,25 @@ def main():
         hud = (f"{'PAUSED' if paused else 'REC'}  {act}  {clock_s}  "
                f"rings {info.get('rings', 0)}  lives {info.get('lives', 0)}  "
                f"frame {len(rec.actions)}  {speed}%  rewinds {rec.rewinds}"
-               + ('  *' if rec.unsaved else ''))
+               + ('  *' if rec.unsaved else '')
+               + ('' if audio is None else '  sound' if sound and speed == 100
+                  else '  (sound at 100%)' if sound else '  muted'))
         screen.blit(font.render(hud, True, (255, 255, 0)), (8, 8))
         screen.blit(font.render(msg[:88], True, (0, 255, 128)), (8, 30))
-        screen.blit(font.render('Bksp rewind  P pause  1-4 speed  F5 save  Enter save+quit  '
-                                'Esc quit', True, (200, 200, 200)), (8, 224 * SCALE - 26))
+        screen.blit(font.render('Bksp rewind  P pause  1-4 speed  M sound  F5 save  '
+                                'Enter save+quit  Esc quit', True, (200, 200, 200)),
+                    (8, 224 * SCALE - 26))
         pygame.display.flip()
-        clock.tick(60 * speed / 100)
+        if paused and audio is not None:
+            audio.clear()
+        if audio is not None and sound and speed == 100 and not paused:
+            audio.pace()                        # the sound card keeps the time
+            clock.tick()
+        else:
+            clock.tick(60 * speed / 100)
 
+    if audio is not None:
+        audio.close()
     pygame.quit()
     if quit_save and rec.actions:
         path = rec.save()
