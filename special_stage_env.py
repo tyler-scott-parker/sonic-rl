@@ -456,7 +456,8 @@ class SpecialStageEnv(gym.Env):
         self._ram_swapped = None
         self._original_grids = {}     # stage -> its layout at a fresh start
         self._cur_stage = 0
-        self._demos = None            # built from DEMO_FILES at the first reset
+        self._demo_files = list(DEMO_FILES)   # set_demo_files() swaps them (d10: the route book)
+        self._demos = None            # built from _demo_files at the first reset
         self._demo_ptr = {}           # demo id -> start checkpoint (trainer-set)
         self._replaying = False       # True while _build_demos replays a demo
         self.frame_hook = None        # f(frame) on every emulator frame (watchers)
@@ -661,7 +662,12 @@ class SpecialStageEnv(gym.Env):
         self._demos = []
         self._replaying = True
         try:
-            for path in DEMO_FILES:
+            kept = getattr(self, '_demos_kept', None) or {}
+            self._demos_kept = None
+            for path in self._demo_files:
+                if demo_io.demo_id(path) in kept:
+                    self._demos.append(kept[demo_io.demo_id(path)])
+                    continue
                 actions, meta = demo_io.load_demo(path)
                 demo_io.check_compatible(path, meta, sys.modules[__name__])
                 self.reset(options={'stage_file': stage_file(meta['stage']),
@@ -749,14 +755,25 @@ class SpecialStageEnv(gym.Env):
                                   target=demo['final'] - f['spheres'])
         return self._get_obs(frame, info), {}
 
+    def set_demo_files(self, paths):
+        """Called by the trainer (VecEnv.env_method) when the route book has a
+        faster route: these demos replace the old ones at the next reset (the
+        episode under way finishes undisturbed; demos kept from the old set
+        aren't replayed again)."""
+        self._demo_files = list(paths)
+        self._demos_kept = {d['id']: d for d in (self._demos or [])}
+        self._demos = None
+
     def set_demo_pointers(self, pointers):
         """Called by the trainer (VecEnv.env_method) as the curriculum moves."""
         self._demo_ptr.update({k: int(v) for k, v in pointers.items()})
 
-    def demo_info(self):
+    def demo_info(self, build=True):
         """Per demo: id, stage, spheres, length, and where each start point sits
         in it (fraction of its frames) — for the trainer's curriculum."""
-        if DEMO_FILES and self._demos is None:
+        if self._demo_files and self._demos is None:
+            if not build:
+                return None             # not rebuilt yet (set_demo_files): ask again later
             self._build_demos()
         return [dict(id=d['id'], stage=d['stage'], final=d['final'],
                      frames=d['frames'],
@@ -914,7 +931,7 @@ class SpecialStageEnv(gym.Env):
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
-        if DEMO_FILES and self._demos is None:
+        if self._demo_files and self._demos is None:
             self._build_demos()
         self.base_env.reset()
 

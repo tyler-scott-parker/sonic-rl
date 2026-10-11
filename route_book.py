@@ -54,6 +54,7 @@ HIST_DIR = os.path.join(BOOK_DIR, 'history')
 FIX = os.path.join(HOME, 'states', 'handoff')
 BOARDS = range(1, 15)
 HARVEST_TRIES = 5           # per board: the fastest candidates checked before giving up
+EMERALD_CAP = 3000          # main-game check: the stage's end -> the emerald counted
 
 
 def book_path(board):
@@ -125,7 +126,8 @@ def check_captured(paths, run='d9'):
 
 def check_main(paths, run='d9'):
     """Same, from the main game (main_fixture): ok also needs the stage to be
-    the route's board, entered from a giant ring."""
+    the route's board, entered from a giant ring, and the game to award the
+    emerald afterwards (its count goes up within EMERALD_CAP frames)."""
     return _child('main', dict(paths=paths, run=run))
 
 
@@ -196,16 +198,27 @@ def _run_main(paths, run):
     for p in paths:
         actions, meta = demos.load_demo(p)
         b = int(meta['stage'])
+        def emeralds():
+            return (int(emu.data.lookup_value('chaos_emeralds'))
+                    + int(emu.data.lookup_value('super_emeralds')))
         try:
             main_fixture(emu, b, pilot, C)
+            em0 = emeralds()
             r = pilot.play(script=actions)
+            awarded = None
+            for k in range(EMERALD_CAP):
+                if emeralds() > em0:
+                    awarded = k
+                    break
+                C.emu_frame(emu, C.ACTION_BUTTONS[0])
         except Exception as e:
             res[p] = dict(ok=False, board=b, frames=len(actions), why=repr(e))
             continue
-        res[p] = dict(ok=(r['board'] == b and r['outcome'] == 'clear'
+        res[p] = dict(ok=(r['board'] == b and r['outcome'] == 'clear' and awarded is not None
                           and pilot.env.steps == len(actions) and r['let_go'] == 0),
                       board=b, loaded=r['board'], outcome=r['outcome'], frames=len(actions),
-                      steps=pilot.env.steps, spheres=r['spheres'], total=r['total'])
+                      steps=pilot.env.steps, spheres=r['spheres'], total=r['total'],
+                      emerald_after=awarded)
     print(json.dumps(res))
 
 

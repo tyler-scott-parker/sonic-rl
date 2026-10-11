@@ -36,8 +36,13 @@ if run not in ns['RUNS']:
 cfg = ns['RUNS'][run]
 if cfg['obs']['SS_ENV_VERSION'] not in ('4', '5', '6', '7'):
     sys.exit(f'{run} is not on a corner env (v4-v7)')
-DEMOS = [p for pat in cfg.get('demos', [])
-         for p in sorted(glob.glob(os.path.join(HOME, 'demos', f'{pat}.npz')))]
+if cfg.get('demos') == 'book':        # d10: the route book's current routes
+    sys.path.insert(0, HOME)
+    import route_book
+    DEMOS = [route_book.book_path(b) for b in cfg['stages']]
+else:
+    DEMOS = [p for pat in cfg.get('demos', [])
+             for p in sorted(glob.glob(os.path.join(HOME, 'demos', f'{pat}.npz')))]
 os.environ.update(cfg['obs'], SS_STAGES=','.join(map(str, cfg['stages'])),
                   SS_RESTART_PROB='0', SS_DEMOS=','.join(DEMOS), SS_DEMO_PROB='1.0',
                   SS_LOG=os.path.join(HOME, 'logs', f'smoke_corners_{run}.jsonl'))

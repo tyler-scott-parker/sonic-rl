@@ -35,3 +35,4 @@ sonic_ss_multistage_*_demos.json
 
 # route book: candidates training saves (route_book.py harvest promotes them)
 routes/candidates/
+routes/curriculum/

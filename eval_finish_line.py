@@ -32,22 +32,11 @@ HOME = os.path.dirname(os.path.abspath(__file__))
 
 
 def his_frames(run):
-    """{board: frames} of Tyler's recordings the run learned from (its RUNS
-    'demos', read with ast: importing the trainer would start a run)."""
-    import ast
+    """{board: frames} of Tyler's recordings (demos/stage{N}_*.npz): the bar,
+    whatever the run learned from (d10 learns from the route book)."""
     import demos
-    tree = ast.parse(open(os.path.join(HOME, 'train_ss_multistage.py')).read())
-    names = []
-    for node in tree.body:
-        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'RUNS' for t in node.targets):
-            for k, v in zip(node.value.keys, node.value.values):
-                if isinstance(k, ast.Constant) and k.value == run:
-                    names = ast.literal_eval([x.value for x in v.keywords if x.arg == 'demos'][0])
-    out = {}
-    for did in names:
-        meta = demos.load_demo(os.path.join(HOME, 'demos', f'{did}.npz'))[1]
-        out[int(meta['stage'])] = int(meta['frames'])
-    return out
+    import route_book
+    return {b: len(demos.load_demo(p)[0]) for b, p in route_book.his_recordings().items()}
 
 
 def wilson(k, n, z=1.96):

@@ -38,6 +38,9 @@ as the agent matches or beats the demo from it — the backward curriculum of
 Salimans & Chen 2018 (DemoCurriculumCallback). The agent never copies your
 inputs, only starts where you were, so it can end up better than the demo.
 Progress: python3 demo_progress.py --run d1
+`demos='book'` (d10) starts them along the route book's current best route
+per board instead (route_book.py), switching live when the book improves;
+check it with `python3 check_book_curriculum.py d10` before launching.
 
 RESUMING an existing run requires an explicit --resume. Without it the launcher
 REFUSES to start when a checkpoint for that name is already on disk — the exact
@@ -69,6 +72,7 @@ import shutil
 import signal
 import argparse
 import collections
+import time
 
 ALL_14 = list(range(1, 15))
 
@@ -264,6 +268,23 @@ RUNS = {
                '0.99 per decision, backward curriculum). Fresh weights: v7\'s '
                'obs (14 feats) and 9 actions don\'t fit d7\'s network.',
     ),
+    'd10': dict(
+        stages=ALL_14, lstm=512, lr=3e-4,
+        obs=dict(SS_ENV_VERSION='7',
+                 SS_USE_PIXELS='0', SS_PATCH_R='7', SS_DROP_POSITION='1',
+                 SS_POINTER='1',
+                 SS_SPEED_BONUS='7'),       # d8's speed term: a clear pays 7 x (18,000 - frames)
+        demos='book',                       # the route book's current route per board, kept current
+        demo_prob=0.75,
+        ppo=dict(gamma=0.99),
+        init='d9',                          # first launch starts from d9's save
+        result='DEFINED 2026-10-11 ~15:45 (Tyler: "Yes that sounds great" to starting '
+               'from the route book\'s routes; the speed term was the earlier d10 '
+               'proposal). d9 + SS_SPEED_BONUS=7, its curriculum along the route '
+               'book\'s current best route per board instead of Tyler\'s recordings, '
+               'switched live as the book improves. Goal: the book beats Tyler on '
+               'all 14 boards (route_book.py). NOT STARTED.',
+    ),
     'd6': dict(
         stages=[1, 2, 3, 4], lstm=512, lr=3e-4,
         obs=dict(SS_ENV_VERSION='5',
@@ -303,6 +324,7 @@ LSTM_KWARGS = dict(n_lstm_layers=2, shared_lstm=False, enable_critic_lstm=True)
 DEMO_WINDOW    = 32     # recent episodes judged at the current start point
 DEMO_MIN_N     = 16     # ...needed before the start point may move
 DEMO_ADVANCE   = 0.25   # move back once >= 25% of them matched or beat the demo
+BOOK_CHECK_S   = 300    # demos='book': look for a faster route this often (seconds)
 
 
 def paths(run):
@@ -319,8 +341,34 @@ def paths(run):
     )
 
 
+def book_demos(stages):
+    """demos='book': the route book's current route for each board
+    (route_book.py), copied to routes/curriculum/board{NN}_{frames}_{hash}.npz
+    so that a demo's id names one exact route: the curriculum's start points
+    belong to a route, and the book's file for a board changes as it improves."""
+    import hashlib
+    import route_book
+    out = []
+    for b in stages:
+        src = route_book.book_path(b)
+        with open(src, 'rb') as f:
+            h = hashlib.sha1(f.read()).hexdigest()[:8]
+        import demos as demo_io
+        n = len(demo_io.load_demo(src)[0])
+        dst = os.path.join(HOME, 'routes', 'curriculum', f'board{b:02d}_{n}_{h}.npz')
+        if not os.path.exists(dst):
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy2(src, dst + '.tmp.npz')
+            os.replace(dst + '.tmp.npz', dst)
+        out.append(dst)
+    return out
+
+
 def demo_paths(cfg):
-    """A run's demo files: its `demos` patterns, matched under demos/."""
+    """A run's demo files: its `demos` patterns, matched under demos/, or
+    'book' (book_demos)."""
+    if cfg.get('demos') == 'book':
+        return book_demos(cfg['stages'])
     found = []
     for pat in cfg.get('demos', []):
         found += sorted(glob.glob(os.path.join(HOME, 'demos', f'{pat}.npz')))
@@ -510,35 +558,127 @@ class DemoCurriculumCallback(BaseCallback):
     playing the stage from the start, measured against the demo's whole run.
     Only the demo's states are used, never its inputs, so the agent can end up
     better than the demo. The start points persist next to the checkpoint, so
-    --resume keeps the curriculum where it was."""
+    --resume keeps the curriculum where it was.
 
-    def __init__(self, state_path, verbose=0):
+    A demo new to the curriculum (demos='book': a faster route; or the d9
+    recordings d10 starts from) takes over its board's start point at the same
+    FRAME (the first start point at or after it): a route spliced onto an
+    older one shares its frames up to the splice, so there it is the very
+    state the agent had mastered; past the splice it is the agent's own run.
+    With demos='book' the book is checked every BOOK_CHECK_S seconds; when a
+    board's route changed, every worker switches at its next reset (env
+    set_demo_files, so no episode is disturbed), and once worker 0 has the new
+    set its start points are carried over and pushed."""
+
+    def __init__(self, state_path, book_stages=None, verbose=0):
         super().__init__(verbose)
         self.state_path = state_path
+        self.book_stages = book_stages
         self.ptr, self.fracs, self.recent = {}, {}, {}
+        self.frames, self.stage = {}, {}
+        self._book_t = 0.0
+        self._pending = None            # demo ids the workers are switching to
+
+    @staticmethod
+    def _board_of(did, entry):
+        if 'stage' in entry:
+            return int(entry['stage'])
+        import re
+        m = re.match(r'(?:stage|board)0*(\d+)_', did)
+        return int(m.group(1)) if m else None
+
+    @staticmethod
+    def _frame_of(did, entry):
+        """The start point's frame in its demo ('frame', or frac x the length of
+        demos/<id>.npz for state files written before 'frame' was kept)."""
+        if 'frame' in entry:
+            return entry['frame']
+        p = os.path.join(HOME, 'demos', f'{did}.npz')
+        if os.path.exists(p):
+            import demos as demo_io
+            return entry['frac'] * len(demo_io.load_demo(p)[0])
+        return None
+
+    def _adopt(self, infos, saved):
+        """Start points for these demos: their own if saved, else their board's
+        old one carried over by frame, else the end."""
+        by_board = {}
+        for sid, e in saved.items():
+            b, f = self._board_of(sid, e), self._frame_of(sid, e)
+            if b is not None and f is not None:
+                by_board[b] = (sid, f)
+        for d in infos:
+            did, last = d['id'], len(d['fracs']) - 1
+            self.fracs[did], self.frames[did], self.stage[did] = d['fracs'], d['frames'], d['stage']
+            note = ''
+            if did in saved:
+                p = min(saved[did].get('ptr', last), last)
+            elif d['stage'] in by_board:
+                sid, f = by_board[d['stage']]
+                steps = [fr * d['frames'] for fr in d['fracs']]
+                p = next((i for i, s in enumerate(steps) if s >= f - 0.5), last)
+                note = f' (carried over from {sid} at frame {f:.0f})'
+            else:
+                p = last
+            self.ptr[did] = p
+            self.recent[did] = collections.deque(maxlen=DEMO_WINDOW)
+            print(f"[demo] {did}: stage {d['stage']}, {d['final']} spheres in "
+                  f"{d['frames']} frames; episodes start "
+                  f"{d['fracs'][p]:.0%} of the way in{note}", flush=True)
 
     def _on_training_start(self):
         saved = {}
         if os.path.exists(self.state_path):
             with open(self.state_path) as f:
                 saved = json.load(f)
-        for d in self.training_env.env_method('demo_info', indices=[0])[0]:
-            last = len(d['fracs']) - 1
-            self.fracs[d['id']] = d['fracs']
-            self.ptr[d['id']] = min(saved.get(d['id'], {}).get('ptr', last), last)
-            self.recent[d['id']] = collections.deque(maxlen=DEMO_WINDOW)
-            print(f"[demo] {d['id']}: stage {d['stage']}, {d['final']} spheres in "
-                  f"{d['frames']} frames; episodes start "
-                  f"{d['fracs'][self.ptr[d['id']]]:.0%} of the way in", flush=True)
+        self._adopt(self.training_env.env_method('demo_info', indices=[0])[0], saved)
+        self._book_t = time.time()
         self._push()
+
+    def _state(self):
+        return {k: {'ptr': p, 'frac': round(self.fracs[k][p], 4), 'stage': self.stage[k],
+                    'frame': round(self.fracs[k][p] * self.frames[k])}
+                for k, p in self.ptr.items()}
 
     def _push(self):
         self.training_env.env_method('set_demo_pointers', dict(self.ptr))
         tmp = self.state_path + '.tmp'
         with open(tmp, 'w') as f:
-            json.dump({k: {'ptr': p, 'frac': round(self.fracs[k][p], 4)}
-                       for k, p in self.ptr.items()}, f, indent=1)
+            json.dump(self._state(), f, indent=1)
         os.replace(tmp, self.state_path)
+
+    def _check_book(self):
+        """demos='book': a board's route changed -> the workers switch to the
+        book's current set at their next reset."""
+        self._book_t = time.time()
+        try:
+            new = book_demos(self.book_stages)
+        except Exception as e:
+            print(f'[demo] route book unreadable ({e!r}); keeping the current routes', flush=True)
+            return
+        ids = {os.path.splitext(os.path.basename(p))[0] for p in new}
+        if ids == (self._pending or set(self.ptr)):
+            return
+        self.training_env.env_method('set_demo_files', new)
+        self._pending = ids
+        print(f"[demo] the route book has a faster route: "
+              f"{', '.join(sorted(ids - set(self.ptr)))} (switching at each worker's next episode)",
+              flush=True)
+
+    def _adopt_pending(self):
+        """Once worker 0 has rebuilt its demos: drop the replaced routes and
+        carry their start points over to the new ones."""
+        infos = self.training_env.env_method('demo_info', build=False, indices=[0])[0]
+        if not infos or {d['id'] for d in infos} != self._pending:
+            return
+        old = self._state()
+        gone = [k for k in self.ptr if k not in self._pending]
+        for k in gone:
+            for dct in (self.ptr, self.fracs, self.recent, self.frames, self.stage):
+                dct.pop(k, None)
+        self._adopt([d for d in infos if d['id'] not in self.ptr], {k: old[k] for k in gone})
+        self._pending = None
+        self._push()
 
     def _on_step(self):
         moved = False
@@ -569,6 +709,10 @@ class DemoCurriculumCallback(BaseCallback):
     def _on_rollout_end(self):
         for did, p in self.ptr.items():
             self.logger.record(f'demo/{did}/start_frac', self.fracs[did][p])
+        if self._pending:
+            self._adopt_pending()
+        if self.book_stages and time.time() - self._book_t >= BOOK_CHECK_S:
+            self._check_book()
 
 
 def make_env():
@@ -713,7 +857,8 @@ if __name__ == '__main__':
                            name_prefix=P['prefix'], verbose=1),
         AutoSaveCallback(save_freq=AUTOSAVE_STEPS),
         PruneCheckpointsCallback(checkpoint_dir=P['ckpt_dir']),
-    ] + ([DemoCurriculumCallback(P['demo_state'])] if DEMOS else []))
+    ] + ([DemoCurriculumCallback(P['demo_state'], book_stages=(
+        CFG['stages'] if CFG.get('demos') == 'book' else None))] if DEMOS else []))
 
     try:
         model.learn(total_timesteps=TOTAL_STEPS, callback=callbacks,
