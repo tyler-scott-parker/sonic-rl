@@ -25,6 +25,10 @@ state that run passed through, until:
            first real run spent 84% of its frames in 47-second timeouts,
            pressed against one wall; cutting them at 10 s buys ~4x the attempts.
   timeout  far slower than the demo from the same start. Truncated.
+  (MG_ENV_VERSION=2: reaching new ground — a 128-px block of the level not
+  yet visited this episode — counts as progress for `stuck` too, so a route
+  the demo never took isn't cut for leaving it. Tyler, 2026-10-10: his play
+  is a guide; don't hinder innovation.)
 
 REWARD — frames faster than the demo. Progress is measured along the demo's
 own route, in demo frames: each step pays the newest demo frame it has
@@ -39,6 +43,15 @@ rejoins it, then jumps to where it rejoined. Boss fights are gated: while the
 boss flag is up, progress holds at the demo's fight start; when the fight
 ends it jumps to the demo's fight end, so a faster kill is worth exactly the
 frames it saves.
+
+MG_ENV_VERSION=2 changes WHEN the time is paid, never how much: off the
+route (and outside boss fights) the step's frames are booked instead of
+charged, and the booked frames are settled on the first step back on the
+route — together with the progress that rejoining pays — or when the episode
+ends. A detour's net (demo frames gained minus frames spent) then lands as
+one number when it pays off, instead of a run of -1s now and a lump later
+that discounting (gamma 0.995 per step, a ~13 s horizon) mostly erases.
+Every episode's undiscounted return is unchanged (check_mg_v2.py).
 
 ACTIONS — ACTION_BUTTONS, each held for FRAME_SKIP frames.
 OBSERVATION — the last STACK agent frames: 84x84 grayscale, each the max of
@@ -145,6 +158,13 @@ DEMO_PROB   = float(os.environ.get('MG_DEMO_PROB', '0.75'))
 LOG_FILE    = os.path.expanduser(
     os.environ.get('MG_LOG', os.path.join(PROJECT_DIR, 'mg_log.jsonl')))
 TEST_GOAL_X = int(os.environ.get('MG_TEST_GOAL_X', '0'))
+# 1 = the 2026-09-30 env (run aiz1); 2 = new ground counts against `stuck`,
+# and off-route time is settled on return (module docstring)
+MG_ENV_VERSION = int(os.environ.get('MG_ENV_VERSION', '1'))
+if MG_ENV_VERSION not in (1, 2):
+    raise ValueError(f'MG_ENV_VERSION must be 1 or 2, got {MG_ENV_VERSION}')
+MG_V2 = MG_ENV_VERSION >= 2
+BLOCK_SHIFT = 7          # v2 new ground: 128x128-px blocks
 
 # ── RAM ──────────────────────────────────────────────────────────────────────
 # Registered on top of the integration's variables (zone, act, x, y, rings,
@@ -355,6 +375,7 @@ class RouteProgress:
         self.floor, self.cap = 0, int(route['T'])
         self.fight = None
         self.miss = 0
+        self.on = True       # matched the route this step
         if boss_on:
             self._enter_fight()
 
@@ -401,6 +422,7 @@ class RouteProgress:
             self.miss += 1
             if self.miss >= REACQUIRE:
                 t = self._nearest(self.floor, self.cap, *args)
+        self.on = t is not None
         if t is not None:
             self.miss = 0
             self.p = t
@@ -580,6 +602,9 @@ class SonicCoordinator(gym.Env):
         self._max_frames = int(self._target * TIMEOUT_MULT + TIMEOUT_ADD)
         self.frames = 0
         self._moved_at = 0            # frames when route progress last rose
+        self._owed = 0                # v2: off-route frames booked, not yet charged
+        self._off = 0                 # v2: frames spent off the route this episode
+        self._seen = set()            # v2: blocks of the level visited this episode
         self.ret = 0.0
         self._t0 = time.time()
         self._xmax = None
@@ -619,8 +644,20 @@ class SonicCoordinator(gym.Env):
         elif event is None:
             gain = self._route.update(info['zone'], info['act'], x, int(info['y']),
                                       int(info['mg_boss']) != 0)
-            r += gain
-            if gain > 0 or self._route.fight is not None:
+            new_ground = False
+            if MG_V2:
+                blk = (int(info['zone']), int(info['act']), x >> BLOCK_SHIFT,
+                       int(info['y']) >> BLOCK_SHIFT)
+                new_ground = blk not in self._seen
+                self._seen.add(blk)
+            if MG_V2 and not self._route.on and self._route.fight is None:
+                r += n                          # off the route: book it
+                self._owed += n
+                self._off += n
+            else:
+                r += gain - self._owed          # back on it: settle
+                self._owed = 0
+            if gain > 0 or self._route.fight is not None or new_ground:
                 self._moved_at = self.frames
             elif self.frames - self._moved_at >= STUCK_FRAMES:
                 event = 'stuck'
@@ -628,6 +665,10 @@ class SonicCoordinator(gym.Env):
         terminated = event in ('clear', 'death')
         truncated = event in ('stage', 'stuck') or (
             not terminated and self.frames >= self._max_frames)
+        if (terminated or truncated) and self._owed:
+            r -= self._owed                     # v2: the episode ends: settle
+            self.ret -= self._owed
+            self._owed = 0
         if terminated or truncated:
             outcome = event or 'timeout'
             info = dict(info)
@@ -654,6 +695,8 @@ class SonicCoordinator(gym.Env):
             ret=round(self.ret, 1), game_time=fmt_time(game_time(info)),
             x=int(info['x']), y=int(info['y']), x_max=self._xmax,
             rings=int(info['rings']), duration=round(time.time() - self._t0, 1))
+        if MG_V2:
+            entry['off_route'] = self._off
         try:
             with open(LOG_FILE, 'a') as f:
                 f.write(json.dumps(entry) + '\n')

@@ -61,7 +61,10 @@ RUNS = {
                'the agent to beat the script (it wastes ~0.7 s on a wall).',
     ),
     'aiz1': dict(
-        acts=['AIZ1'], demos=['play_*'], demo_prob=0.75,
+        acts=['AIZ1'],
+        # pinned 2026-10-10: 'play_*' would pull Tyler's coming full-game
+        # recording into a resume
+        demos=['play_20260930-153946'], demo_prob=0.75,
         lr=2.5e-4, steps=50_000_000,
         result="LAUNCHED 2026-09-30 on play_20260930-153946 (Tyler, AIZ1 1:25.43, "
                'no deaths or rewinds; 84 start points; fights = the jungle-burning '
@@ -130,6 +133,9 @@ def configure_env(run):
     os.environ['MG_DEMO_PROB'] = str(cfg['demo_prob'])
     os.environ['MG_LOG'] = p['log']
     os.environ['MG_TEST_GOAL_X'] = str(cfg.get('test_goal_x', 0))
+    # 1 = the 2026-09-30 env (smoke, aiz1); new runs set env_version=2
+    # (new ground counts against `stuck`; off-route time settled on return)
+    os.environ['MG_ENV_VERSION'] = str(cfg.get('env_version', 1))
     return found
 
 
