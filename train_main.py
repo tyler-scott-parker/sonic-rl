@@ -49,7 +49,7 @@ from stable_baselines3.common.callbacks import (BaseCallback, CheckpointCallback
                                                 CallbackList)
 
 # ── Run registry ─────────────────────────────────────────────────────────────
-# `acts` are act names as coordinator.act_name makes them ('AIZ1', 'HCZ2'...);
+# `acts` are act names as coordinator.act_name / part_name make them ('AIZ1', 'LRZ3', 'LBZ2b'...);
 # `demos` are patterns under demos/.
 RUNS = {
     'smoke': dict(

@@ -9,9 +9,13 @@ special or bonus stage ends the episode as a neutral truncation.
 
 EPISODE — one act of a recorded playthrough (record_play.py), started from a
 state that run passed through, until:
-  clear    the in-game timer stops with Sonic alive in the level: the results
-           screen after the signpost (act 1) or the capsule (act 2). The timer
-           then holds the act's time. Terminated, + CLEAR_BONUS.
+  clear    the in-game timer stops with Sonic alive in the level: on the
+           boss's last hit, act 1 (miniboss) and act 2 alike — seen at every
+           clear of Tyler's full playthrough (2026-10-10); the signpost and
+           capsule come after, on a stopped clock. The timer then holds the
+           act's time. Terminated, + CLEAR_BONUS. (LBZ2's timer stops at its
+           boss and runs again for the Big Arm fight: part_name makes that
+           its own act, 'LBZ2b'.)
   death    Sonic's routine becomes 6 (dying), 8 (restarting) or $C (drowned)
            — on that frame. The lives counter drops ~80 frames later and the
            level reloads ~290 frames later; waiting for either would repeat
@@ -76,7 +80,8 @@ emulator on 2026-09-30):
 
 Environment variables (the trainer sets them before workers import this):
   MG_DEMOS=a.npz,b.npz  recorded playthroughs (record_play.py)
-  MG_ACTS=AIZ1,AIZ2     acts to train on (labels as ACT_NAMES)
+  MG_ACTS=AIZ1,AIZ2     acts to train on, named as act_name / part_name make
+                        them ('AIZ1', 'LRZ3', 'LBZ2b'); empty = every cleared act
   MG_DEMO_PROB=p        share of resets that start on the curriculum's start
                         point; the rest start at the beginning of the act
   MG_LOG=path           episode log (JSON lines)
@@ -190,12 +195,32 @@ DEAD_ROUTINES  = (6, 8, 0xC)
 
 ZONE_NAMES = {0: 'AIZ', 1: 'HCZ', 2: 'MGZ', 3: 'CNZ', 4: 'FBZ', 5: 'ICZ',
               6: 'LBZ', 7: 'MHZ', 8: 'SOZ', 9: 'LRZ', 0xA: 'SSZ', 0xB: 'DEZ',
-              0xC: 'DDZ', 0x16: 'HPZ', 0x17: 'HPZ'}
+              0xC: 'DDZ', 0xD: 'END'}
+# Internal zones $16 and $17 each hold unrelated stretches of the game (seen in
+# Tyler's full playthrough, 2026-10-10; both used to be named 'HPZ'):
+ACT_NAMES = {(0x16, 0): 'LRZ3',     # Lava Reef's boss arena; the timer carries on from LRZ2
+             (0x16, 1): 'HPZ1',     # Hidden Palace (one act, no number on its title card)
+             (0x17, 0): 'DEZ3'}     # the final Death Egg boss; the timer carries on from DEZ2
 
 
 def act_name(zone, apparent_act):
-    """'AIZ1', 'HCZ2', ... — the act the title card shows."""
-    return f"{ZONE_NAMES.get(int(zone), f'Z{int(zone):02X}')}{int(apparent_act) + 1}"
+    """'AIZ1', 'HCZ2', ... — the act the title card shows (internal zones $16
+    and $17 by ACT_NAMES)."""
+    zone, act = int(zone), int(apparent_act)
+    return ACT_NAMES.get((zone, act), f"{ZONE_NAMES.get(zone, f'Z{zone:02X}')}{act + 1}")
+
+
+def part_name(title, prev):
+    """The name of an act whose title card says `title`, when the act cleared
+    just before it was `prev`. The same title right after a clear means the
+    timer stopped for a cutscene and then ran on in the same act: LBZ2's timer
+    stops when its boss is beaten and runs again for the Big Arm fight after
+    the Death Egg launches. That second stretch is its own act to learn
+    ('LBZ2b'; a third would be 'LBZ2c'), so no two acts of a recording share
+    a name — training keys acts by name."""
+    if prev is None or prev.rstrip('abcdefghijklmnopqrstuvwxyz') != title:
+        return title
+    return title + ('b' if prev == title else chr(ord(prev[-1]) + 1))
 
 
 def make_retro(render_mode=None):
@@ -326,7 +351,8 @@ class ActSplitter:
         if cur is None:
             if in_level and timer_on and not dead:
                 self.cur = dict(
-                    name=act_name(info['zone'], info['mg_apparent_act']),
+                    name=part_name(act_name(info['zone'], info['mg_apparent_act']),
+                                   self.acts[-1]['name'] if self.acts else None),
                     zone=int(info['zone']), start=i, t=0, clear=None,
                     time=None, deaths=[], stages=[])
                 event = 'start'

@@ -10,12 +10,17 @@ and by the in-game timer (its reading at the clear, and the time it ran since
 the act began — they differ by a few lag frames, more after a death, which
 puts the clock back to the starpost), deaths, special/bonus stages, boss fights — and
 flags what needs a human look. The act-clear rule is "the in-game timer stops
-with Sonic alive in the level", and its known ways to go wrong are:
-  - a cutscene that stops the timer mid-act reads as a clear (the act then
-    "starts" again under the same name);
-  - an act 2 ends at the capsule, which no recording has shown yet: an act 2
-    that never clears, or clears with no boss fight before it, is suspect;
+with Sonic alive in the level"; Tyler's full playthrough (2026-10-10) showed
+it stopping on the boss's last hit at every act, before signpost or capsule.
+Its known ways to go wrong:
+  - a cutscene that stops the timer mid-act reads as a clear; the act then
+    resumes as its own act with a letter ('LBZ2b', coordinator.part_name).
+    LBZ2b (the Big Arm fight) is the one known case; any other is flagged;
+  - an act 2 that never clears, or clears with no boss fight before it, is
+    suspect (except KNOWN_NO_FIGHT below);
   - acts out of the game's order, or implausibly short.
+LRZ3 and DEZ3 (boss arenas in their own internal zones) start with the timer
+carried on from LRZ2 / DEZ2; their elapsed time counts from that act's clear.
 Nothing here changes the file. Read the flags against what you saw on screen.
 """
 import glob
@@ -29,8 +34,13 @@ import demos
 
 # Sonic & Tails' order through S3&K (internal zone ids differ: FBZ is 4, ICZ 5).
 ORDER = ['AIZ', 'HCZ', 'MGZ', 'CNZ', 'ICZ', 'LBZ', 'MHZ', 'FBZ', 'SOZ', 'LRZ',
-         'HPZ', 'SSZ', 'DEZ', 'DDZ']
+         'HPZ', 'SSZ', 'DEZ', 'DDZ', 'END']
 SHORT = 15 * 60          # an act under 15 s gets a look
+KNOWN_PARTS = {'LBZ2b'}  # timer restarts after a cutscene (checked on screen 2026-10-10)
+# Act clears with no Boss_flag fight before them, checked on screen 2026-10-10:
+# LRZ2 hands over to LRZ3's boss arena; the SOZ2 boss and SSZ1's Mecha Sonic
+# never raise Boss_flag. Timer stops on their last hit all the same.
+KNOWN_NO_FIGHT = {'LRZ2', 'SOZ2', 'SSZ1'}
 
 
 def fmt(frames):
@@ -80,6 +90,12 @@ def main():
         # the in-game clock from the act's first frame to its clear (a start
         # state can begin with time on it: AIZ1's reads 0:01.15)
         el = int(clock[a['clear']] - clock[a['start']]) if a['clear'] is not None else None
+        prev = acts[k - 1] if k else None
+        if (el is not None and prev and prev['clear'] is not None and abs(a['t'] - el) > 120
+                and abs(clock[a['clear']] - clock[prev['clear']] - a['t']) <= 120):
+            # LRZ3 / DEZ3: the timer carried on from the act before (it reads
+            # 0 for a moment at the zone change, then the carried time)
+            el = int(clock[a['clear']] - clock[prev['clear']])
         print(f'{a["name"]:5s} {a["start"]:8d} {str(a["clear"]):>8s} {own:>9s} '
               f'{a["time"] or "-":>8s} {fmt(el) if el is not None else "-":>8s} '
               f'{len(a["deaths"]):6d} {len(a["stages"]):6d}  '
@@ -93,21 +109,21 @@ def main():
                              f'death or stage to explain it — did the timer stop and restart mid-act?')
             if a['t'] < SHORT:
                 flags.append(f'{a["name"]}: cleared after only {fmt(a["t"])} — a cutscene timer stop?')
-            if a['name'].endswith('2') and not fights:
+            if a['name'][3:] == '2' and not fights and a['name'] not in KNOWN_NO_FIGHT:
                 flags.append(f'{a["name"]}: an act 2 cleared with no boss fight before it — '
-                             f'capsule? check the clear frame {a["clear"]}')
-            if fights and fights[-1][1] < a['t'] - 30 * 60:
+                             f'check the clear frame {a["clear"]}')
+            if fights and fights[-1][1] < a['t'] - 30 * 60 and a['name'] not in KNOWN_NO_FIGHT:
                 flags.append(f'{a["name"]}: cleared {fmt(a["t"] - fights[-1][1])} after its last '
                              f'boss fight ended — check what stopped the timer')
-        if k and a['name'] == acts[k - 1]['name']:
-            flags.append(f'{a["name"]} follows itself: the first one\'s "clear" at frame '
-                         f'{acts[k - 1]["clear"]} was probably a cutscene stopping the timer')
+        if a['name'][4:] and a['name'] not in KNOWN_PARTS:
+            flags.append(f'{a["name"]}: the timer stopped at frame {acts[k - 1]["clear"]} and ran '
+                         f'again in the same act — a cutscene, or a real clear misread?')
         if k:
-            z0, z1 = acts[k - 1]['name'][:-1], a['name'][:-1]
+            z0, z1 = acts[k - 1]['name'][:3], a['name'][:3]
             if z0 in ORDER and z1 in ORDER and ORDER.index(z1) < ORDER.index(z0):
                 flags.append(f'{a["name"]} comes after {acts[k - 1]["name"]}: out of the game\'s order')
-            if a['name'][:-1] not in ORDER:
-                flags.append(f'{a["name"]}: zone not in the known list')
+        if a['name'][:3] not in ORDER:
+            flags.append(f'{a["name"]}: zone not in the known list')
     print()
     if flags:
         print(f'{len(flags)} thing(s) to look at:')
