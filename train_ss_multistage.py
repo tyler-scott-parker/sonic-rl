@@ -262,7 +262,9 @@ RUNS = {
                'stage13_20261010-104726', 'stage14_20261010-105034'],
         demo_prob=0.75,
         ppo=dict(gamma=0.99),
-        result='LAUNCHED 2026-10-10 ~23:20 by Claude (Tyler gave Claude the box overnight; '
+        result='STOPPED 2026-10-11 ~16:40 at 5,059,832 steps (~96.5M frames; gate passed, '
+               '10/14 boards fresh-cleared) to make way for d10 (Tyler: "Let\'s go ahead and '
+               'start it"). LAUNCHED 2026-10-10 ~23:20 by Claude (Tyler gave Claude the box overnight; '
                'criteria AGREED, doc "Run d9"; smoke_corners d9 passed). All 14 boards on env v7, one '
                'recording each (all flawless), d7\'s recipe (compass, gamma '
                '0.99 per decision, backward curriculum). Fresh weights: v7\'s '
@@ -283,7 +285,8 @@ RUNS = {
                'proposal). d9 + SS_SPEED_BONUS=7, its curriculum along the route '
                'book\'s current best route per board instead of Tyler\'s recordings, '
                'switched live as the book improves. Goal: the book beats Tyler on '
-               'all 14 boards (route_book.py). NOT STARTED.',
+               'all 14 boards (route_book.py). LAUNCHED 2026-10-11 ~16:45 by Claude '
+               '(Tyler: "Let\'s go ahead and start it") from d9 at 5,059,832 steps.',
     ),
     'd6': dict(
         stages=[1, 2, 3, 4], lstm=512, lr=3e-4,
