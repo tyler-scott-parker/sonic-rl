@@ -228,7 +228,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--state', default=C.DEFAULT_START,
-                    help=f'integration start state (default {C.DEFAULT_START})')
+                    help=f'start state: an integration state (default {C.DEFAULT_START}) or a '
+                         f'.state file in the repo, e.g. states/doomsday_start.state')
     ap.add_argument('--resume', help='a playthrough to continue (demos/play_*.npz)')
     ap.add_argument('--speed', type=int, choices=sorted(SPEEDS.values()), default=50,
                     help='game speed in %% (default 50; 1-4 change it while playing)')
