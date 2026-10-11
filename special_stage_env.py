@@ -111,6 +111,12 @@ PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 STATES_DIR  = os.path.join(PROJECT_DIR, 'states')
 SS_LOG_FILE = os.path.expanduser(
     os.environ.get("SS_LOG", os.path.join(PROJECT_DIR, "ss_log.jsonl")))
+# The route book (route_book.py, 2026-10-11): a clear faster than the book's
+# route for its board is saved here as a candidate route: the episode's frames
+# from the board's captured state (a demo start: Tyler's frames up to the start
+# point, then the episode's). Only inputs are recorded; nothing the agent sees
+# or is paid changes. SS_ROUTES='' turns it off.
+ROUTE_DIR = os.environ.get('SS_ROUTES', os.path.join(PROJECT_DIR, 'routes', 'candidates'))
 
 # ── Env version ──────────────────────────────────────────────────────────────
 #   SS_ENV_VERSION=2 (default) -> the 2026-09-29 fixes listed in the header.
@@ -392,6 +398,10 @@ DEMO_TAIL       = 60    # the latest start point is this many frames before the 
 DEMO_BAND       = 4     # starts are drawn from checkpoints [pointer, pointer + band]
 if DEMO_FILES and not V2:
     raise ValueError('demos need SS_ENV_VERSION=2')
+
+
+_BUTTON_INDEX = {id(b): i for i, b in enumerate(ACTION_BUTTONS)}   # the env passes these very lists
+_STATE_SHA1 = {}
 
 
 class SpecialStageEnv(gym.Env):
@@ -692,7 +702,7 @@ class SpecialStageEnv(gym.Env):
                 self._demos.append(dict(
                     id=demo_io.demo_id(path), stage=meta['stage'],
                     total=float(meta['stage_total']), final=final, frames=n,
-                    ckpts=ckpts))
+                    ckpts=ckpts, actions=np.asarray(actions, dtype=np.uint8)))
         finally:
             self._replaying = False
 
@@ -711,6 +721,10 @@ class SpecialStageEnv(gym.Env):
         self._last_buttons = ACTION_BUTTONS[ck['action']]
         f = ck['fields']
         self.steps = f['steps']
+        # its route so far: the demo's frames up to and with the reset frame
+        self._route_prefix = demo['actions'][:f['steps']]
+        self._route_src = (f"from {demo['id']} at frame {f['steps']} (Tyler's frames "
+                           f"to there, then the agent's)", 'demo')
         self._last_pickup = self.steps      # the stall clock starts here
         self.speed_level = f['speed_level']
         self.prev_speed_timer = f['prev_speed_timer']
@@ -894,6 +908,9 @@ class SpecialStageEnv(gym.Env):
         self._stage_total = 102.0        # per-stage starting sphere count;
                                          # set from RAM at reset (102/127/118…)
         self._demo_episode = None        # set when the episode starts from a demo
+        self._route = []                 # action index per frame since the reset frame
+        self._route_prefix = None        # frames before those (None: no route, e.g. a pool restart)
+        self._route_src = None
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -951,6 +968,8 @@ class SpecialStageEnv(gym.Env):
                 self.base_env.em.set_state(f.read())
 
         self._reset_state()
+        if not restart_file and live is None:
+            self._route_prefix, self._route_src = (), ('fresh start', 'fresh')
 
         frame, _, _, _, info = self.base_env.step(self._actions[0])
         if self._ram_swapped is None:
@@ -1084,6 +1103,8 @@ class SpecialStageEnv(gym.Env):
             self.base_env.step(buttons)
         self.steps += 1
         self._last_buttons = buttons
+        if self._route_prefix is not None:
+            self._route.append(_BUTTON_INDEX.get(id(buttons), -1))
         if self.frame_hook is not None:
             self.frame_hook(frame)
 
@@ -1223,6 +1244,47 @@ class SpecialStageEnv(gym.Env):
                 print(f'[special_stage_env] WARNING: cannot write episode log '
                       f'{SS_LOG_FILE}: {e!r}', flush=True)
 
+    def _save_route(self):
+        """A clear faster than the route book's route for this board: save its
+        frames as a candidate (route_book.py harvest replays it from the
+        captured state and from the main game before it enters the book).
+        Each worker reads the book once and then only saves what beats its
+        own best so far."""
+        b = self._cur_stage
+        if (self._replaying or not ROUTE_DIR or self._route_prefix is None
+                or not 1 <= b <= 14 or -1 in self._route):
+            return
+        actions = list(self._route_prefix) + self._route
+        if len(actions) != self.steps:
+            return                      # bookkeeping doesn't add up: not a route
+        if getattr(self, '_route_best', None) is None:
+            try:
+                import route_book
+                self._route_best = route_book.book_frames()
+            except Exception:
+                self._route_best = {}
+        if len(actions) >= self._route_best.get(b, 10 ** 9):
+            return
+        self._route_best[b] = len(actions)
+        try:
+            import demos as demo_io
+            import route_book
+            if b not in _STATE_SHA1:
+                _STATE_SHA1[b] = demo_io.file_sha1(stage_file(b))
+            run = re.sub(r'^ss_log_?|\.jsonl$', '', os.path.basename(SS_LOG_FILE)) or 'run'
+            what, tag = self._route_src
+            meta = dict(stage=b, frames=len(actions), spheres=int(self._stage_total),
+                        stage_total=int(self._stage_total), outcome='clear',
+                        state_sha1=_STATE_SHA1[b], actions_sha1=demo_io.actions_sha1(ACTION_BUTTONS),
+                        source=f'{run}, {what}', source_tag=f'{run}_{tag}',
+                        recorded=time.strftime('%Y-%m-%d %H:%M'))
+            route_book.save_atomic(os.path.join(
+                ROUTE_DIR, f'b{b:02d}_{len(actions)}_{os.getpid()}_{int(time.time())}.npz'), actions, meta)
+        except Exception as e:
+            if not getattr(self, '_route_warned', False):
+                self._route_warned = True
+                print(f'[special_stage_env] WARNING: cannot save a route to {ROUTE_DIR}: {e!r}', flush=True)
+
     def _stage_emerald(self):
         """The emerald a clear of this board awards: stages 1-7 are the Sonic 3
         (chaos) boards, 8-14 the S&K (super) boards."""
@@ -1249,6 +1311,7 @@ class SpecialStageEnv(gym.Env):
                 reward += SPEED_BONUS * max(0, SS_MAX_STEPS - self.steps)
             self._log_episode(success=True,
                               emerald_type=emerald_type or "cleared")
+            self._save_route()
             return reward, True
 
         # v3: STALL_FRAMES without a sphere counts as touching red

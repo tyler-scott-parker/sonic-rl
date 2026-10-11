@@ -33,6 +33,11 @@ ON PURPOSE, unlike training:
     his own trail), within TAIL_CAP frames.
 The board is named by its layout against the 14 captured states (None if it
 matches none of them).
+
+THE ROUTE BOOK (route_book.py, 2026-10-11): from the handover the stage is
+deterministic: Tyler's recordings replay frame for frame from giant rings on
+all 14 boards. So a board with a route in the book is played by replaying it
+(a guaranteed emerald); the agent plays only boards without one.
 """
 import ast
 import collections
@@ -106,20 +111,27 @@ def import_env(preset):
 
 class SSPilot:
     def __init__(self, base_env, run='d9', model=None, deterministic=False, device='cpu',
-                 match_timer=True):
+                 match_timer=True, routes=True):
+        """model: a .zip, None = the run's latest save, False = no agent (route
+        replays and scripts only). routes: replay the route book's route
+        (route_book.py) on every board it has one for."""
         self.run = run
         self.sse = sse = import_env(run_preset(run))
         self.emu = base_env
         self.env = sse.SpecialStageEnv(base_env=base_env)
         self.env._replaying = True      # real play: no stall rule, no training log, no snapshots
-        self.model_path = model or os.path.join(HOME, f'sonic_ss_multistage_{run}.zip')
-        from sb3_contrib import RecurrentPPO
-        self.model = RecurrentPPO.load(self.model_path, device=device)
-        mo, eo = self.model.observation_space, self.env.observation_space
-        if ({k: s.shape for k, s in mo.spaces.items()} != {k: s.shape for k, s in eo.spaces.items()}
-                or self.model.action_space.n != self.env.action_space.n):
-            raise RuntimeError(f'{self.model_path} does not fit run {run}\'s env: '
-                               f'{mo} / {self.model.action_space} vs {eo} / {self.env.action_space}')
+        self.model = None
+        if model is not False:
+            self.model_path = model or os.path.join(HOME, f'sonic_ss_multistage_{run}.zip')
+            from sb3_contrib import RecurrentPPO
+            self.model = RecurrentPPO.load(self.model_path, device=device)
+            mo, eo = self.model.observation_space, self.env.observation_space
+            if ({k: s.shape for k, s in mo.spaces.items()} != {k: s.shape for k, s in eo.spaces.items()}
+                    or self.model.action_space.n != self.env.action_space.n):
+                raise RuntimeError(f'{self.model_path} does not fit run {run}\'s env: '
+                                   f'{mo} / {self.model.action_space} vs {eo} / {self.env.action_space}')
+        import route_book
+        self.routes = route_book.load() if routes else {}
         self.deterministic = deterministic
         self.match_timer = match_timer
         self.NOOP = sse.ACTION_BUTTONS[0]
@@ -214,21 +226,33 @@ class SSPilot:
     def play(self, script=None, trace=None):
         """Call on the entry frame (the main game's first frame in the stage).
         Plays the stage until the game ends it (clear: board emptied; death:
-        the exit sequence starts). script: per-frame action indices to play
-        instead of the agent (tests: a recording of Tyler's). trace: a list to
-        append (observation, action) to at every decision. Returns a dict."""
+        the exit sequence starts): the route book's route for the board if it
+        has one, else the agent. A route clears on its last frame (checked
+        from the main game before it entered the book); should it ever reach
+        its end with the stage still on, the agent plays on from there.
+        script: per-frame action indices to play instead (tests: a recording
+        of Tyler's). trace: a list to append (observation, action) to at every
+        agent decision. Returns a dict ('route': the route's source, or None)."""
         state, pre, board = self.handover()
         env = self.env
+        route = None
+        if script is None and board in self.routes:
+            script, route = self.routes[board]['actions'], self.routes[board]['source']
+        done = trunc = False
+        decisions = None
         if script is not None:
-            env.reset(options={'state': state, 'stage': board or 0, 'replay': True})
-            done = trunc = False
+            obs, _ = env.reset(options={'state': state, 'stage': board or 0, 'replay': True})
             for a in script:
-                _, _, done, trunc, _ = env._step_frames(int(a), 1)
+                obs, _, done, trunc, _ = env._step_frames(int(a), 1)
                 if done or trunc:
                     break
-            decisions = None
-        else:
-            obs, _ = env.reset(options={'state': state, 'stage': board or 0})
+        broke = route is not None and not (done or trunc)
+        if broke:
+            print(f'[ss_pilot] board {board}: the route ({route}) ended with the stage on, '
+                  f'{env.steps} frames in: the agent plays on', flush=True)
+        if (script is None or broke) and self.model is not None:
+            if script is None:
+                obs, _ = env.reset(options={'state': state, 'stage': board or 0})
             lstm, start, decisions = None, True, 0
             while True:
                 action, lstm = self.model.predict(obs, state=lstm, episode_start=np.array([start]),
@@ -241,10 +265,12 @@ class SSPilot:
                 decisions += 1
                 if done or trunc:
                     break
+        elif script is None:
+            raise RuntimeError(f'board {board}: no route in the book and no agent (model=False)')
         frames = pre + 1 + env.steps            # +1: the reset frame
         outcome = 'clear' if env._board_cleared else 'death' if done else 'timeout'
         tail = 0
-        if outcome == 'timeout' or (script is not None and not done):
+        if outcome == 'timeout' or not done:
             while int(env._ram()[self.sse.ADDR_EXIT_TIMER]) == 0 and tail < TAIL_CAP:
                 info = self._frame(self.sse.ACTION_BUTTONS[1] if tail % LET_GO_TAP == LET_GO_TAP - 1
                                    else self.NOOP)
@@ -253,7 +279,7 @@ class SSPilot:
                     break
         return dict(board=board, outcome=outcome, spheres=int(env._spheres_collected),
                     total=int(env._stage_total), frames=frames + tail, to_run=pre + 1,
-                    decisions=decisions, let_go=tail)
+                    decisions=decisions, let_go=tail, route=route, route_broke=broke)
 
     # ── Hidden Palace: the Super Emeralds ─────────────────────────────────
 
@@ -384,9 +410,14 @@ def choose_super(pilot, mg_log, rng=np.random):
     reward's own expectation: under MG_SS_TIME=refund a win only breaks even,
     so the cheapest visit is a board that fails fast (on d9's record, board 14,
     never won, took 79% of choices); emeralds per frame is what the choice is
-    for. shrine() takes the first board here whose emerald is still gray."""
+    for. A board with a route in the book (route_book.py) is a sure win in
+    its route's frames: p = 1, so the shortest route goes first.
+    shrine() takes the first board here whose emerald is still gray."""
     rates = {}
     for b, (w, l, fw, fl) in board_record(pilot.run, mg_log).items():
+        if b in pilot.routes:
+            rates[b] = 1.0 / (pilot.routes[b]['frames'] + SS_OVERHEAD + SHRINE_WALK)
+            continue
         f_w = float(np.mean(fw)) if fw else 4000.0 + SS_OVERHEAD + SHRINE_WALK
         f_l = float(np.mean(fl)) if fl else 4000.0 + SS_OVERHEAD + SHRINE_WALK
         p = rng.beta(1 + w, 1 + l)

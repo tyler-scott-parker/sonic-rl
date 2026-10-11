@@ -32,3 +32,6 @@ demos/.cache/
 
 # special-stage demo curricula (train_ss_multistage.py) — run state
 sonic_ss_multistage_*_demos.json
+
+# route book: candidates training saves (route_book.py harvest promotes them)
+routes/candidates/

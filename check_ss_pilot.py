@@ -23,6 +23,10 @@ Chaos Emeralds -> Hidden Palace). Checks:
      inputs for that board clear it, the Super Emerald is won, and the game
      returns to MHZ1 at the ring
   5. MG_SS unset: the ring still ends the episode as 'stage' (the default)
+  6. the route book (route_book.py; MG_SS_ROUTES=1, the default): with no
+     script, AIZ1's ring is played by the book's board-1 route and Hidden
+     Palace (MG_SS_SUPER=auto) picks the board with the shortest route and
+     plays it; both clear in exactly the route's frames
 Ends with ALL CHECKS PASS or the failures.
 """
 import glob
@@ -70,7 +74,7 @@ def run_child(mode, model):
 
     if mode in ('inputs', 'same'):
         emu = C.make_retro()
-        pilot = ss_pilot.SSPilot(emu, run='d9', model=model, deterministic=True)
+        pilot = ss_pilot.SSPilot(emu, run='d9', model=model, deterministic=True, routes=False)
 
         def enter():
             emu.reset()
@@ -110,7 +114,7 @@ def run_child(mode, model):
     env.reset(options={'key': env._segs[0]['key'], 'ckpt': 8})
     emu = env.base_env
     board = None
-    if mode.startswith('super'):
+    if mode.startswith('super') or mode == 'booksuper':
         board = int(mode[5:]) if mode[5:].isdigit() else None
         emu.em.set_state(ring7)
         for i in range(7):
@@ -119,7 +123,7 @@ def run_child(mode, model):
     else:
         emu.em.set_state(ring)
         board = 1
-    if mode != 'default':
+    if mode not in ('default', 'book', 'booksuper'):
         env._pilot = ss_pilot.SSPilot(emu, run='d9', model=model)
         play, shrine, chosen = env._pilot.play, env._pilot.shrine, {}
 
@@ -196,6 +200,19 @@ def main():
         e = child('default', snap, dict(MG_LOG=log))
         check(e and e['trunc'] and e['outcome'] == 'stage' and not e['stages'],
               f"the ring ends the episode as '{e and e['outcome']}'")
+        print('6. the route book')
+        import route_book
+        book = route_book.load()
+        for mode in ('book', 'booksuper'):
+            f = child(mode, snap, dict(MG_SS='pilot', MG_SS_MODEL=snap, MG_LOG=log))
+            s0 = ((f or {}).get('stages') or [{}])[0]
+            want = 1 if mode == 'book' else min(range(8, 15), key=lambda b: book[b]['frames'])
+            check(f and not f['trunc'] and s0.get('board') == want and s0.get('outcome') == 'clear'
+                  and s0.get('emeralds') == 1 and s0.get('route') == book[want]['source']
+                  and not s0.get('route_broke'),
+                  f"{mode}: board {s0.get('board')} (want {want}) {s0.get('outcome')} "
+                  f"{s0.get('spheres')}/{s0.get('total')} by the route '{s0.get('route')}', "
+                  f"emeralds +{s0.get('emeralds')}")
     print('\nALL CHECKS PASS' if not failures else f'\n{len(failures)} FAILED:\n  ' + '\n  '.join(failures))
     sys.exit(1 if failures else 0)
 

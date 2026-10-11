@@ -79,7 +79,12 @@ emulator, starting exactly as it trained (ss_pilot's docstring: the speed-up
 timer is matched to the board's captured state). When the game has ended the
 stage, no input until it has shown the results, put Sonic back at the ring and
 the act's clock runs again; then the episode goes on from there, one long
-step. The agent pays for it in frames. MG_SS_TIME=refund (default; Tyler
+step. With MG_SS_ROUTES=1 (default) a board the route book has a route for
+(route_book.py: the fastest clear found so far, checked to replay from the
+main game) is played by replaying that route instead, a guaranteed emerald
+(Tyler 2026-10-11: "the main game agent is guaranteed an emerald each time");
+all 14 boards have one, Tyler's own recordings to begin with.
+The agent pays for it in frames. MG_SS_TIME=refund (default; Tyler
 2026-10-11: "Winning emeralds should give a reward. That reward should offset
 the time penalty for entering the ring"): every frame from the ring to the act
 clock running again is charged, and paid back in full when an emerald is won,
@@ -93,9 +98,10 @@ its frames. Logged per episode as 'stages'. Bonus stages are always truncated.
 With all 7 Chaos Emeralds, a giant ring in a Sonic & Knuckles zone sends Sonic
 to Hidden Palace instead (entry flag 2, zone $17): the pilot walks to a gray
 Super Emerald and jumps on it, which starts that emerald's board. Which one:
-MG_SS_SUPER=auto (default) takes the most Super Emeralds per frame by the
-special-stage agent's own results, learned as they come in
-(ss_pilot.choose_super), or a list of boards in order of preference; afterwards the game returns to the act
+MG_SS_SUPER=auto (default) takes the most Super Emeralds per frame
+(ss_pilot.choose_super: the shortest route in the book; a board without one
+by the special-stage agent's own results, learned as they come in), or a
+list of boards in order of preference; afterwards the game returns to the act
 at the ring. (Doomsday Zone, after DEZ3 with all 14 emeralds, has no recording
 yet, so no act to train.)
 
@@ -221,6 +227,7 @@ MG_EMERALD_BONUS = float(os.environ.get('MG_EMERALD_BONUS', '0'))   # frames per
 # Hidden Palace: which gray Super Emerald to take: 'auto' (ss_pilot.choose_super:
 # most emeralds per frame, learned from results) or boards, most preferred first
 MG_SS_SUPER = os.environ.get('MG_SS_SUPER', 'auto')
+MG_SS_ROUTES = os.environ.get('MG_SS_ROUTES', '1') == '1'   # replay the route book's routes
 if MG_SS not in ('truncate', 'pilot') or MG_SS_TIME not in ('refund', 'real', 'game'):
     raise ValueError(f'MG_SS must be truncate|pilot and MG_SS_TIME refund|real|game, '
                      f'got {MG_SS!r} / {MG_SS_TIME!r}')
@@ -807,7 +814,7 @@ class SonicCoordinator(gym.Env):
                 return None                         # a bonus stage: nobody plays those
             if getattr(self, '_pilot', None) is None:
                 self._pilot = ss_pilot.SSPilot(self.base_env, run=MG_SS_RUN,
-                                               model=MG_SS_MODEL or None)
+                                               model=MG_SS_MODEL or None, routes=MG_SS_ROUTES)
             if int(info['mg_entry']) == 2:          # Hidden Palace: touch a Super Emerald first
                 prefer = (ss_pilot.choose_super(self._pilot, LOG_FILE)
                           if MG_SS == 'pilot' and MG_SS_SUPER == 'auto'
@@ -846,7 +853,9 @@ class SonicCoordinator(gym.Env):
                 + (cost if MG_SS_TIME == 'refund' and emeralds > 0 else 0))
         rec = dict(board=res['board'], outcome=res['outcome'], spheres=res['spheres'],
                    total=res['total'], emeralds=emeralds, in_stage=n_stage, reload=n_out,
-                   cost=cost, paid=paid, at=self.frames)
+                   cost=cost, paid=paid, at=self.frames, route=res.get('route'))
+        if res.get('route_broke'):
+            rec['route_broke'] = True
         if shrine:
             rec.update(shrine=shrine[0], slot=shrine[1], expected_board=shrine[2])
         self._stages.append(dict(rec))
