@@ -117,6 +117,7 @@ SS_LOG_FILE = os.path.expanduser(
 # point, then the episode's). Only inputs are recorded; nothing the agent sees
 # or is paid changes. SS_ROUTES='' turns it off.
 ROUTE_DIR = os.environ.get('SS_ROUTES', os.path.join(PROJECT_DIR, 'routes', 'candidates'))
+ROUTE_TAG = os.environ.get('SS_ROUTE_TAG', '')   # who found it (default: the run, from SS_LOG)
 
 # ── Env version ──────────────────────────────────────────────────────────────
 #   SS_ENV_VERSION=2 (default) -> the 2026-09-29 fixes listed in the header.
@@ -708,7 +709,8 @@ class SpecialStageEnv(gym.Env):
                 self._demos.append(dict(
                     id=demo_io.demo_id(path), stage=meta['stage'],
                     total=float(meta['stage_total']), final=final, frames=n,
-                    ckpts=ckpts, actions=np.asarray(actions, dtype=np.uint8)))
+                    ckpts=ckpts, actions=np.asarray(actions, dtype=np.uint8),
+                    source=meta.get('source') or f"Tyler ({demo_io.demo_id(path)})"))
         finally:
             self._replaying = False
 
@@ -729,8 +731,8 @@ class SpecialStageEnv(gym.Env):
         self.steps = f['steps']
         # its route so far: the demo's frames up to and with the reset frame
         self._route_prefix = demo['actions'][:f['steps']]
-        self._route_src = (f"from {demo['id']} at frame {f['steps']} (Tyler's frames "
-                           f"to there, then the agent's)", 'demo')
+        self._route_src = (f"the agent from frame {f['steps']} of {demo['id']} "
+                           f"[{demo.get('source', demo['id'])}]", 'demo')
         self._last_pickup = self.steps      # the stall clock starts here
         self.speed_level = f['speed_level']
         self.prev_speed_timer = f['prev_speed_timer']
@@ -1289,7 +1291,7 @@ class SpecialStageEnv(gym.Env):
             import route_book
             if b not in _STATE_SHA1:
                 _STATE_SHA1[b] = demo_io.file_sha1(stage_file(b))
-            run = re.sub(r'^ss_log_?|\.jsonl$', '', os.path.basename(SS_LOG_FILE)) or 'run'
+            run = ROUTE_TAG or re.sub(r'^ss_log_?|\.jsonl$', '', os.path.basename(SS_LOG_FILE)) or 'run'
             what, tag = self._route_src
             meta = dict(stage=b, frames=len(actions), spheres=int(self._stage_total),
                         stage_total=int(self._stage_total), outcome='clear',

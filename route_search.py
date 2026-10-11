@@ -71,7 +71,8 @@ def main():
             os.environ.pop(k, None)
         os.environ.update(ss_pilot.run_preset(a.run))
         os.environ.update(SS_STAGES=','.join(map(str, boards)), SS_DEMOS=','.join(demo_files),
-                          SS_DEMO_PROB='0', SS_RESTART_PROB='0', SS_LOG=os.devnull)
+                          SS_DEMO_PROB='0', SS_RESTART_PROB='0', SS_LOG=os.devnull,
+                          SS_ROUTE_TAG=f"route_search ({os.path.basename(src).replace('sonic_ss_multistage_', '').replace('.zip', '')}'s save)")
         import numpy as np
         import torch
         torch.set_num_threads(1)
