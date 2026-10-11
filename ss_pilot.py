@@ -35,6 +35,8 @@ The board is named by its layout against the 14 captured states (None if it
 matches none of them).
 """
 import ast
+import collections
+import json
 import os
 import sys
 
@@ -49,6 +51,12 @@ SHRINE_ZONE = 0x17          # Hidden Palace as a giant ring's destination
 SHRINE_CAP = 1500           # ring -> a gray Super Emerald touched (measured: 83 + 132-241)
 GRAY_EMERALD = 0x0908de     # object code: a gray Super Emerald (subtype +$2C = its slot);
                             # a collected one becomes $0908de -> $09089e
+# choose_super's frame estimates (measured 2026-10-11): ring -> handover ~250
+# (timer-matched) + results and reload ~1,000; the shrine ~83 + 132-241
+SS_OVERHEAD = 1250
+SHRINE_WALK = 300
+RELOAD_OUT = 51             # of those, outside the stage (all MG_SS_TIME=game charges)
+PRIOR_N = 100               # the SS agent's last fresh starts per board, as the prior
 # Emerald slot ($FFB2 + slot) -> the board it starts, by our curriculum_stage_N
 # numbering (measured 2026-10-11 by touching each one; boards named by layout)
 SUPER_SLOT_BOARD = {0: 11, 1: 10, 2: 12, 3: 9, 4: 13, 5: 8, 6: 14}
@@ -299,3 +307,69 @@ class SSPilot:
                 return f + 1, slot, SUPER_SLOT_BOARD.get(slot)
         raise RuntimeError(f'no Super Emerald touched within {SHRINE_CAP} frames of the shrine '
                            f'(gray: {self.gray_emeralds()})')
+
+
+# ── Which Super Emerald (MG_SS_SUPER=auto) ───────────────────────────────────
+
+_PRIOR = {}
+
+
+def board_record(run, mg_log):
+    """{board: (wins, losses, [frames of wins], [frames of losses])} for boards
+    8-14: the SS run's last PRIOR_N fresh starts per board (its training log;
+    frames + SS_OVERHEAD + SHRINE_WALK, since they count from the captured
+    state), plus every stage the main game has logged (frames in the stage).
+    Training losses are short (the 600-frame stall rule ends them); in the game
+    they run until Sonic touches red, so the game's own results take over the
+    loss estimate as they come in."""
+    if run not in _PRIOR:
+        per = collections.defaultdict(lambda: collections.deque(maxlen=PRIOR_N))
+        path = os.path.join(HOME, f'ss_log_{run}.jsonl')
+        if os.path.exists(path):
+            for line in open(path):
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                if not r.get('demo') and 8 <= int(r.get('stage', 0)) <= 14:
+                    per[int(r['stage'])].append((bool(r['success']), r['steps'] + SS_OVERHEAD + SHRINE_WALK))
+        _PRIOR[run] = {b: list(d) for b, d in per.items()}
+    rec = {b: [0, 0, [], []] for b in range(8, 15)}
+    for b, eps in _PRIOR[run].items():
+        for ok, f in eps:
+            rec[b][0 if ok else 1] += 1
+            rec[b][2 if ok else 3].append(f)
+    if mg_log and os.path.exists(mg_log):
+        for line in open(mg_log):
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            for st in r.get('stages', []):
+                b = st.get('board')
+                if b in rec:
+                    ok = st.get('outcome') == 'clear'
+                    rec[b][0 if ok else 1] += 1
+                    rec[b][2 if ok else 3].append(st.get('in_stage', 0) + st.get('reload', 0))
+    return rec
+
+
+def choose_super(pilot, mg_log, rng=np.random):
+    """Boards 8-14, best first, by Super Emeralds won per frame spent: with
+    p = P(win) and f_w / f_l = frames a won / lost visit takes,
+        rate = p / (p * f_w + (1 - p) * f_l).
+    p is drawn from Beta(1 + wins, 1 + losses) (Thompson sampling), so a board
+    with few results still gets tried now and then, and the choice settles on
+    what actually pays as the main game's results come in (Tyler 2026-10-11:
+    "Maybe the agent can optimize this through normal gameplay?"). Not the
+    reward's own expectation: under MG_SS_TIME=refund a win only breaks even,
+    so the cheapest visit is a board that fails fast (on d9's record, board 14,
+    never won, took 79% of choices); emeralds per frame is what the choice is
+    for. shrine() takes the first board here whose emerald is still gray."""
+    rates = {}
+    for b, (w, l, fw, fl) in board_record(pilot.run, mg_log).items():
+        f_w = float(np.mean(fw)) if fw else 4000.0 + SS_OVERHEAD + SHRINE_WALK
+        f_l = float(np.mean(fl)) if fl else 4000.0 + SS_OVERHEAD + SHRINE_WALK
+        p = rng.beta(1 + w, 1 + l)
+        rates[b] = p / (p * f_w + (1 - p) * f_l)
+    return sorted(rates, key=lambda b: -rates[b])

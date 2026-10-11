@@ -15,11 +15,13 @@ Chaos Emeralds -> Hidden Palace). Checks:
      over its whole run
   3. a main-game episode through AIZ1's ring: the stage is played, the game
      puts Sonic back at the ring (7112, 1216) with the act clock running, the
-     episode goes on, and the stage is in its log line; game time charges only
-     the reload, real time every frame, and the emerald bonus pays
+     episode goes on, and the stage is in its log line; refund (default) charges
+     every frame and pays it all back for the emerald, real charges it all, game
+     only the reload; the emerald bonus pays on top
   4. Hidden Palace: with gray Super Emeralds, the episode's step walks to the
-     preferred emerald (boards 8, then 11), Tyler's inputs for that board clear
-     it, the Super Emerald is won, and the game returns to MHZ1 at the ring
+     preferred emerald (boards 8, then 11, then the automatic choice), Tyler's
+     inputs for that board clear it, the Super Emerald is won, and the game
+     returns to MHZ1 at the ring
   5. MG_SS unset: the ring still ends the episode as 'stage' (the default)
 Ends with ALL CHECKS PASS or the failures.
 """
@@ -109,7 +111,7 @@ def run_child(mode, model):
     emu = env.base_env
     board = None
     if mode.startswith('super'):
-        board = int(mode[5:])
+        board = int(mode[5:]) if mode[5:].isdigit() else None
         emu.em.set_state(ring7)
         for i in range(7):
             emu.data.set_variable(f'em_arr{i}', {'address': 0xFFFFB2 + i, 'type': '|u1'})
@@ -119,8 +121,14 @@ def run_child(mode, model):
         board = 1
     if mode != 'default':
         env._pilot = ss_pilot.SSPilot(emu, run='d9', model=model)
-        play = env._pilot.play
-        env._pilot.play = lambda: play(script=his(board))
+        play, shrine, chosen = env._pilot.play, env._pilot.shrine, {}
+
+        def shrine_and_note(prefer, buttons):
+            got = shrine(prefer, buttons)
+            chosen['board'] = got[2]
+            return got
+        env._pilot.shrine = shrine_and_note
+        env._pilot.play = lambda: play(script=his(chosen.get('board') or board))
     f0 = env.frames
     _, r, term, trunc, info = env.step(0)
     out = dict(reward=r / C.REWARD_SCALE, frames=env.frames - f0, term=term, trunc=trunc,
@@ -156,26 +164,30 @@ def main():
         check(b and b['same'], f"identical observations and choices: {b and b['same']} "
               f"({b and b['decisions']} decisions)")
         print('3. a main-game episode through AIZ1\'s giant ring')
-        for t in ('game', 'real'):
+        for t in ('refund', 'real', 'game'):
             c = child('chaos', snap, dict(MG_SS='pilot', MG_SS_TIME=t, MG_EMERALD_BONUS='300', MG_LOG=log))
             st = (c or {}).get('stages') or [{}]
             s0 = st[0]
-            want_cost = s0.get('reload', -1) + (s0.get('in_stage', 0) if t == 'real' else 0)
+            want_cost = s0.get('reload', -1) + (0 if t == 'game' else s0.get('in_stage', 0))
+            want_paid = 300 + (want_cost if t == 'refund' else 0)
             check(c and not c['term'] and not c['trunc'] and (c['x'], c['y']) == (7112, 1216)
                   and c['timer_on'] and s0.get('outcome') == 'clear' and s0.get('emeralds') == 1
-                  and s0.get('cost') == want_cost and c['frames'] == 1 + want_cost
-                  and abs(c['reward'] - (300 - want_cost)) < 1e-6 and c.get('logged') == st,
+                  and s0.get('cost') == want_cost and s0.get('paid') == want_paid
+                  and c['frames'] == 1 + want_cost
+                  and abs(c['reward'] - (want_paid - want_cost)) < 1e-6 and c.get('logged') == st,
                   f"{t} time: {s0.get('outcome')}, emeralds +{s0.get('emeralds')}, back at "
                   f"({c and c['x']},{c and c['y']}) clock on {c and c['timer_on']}, cost {s0.get('cost')} "
-                  f"(reload {s0.get('reload')}, in stage {s0.get('in_stage')}), reward {c and round(c['reward'])}, "
+                  f"(reload {s0.get('reload')}, in stage {s0.get('in_stage')}), paid {s0.get('paid')}, "
+                  f"reward {c and round(c['reward'])}, "
                   f"episode went on to '{c and c.get('then')}' and logged the stage")
         print('4. Hidden Palace (all 7 Chaos Emeralds, gray Super Emeralds)')
-        for pref in ('8', '11'):
-            d = child(f'super{pref}', snap, dict(MG_SS='pilot', MG_SS_SUPER_PREF=f'{pref},9,10,12,13,14',
-                                                  MG_LOG=log))
+        for pref in ('8', '11', 'auto'):
+            d = child(f'super{pref}', snap, dict(
+                MG_SS='pilot', MG_SS_SUPER=pref if pref == 'auto' else f'{pref},9,10,12,13,14', MG_LOG=log))
             s0 = ((d or {}).get('stages') or [{}])[0]
             check(d and not d['trunc'] and d['zone'] == 7 and (d['x'], d['y']) == (8768, 1088)
-                  and s0.get('board') == s0.get('expected_board') == int(pref)
+                  and s0.get('board') == s0.get('expected_board')
+                  and (pref == 'auto' or s0.get('board') == int(pref))
                   and s0.get('outcome') == 'clear' and s0.get('emeralds') == 1,
                   f"prefer board {pref}: touched slot {s0.get('slot')} after {s0.get('shrine')} frames, "
                   f"board {s0.get('board')} {s0.get('outcome')} {s0.get('spheres')}/{s0.get('total')}, "

@@ -76,16 +76,23 @@ emulator, starting exactly as it trained (ss_pilot's docstring: the speed-up
 timer is matched to the board's captured state). When the game has ended the
 stage, no input until it has shown the results, put Sonic back at the ring and
 the act's clock runs again; then the episode goes on from there, one long
-step. The agent pays for it in frames: MG_SS_TIME=game (default) charges only
-the frames outside the stage (~50 of the reload), as the act clock and the
-demo's own act time do; =real charges every frame. MG_EMERALD_BONUS (default
-0) pays frames per emerald won. Whether giant rings are worth taking is
-Tyler's call: under game time with no bonus they're neutral apart from the
-detour. Logged per episode as 'stages'. Bonus stages are always truncated.
+step. The agent pays for it in frames. MG_SS_TIME=refund (default; Tyler
+2026-10-11: "Winning emeralds should give a reward. That reward should offset
+the time penalty for entering the ring"): every frame from the ring to the act
+clock running again is charged, and paid back in full when an emerald is won,
+so a won stage costs nothing and a lost one its whole time. =real: charged,
+never paid back; =game: only the frames outside the stage (~50 of the reload),
+as the act clock counts. MG_EMERALD_BONUS (default 0) pays frames per emerald
+on top: with 0 a ring can only break even, so the agent takes rings only where
+the special-stage agent nearly always wins. Stage frames don't run the
+episode's timeout clock (a stage isn't a hopeless attempt); they do count in
+its frames. Logged per episode as 'stages'. Bonus stages are always truncated.
 With all 7 Chaos Emeralds, a giant ring in a Sonic & Knuckles zone sends Sonic
 to Hidden Palace instead (entry flag 2, zone $17): the pilot walks to a gray
-Super Emerald (MG_SS_SUPER_PREF: boards in order of preference) and jumps on
-it, which starts that emerald's board; afterwards the game returns to the act
+Super Emerald and jumps on it, which starts that emerald's board. Which one:
+MG_SS_SUPER=auto (default) takes the most Super Emeralds per frame by the
+special-stage agent's own results, learned as they come in
+(ss_pilot.choose_super), or a list of boards in order of preference; afterwards the game returns to the act
 at the ring. (Doomsday Zone, after DEZ3 with all 14 emeralds, has no recording
 yet, so no act to train.)
 
@@ -206,12 +213,13 @@ ROUTE_TIE = 16           # v2: route points within this many px of the nearest
 MG_SS        = os.environ.get('MG_SS', 'truncate')    # or 'pilot'
 MG_SS_RUN    = os.environ.get('MG_SS_RUN', 'd9')      # the train_ss_multistage run that plays
 MG_SS_MODEL  = os.environ.get('MG_SS_MODEL', '')      # its .zip (default: the run's latest save)
-MG_SS_TIME   = os.environ.get('MG_SS_TIME', 'game')   # or 'real'
-MG_EMERALD_BONUS = float(os.environ.get('MG_EMERALD_BONUS', '0'))   # frames per emerald won
-# Hidden Palace: which gray Super Emerald to take, boards most preferred first
-MG_SS_SUPER_PREF = [int(b) for b in os.environ.get('MG_SS_SUPER_PREF', '8,9,10,11,12,13,14').split(',')]
-if MG_SS not in ('truncate', 'pilot') or MG_SS_TIME not in ('game', 'real'):
-    raise ValueError(f'MG_SS must be truncate|pilot and MG_SS_TIME game|real, '
+MG_SS_TIME   = os.environ.get('MG_SS_TIME', 'refund')  # or 'real', 'game'
+MG_EMERALD_BONUS = float(os.environ.get('MG_EMERALD_BONUS', '0'))   # frames per emerald won, on top
+# Hidden Palace: which gray Super Emerald to take: 'auto' (ss_pilot.choose_super:
+# most emeralds per frame, learned from results) or boards, most preferred first
+MG_SS_SUPER = os.environ.get('MG_SS_SUPER', 'auto')
+if MG_SS not in ('truncate', 'pilot') or MG_SS_TIME not in ('refund', 'real', 'game'):
+    raise ValueError(f'MG_SS must be truncate|pilot and MG_SS_TIME refund|real|game, '
                      f'got {MG_SS!r} / {MG_SS_TIME!r}')
 RETURN_CAP = 3000        # pilot: the stage's end -> back in the level (results + reload)
 
@@ -684,6 +692,7 @@ class SonicCoordinator(gym.Env):
         self._off = 0                 # v2: frames spent off the route this episode
         self._seen = set()            # v2: blocks of the level visited this episode
         self._stages = []             # pilot: the special stages played this episode
+        self._stage_frames = 0        # pilot: frames charged for them (not on the timeout clock)
         self.ret = 0.0
         self._t0 = time.time()
         self._xmax = None
@@ -724,7 +733,8 @@ class SonicCoordinator(gym.Env):
         r = -float(n)
         if stage is not None:
             self.frames += stage['cost']
-            r += MG_EMERALD_BONUS * stage['emeralds'] - stage['cost']
+            self._stage_frames += stage['cost']
+            r += stage['paid'] - stage['cost']
             self._moved_at = self.frames            # a fresh stuck clock at the ring
         if event == 'clear':
             r += self._route.finish() + CLEAR_BONUS
@@ -753,7 +763,7 @@ class SonicCoordinator(gym.Env):
         self.ret += r
         terminated = event in ('clear', 'death')
         truncated = event in ('stage', 'stuck') or (
-            not terminated and self.frames >= self._max_frames)
+            not terminated and self.frames - self._stage_frames >= self._max_frames)
         if (terminated or truncated) and self._owed:
             r -= self._owed                     # v2: the episode ends: settle
             self.ret -= self._owed
@@ -767,15 +777,14 @@ class SonicCoordinator(gym.Env):
     def _special_stage(self, info):
         """MG_SS=pilot, on the frame Sonic enters a special stage (entry flag
         1), or a giant ring sends him to Hidden Palace (2, zone $17: the
-        pilot first touches a gray Super Emerald, MG_SS_SUPER_PREF; flag 2
+        pilot first touches a gray Super Emerald, MG_SS_SUPER; flag 2
         elsewhere is a bonus stage: None): the
         special-stage agent plays it (ss_pilot.py), then no input while the
         game shows its results and puts Sonic back at the ring, until the act's
         clock runs again. Returns the stage's record (+ 'info': that frame's)
-        with 'cost' = the frames the agent pays for it: under MG_SS_TIME=game
-        only frames outside the stage (~50 of the reload, as the demo's own
-        act time counts them); under real, all of them. None if it couldn't
-        (the episode is then truncated, as with MG_SS=truncate)."""
+        with 'cost' = the frames charged for it and 'paid' = the frames paid
+        back (MG_SS_TIME, MG_EMERALD_BONUS: module docstring). None if it
+        couldn't (the episode is then truncated, as with MG_SS=truncate)."""
         em0 = int(info['chaos_emeralds']) + int(info['super_emeralds'])
         shrine = None
         try:
@@ -786,7 +795,10 @@ class SonicCoordinator(gym.Env):
                 self._pilot = ss_pilot.SSPilot(self.base_env, run=MG_SS_RUN,
                                                model=MG_SS_MODEL or None)
             if int(info['mg_entry']) == 2:          # Hidden Palace: touch a Super Emerald first
-                shrine = self._pilot.shrine(MG_SS_SUPER_PREF, dict(zip(ACTION_NAMES, ACTION_BUTTONS)))
+                prefer = (ss_pilot.choose_super(self._pilot, LOG_FILE)
+                          if MG_SS == 'pilot' and MG_SS_SUPER == 'auto'
+                          else [int(b) for b in MG_SS_SUPER.split(',')])
+                shrine = self._pilot.shrine(prefer, dict(zip(ACTION_NAMES, ACTION_BUTTONS)))
             res = self._pilot.play()
         except Exception as e:
             print(f'[coordinator] special stage not played ({e!r}): truncating', flush=True)
@@ -815,10 +827,12 @@ class SonicCoordinator(gym.Env):
             self._stack.append(f)
         self._last_raw = prev_raw
         emeralds = int(info['chaos_emeralds']) + int(info['super_emeralds']) - em0
-        cost = n_out + (n_stage if MG_SS_TIME == 'real' else 0)
+        cost = n_out + (0 if MG_SS_TIME == 'game' else n_stage)
+        paid = (MG_EMERALD_BONUS * emeralds
+                + (cost if MG_SS_TIME == 'refund' and emeralds > 0 else 0))
         rec = dict(board=res['board'], outcome=res['outcome'], spheres=res['spheres'],
                    total=res['total'], emeralds=emeralds, in_stage=n_stage, reload=n_out,
-                   cost=cost, at=self.frames)
+                   cost=cost, paid=paid, at=self.frames)
         if shrine:
             rec.update(shrine=shrine[0], slot=shrine[1], expected_board=shrine[2])
         self._stages.append(dict(rec))
