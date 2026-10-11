@@ -80,6 +80,9 @@ def replay_check(path):
     env = sse.SpecialStageEnv(state_path=sf)
     env._demos = []                                   # don't build demos in here
     env._log_episode = lambda *a, **k: None
+    env._replaying = True                             # v6+: a recording skips the stall rule,
+                                                      # as in the env's own demo replays (stage 6
+                                                      # waits > 600 frames for its last sphere)
     try:
         env.reset(options={'stage_file': sf, 'replay': True})
         ended_at = None
