@@ -258,8 +258,8 @@ RUNS = {
                'stage13_20261010-104726', 'stage14_20261010-105034'],
         demo_prob=0.75,
         ppo=dict(gamma=0.99),
-        result='NOT STARTED — criteria AGREED with Tyler 2026-10-10 (doc); launch '
-               'after smoke_corners d9 passes, never while he games. All 14 boards on env v7, one '
+        result='LAUNCHED 2026-10-10 ~23:20 by Claude (Tyler gave Claude the box overnight; '
+               'criteria AGREED, doc "Run d9"; smoke_corners d9 passed). All 14 boards on env v7, one '
                'recording each (all flawless), d7\'s recipe (compass, gamma '
                '0.99 per decision, backward curriculum). Fresh weights: v7\'s '
                'obs (14 feats) and 9 actions don\'t fit d7\'s network.',
