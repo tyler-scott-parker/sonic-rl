@@ -24,6 +24,11 @@ Special stages (a run with MG_SS=pilot, e.g. mg1) are shown too; S skips the
 one on screen (it runs off-screen at full speed; S again watches the next),
 --skip-ss starts with skipping on.
 
+--stream PORT: no window; the picture and sound go out as a live video stream
+for a phone instead (stream_out.py), on the tailnet address at that port, with
+buttons for the switches. The on-screen text sits in a panel under the picture.
+  python3 watch_main.py mg1 --live --fresh --best 20 --ring --stream 8790
+
 Sound plays at 100% speed (game_audio.py, as in the recorders); M mutes,
 --no-sound starts muted.
 
@@ -34,6 +39,7 @@ import os
 import sys
 import json
 import collections
+import textwrap
 import time
 import argparse
 
@@ -59,6 +65,8 @@ ap.add_argument('--best', type=int, default=0, metavar='N',
                 help='play N sampled tries off-screen, then show the best one')
 ap.add_argument('--ring', action='store_true', help='with --best: show a try that entered a giant ring (G toggles)')
 ap.add_argument('--skip-ss', action='store_true', help="don't show special stages (S toggles)")
+ap.add_argument('--stream', type=int, metavar='PORT',
+                help='no window: stream picture + sound to a phone on the tailnet at PORT')
 args = ap.parse_args()
 
 if args.run not in train_main.RUNS:
@@ -125,20 +133,36 @@ if args.you:                                        # replayed with its own butt
                                               if demos.demo_id(p) == s['demo']))
     table = meta['action_table']
 
+if args.stream:
+    os.environ['SDL_VIDEODRIVER'] = 'dummy'         # no window: the frames go to the stream
+    PIC, PANEL = (640, 448), 100                    # the picture x2, then a text panel under it
+else:
+    PIC, PANEL = (320 * SCALE, 224 * SCALE), 0
 pygame.init()
-screen = pygame.display.set_mode((320 * SCALE, 224 * SCALE))
+screen = pygame.display.set_mode((PIC[0], PIC[1] + PANEL))
 who = 'your recording' if args.you else os.path.basename(args.model or train_main.paths(args.run)['zip'])
 if args.live:
     who = f'{args.run} live'
 pygame.display.set_caption(f'watch_main — {key} — {who}')
-font = pygame.font.SysFont('monospace', 18, bold=True)
+font = pygame.font.SysFont('monospace', 16 if args.stream else 18, bold=True)
 clock = pygame.time.Clock()
 speed, paused, running = 100, False, True
 
 audio = None
 try:
     import game_audio                               # noqa: E402
-    audio = game_audio.GameAudio(env.base_env.em.get_audio_rate())
+    if args.stream:
+        import stream_out
+
+        def switch(name):
+            return (lambda: globals()[name]), (lambda v: globals().__setitem__(name, v))
+        audio = stream_out.StreamOut(os.path.join(train_main.HOME, 'logs', f'stream_{args.run}'),
+                                     (PIC[0], PIC[1] + PANEL), args.stream,
+                                     {n: switch(n) for n in ('skip_ss', 'ring', 'fresh')},
+                                     rate=env.base_env.em.get_audio_rate())
+        print(f'streaming at {audio.url}', flush=True)
+    else:
+        audio = game_audio.GameAudio(env.base_env.em.get_audio_rate())
 except Exception as e:                              # no device / no SDL audio: watch in silence
     print(f'no sound: {e!r}', flush=True)
 sound = audio is not None and not args.no_sound
@@ -150,16 +174,47 @@ _base_step = env.base_env.step
 fps_count = {'n': 0, 't': time.time()}
 
 
-def draw(img):
+last_img = None
+
+
+def draw(img, extra=None, force=False):
+    """One frame: the picture, the text (over it, or in the stream's panel)
+    and, streaming, every other frame (the stream runs at 30 fps) to it."""
+    global last_img
+    last_img = img
     fps_count['n'] += 1
     if time.time() - fps_count['t'] >= 10:          # the log says how smooth the picture is
         print(f"drawing {fps_count['n'] / (time.time() - fps_count['t']):.1f} frames/s", flush=True)
         fps_count.update(n=0, t=time.time())
     surf = pygame.surfarray.make_surface(img.swapaxes(0, 1))
-    screen.blit(pygame.transform.scale(surf, (320 * SCALE, 224 * SCALE)), (0, 0))
-    for i, (text, colour) in enumerate(hud_lines):
-        screen.blit(font.render(text, True, colour), (8, 8 + 22 * i))
+    screen.blit(pygame.transform.scale(surf, PIC), (0, 0))
+    lines = hud_lines + ([(extra, (255, 255, 0))] if extra else [])
+    if args.stream:
+        screen.fill((0, 0, 0), (0, PIC[1], PIC[0], PANEL))
+        y = PIC[1] + 4
+        for text, colour in lines:
+            for part in textwrap.wrap(text, 62) or ['']:
+                if y + 18 <= PIC[1] + PANEL:
+                    screen.blit(font.render(part, True, colour), (8, y))
+                y += 19
+    else:
+        for i, (text, colour) in enumerate(lines):
+            screen.blit(font.render(text, True, colour), (8, 8 + 22 * i))
     pygame.display.flip()
+    if args.stream and (force or fps_count['n'] % 2 == 0):
+        audio.frame(pygame.image.tostring(screen, 'RGB'))
+
+
+def show_text(text):
+    """A status line between runs: on a black window, or streaming, under the
+    last picture (the phone keeps seeing the game)."""
+    if args.stream and last_img is not None:
+        return draw(last_img, extra=text, force=True)
+    screen.fill((0, 0, 0))
+    screen.blit(font.render(text, True, (255, 255, 0)), (8, 8))
+    pygame.display.flip()
+    if args.stream:
+        audio.frame(pygame.image.tostring(screen, 'RGB'))
 
 
 skip_ss = args.skip_ss                              # S: special stages run off-screen
@@ -197,10 +252,7 @@ def step_shown(*a, **kw):
             if audio is not None:
                 audio.clear()
             if stage['n'] % 120 == 1:
-                screen.fill((0, 0, 0))
-                screen.blit(font.render('special stage: skipping ...  (S: watch them)', True,
-                                        (255, 255, 0)), (8, 8))
-                pygame.display.flip()
+                show_text('special stage: skipping ...' + ('' if args.stream else '  (S: watch them)'))
             return out
     if stepping:
         draw(env.base_env.em.get_screen())
@@ -219,7 +271,7 @@ _special_stage = env._special_stage
 def special_stage_shown(info):
     """coordinator's special stage, marked so step_shown can skip it (S)."""
     stage.update(on=True, n=0)
-    hud_lines.append(('special stage  (S: skip)', (255, 255, 0)))
+    hud_lines.append(('special stage' + ('' if args.stream else '  (S: skip)'), (255, 255, 0)))
     try:
         return _special_stage(info)
     finally:
@@ -238,9 +290,7 @@ def wait_for_save():
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT or (ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE):
                 return False
-        screen.fill((0, 0, 0))
-        screen.blit(font.render(f'waiting for {args.run}\'s first save ...', True, (255, 255, 0)), (8, 8))
-        pygame.display.flip()
+        show_text(f'waiting for {args.run}\'s first save ...')
         time.sleep(1)
 
 
@@ -251,8 +301,8 @@ def set_hud(kk, msg, shown=None):
                      (255, 255, 0))]
     if args.live:
         hud_lines.append((f"save at {model.num_timesteps:,} steps   "
-                          + ('from the act start (F: training start)' if fresh
-                             else 'from where it trains now (F: act start)'), (255, 255, 0)))
+                          + ('from the act start' if fresh else 'from where it trains now')
+                          + ('' if args.stream else ' (F: switch)'), (255, 255, 0)))
     if shown:
         hud_lines.append((shown[3][:80], (255, 255, 0)))
     if msg:
@@ -268,10 +318,7 @@ def best_try(kk):
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT or (ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE):
                 return None
-        screen.fill((0, 0, 0))
-        screen.blit(font.render(f'try {i + 1} of {args.best} (save at {model.num_timesteps:,} steps) ...',
-                                True, (255, 255, 0)), (8, 8))
-        pygame.display.flip()
+        show_text(f'try {i + 1} of {args.best} (save at {model.num_timesteps:,} steps) ...')
         obs, _ = env.reset(options={'key': key, 'ckpt': kk})
         acts, done = [], False
         while not done:
@@ -289,12 +336,12 @@ def best_try(kk):
         if ring and entered:
             score = (2, -res['frames'])
         if best is None or score > best[0]:
-            best = (score, acts, res, prog)
-    _, acts, res, prog = best
+            best = (score, acts, res, prog, entered)
+    _, acts, res, prog, entered = best
     tally = ', '.join(f'{n} {o}' for o, n in outcomes.most_common() if o != 'stage')
     if res['outcome'] == 'clear':
         desc = f"best of {args.best}: cleared in {res['frames']} frames (you {res['target']})"
-    elif ring and (res['outcome'] == 'stage' or getattr(env, '_stages', None)):
+    elif ring and entered:
         desc = f"a giant-ring try: {prog / seg['T']:.0%} of the act, then {res['outcome']}"
     else:
         desc = f"best of {args.best}: {prog / seg['T']:.0%} of the act, then {res['outcome']}"
