@@ -73,6 +73,9 @@ def main():
         won = sum(st.get('emeralds', 0) for r in played for st in r['stages'])
         print(f"  {act}: start point {c['ptr']} ({c['frac']:.1%}); last {len(last)}: "
               + ', '.join(f'{k} {v}' for k, v in out.most_common()))
+        at = [r for r in rs if r['start'] == c['ptr']][-32:]
+        if at:                                               # what the at-pointer rule judges (mg1)
+            print(f"    at the start point itself: {sum(r['success'] for r in at)} of the last {len(at)} matched him")
         print(f"    fresh starts {len(fresh)}, clears {len(fc)}"
               + (f" (last 100: {sum(r['outcome'] == 'clear' for r in recent_f)}), best {min(r['frames'] for r in fc)}"
                  f" vs his {target}" if fc else '')

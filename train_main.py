@@ -75,6 +75,10 @@ RUNS = {
         acts=['AIZ1'], demos=['play_20260930-153946'], demo_prob=0.75,
         lr=2.5e-4, steps=50_000_000, env_version=2,
         ss='pilot',     # from 2026-10-12 ~09:10 (Tyler: "can we have special stages turned on?")
+        # from 2026-10-12 ~10:05 at 4,459,616 steps (Tyler: "Let's go with your suggestion"):
+        # the pointer moved back to 72 (just before AIZ1's wall climb) and judged only on
+        # episodes starting AT it, a full window of 32 (>= 25% matched) before it moves
+        curr_at_pointer=True, curr_min_n=32,
         result='STARTED 2026-10-12 ~07:40 (Tyler: "i want to start working on the main game"; '
                'd10 paused, board 14 back overnight). Criteria still Claude\'s proposal (doc, '
                'Pre-Committed Criteria "Run mg1"). aiz1 exactly, but on MG env v2 (new ground '
@@ -227,9 +231,15 @@ class ActCurriculumCallback(BaseCallback):
     matched the recording (coordinator: cleared within MATCH_SLACK of its
     time). Pointers persist next to the checkpoint, so --resume keeps them."""
 
-    def __init__(self, state_path, band):
+    def __init__(self, state_path, band, at_pointer=False, min_n=CURR_MIN_N):
+        """at_pointer: judge only episodes that began AT the start point, and
+        only on a full window of min_n of them. Starts are drawn from [pointer,
+        pointer + band]; counting the whole band let the easier later starts
+        (past a hard spot) move the pointer before the hard spot itself was
+        learned (mg1 at AIZ1's wall, 2026-10-12)."""
         super().__init__()
         self.state_path, self.band = state_path, band
+        self.at_pointer, self.min_n = at_pointer, min_n
         self.ptr, self.fracs, self.recent = {}, {}, {}
 
     def _on_training_start(self):
@@ -262,11 +272,11 @@ class ActCurriculumCallback(BaseCallback):
             if not r or r['key'] not in self.ptr:
                 continue
             p = self.ptr[r['key']]
-            if not p <= r['start'] <= p + self.band:
-                continue                    # began before the pointer moved
+            if not p <= r['start'] <= (p if self.at_pointer else p + self.band):
+                continue                    # began before the pointer moved (or, at_pointer, past it)
             q = self.recent[r['key']]
             q.append(r)
-            if len(q) >= CURR_MIN_N and p > 0:
+            if len(q) >= self.min_n and p > 0:
                 rate = sum(x['success'] for x in q) / len(q)
                 if rate >= CURR_ADVANCE:
                     margins = [x['margin'] for x in q if x['margin'] is not None]
@@ -387,7 +397,9 @@ def main():
                            save_path=P['ckpt_dir'], name_prefix=P['prefix']),
         AutoSaveCallback(),
         PruneCheckpointsCallback(P['ckpt_dir']),
-        ActCurriculumCallback(P['curriculum'], coordinator.DEMO_BAND),
+        ActCurriculumCallback(P['curriculum'], coordinator.DEMO_BAND,
+                              at_pointer=CFG.get('curr_at_pointer', False),
+                              min_n=CFG.get('curr_min_n', CURR_MIN_N)),
     ])
     try:
         model.learn(total_timesteps=CFG['steps'], callback=callbacks,
