@@ -5,11 +5,15 @@ nothing else?
     python3 check_ss_detour.py [RUN]      # default mg1; its latest save finds the tries
 
 Samples tries from the act's start with the run's save until one goes into a giant ring and wins the
-emerald (MG_SS=pilot), and keeps one that doesn't (the control). Replays both, exactly, under
-MG_SS_DETOUR=charge and =refund (each in its own process: the env reads its settings at import).
-Requires: identical outcome and frames in both modes (the game itself is untouched); the control's
-return identical; the ring try's return higher under refund by exactly the frames forgiven
-(trip_there + trip_back in its stage record, each <= DETOUR_CAP), and both legs > 0.
+emerald (MG_SS=pilot), and keeps one that doesn't (the control); `--reuse` takes them from the last
+run's logs/check_ss_detour_<run>.json. Replays, exactly, under MG_SS_DETOUR=charge and =refund (each
+in its own process: the env reads its settings at import): the control; the ring try; and the ring
+try taken over after the stage by jump+right, right, right, right (AIZ1's ring sits in a pocket you
+jump out of: this one gets back to his route). Requires: identical outcome and frames in both modes
+(the game itself is untouched); the control's return identical; each ring try's return higher under
+refund by exactly the frames forgiven (trip_there + trip_back in its stage record, each <=
+DETOUR_CAP); trip_there > 0; trip_back > 0 only for the try that got back to his route (time spent
+not getting back is not refunded).
 CPU only. Ends with ALL CHECKS PASS or the failures.
 """
 import json
@@ -33,12 +37,19 @@ def replay(run, mode, path):
     out = {}
     for name, t in tries.items():
         env.reset(options={'key': key, 'ckpt': t['kk']})
-        ret = 0.0
-        for a in t['actions']:
+        ret, i, j, done = 0.0, 0, 0, False
+        while not done:
+            if t.get('then') and env._stages:           # taken over after the stage
+                a = t['then'][j % len(t['then'])]
+                j += 1
+            elif i < len(t['actions']):
+                a = t['actions'][i]
+                i += 1
+            else:
+                a = 0
             _, r, term, trunc, info = env.step(a)
             ret += r / C.REWARD_SCALE
-            if term or trunc:
-                break
+            done = term or trunc
         res = info['mg_result']
         out[name] = dict(outcome=res['outcome'], frames=res['frames'], ret=round(ret, 3),
                          stages=[{k: v for k, v in s.items() if k != 'info'} for s in env._stages])
@@ -82,10 +93,16 @@ def main():
         return replay(sys.argv[2], sys.argv[3], sys.argv[4])
     run = sys.argv[1] if len(sys.argv) > 1 else 'mg1'
     path = os.path.join(HOME, 'logs', f'check_ss_detour_{run}.json')
-    print(f'{run}: looking for a won giant-ring try and a control from the act start ...', flush=True)
-    found = find(run, path)
+    if '--reuse' in sys.argv and os.path.exists(path):
+        found = json.load(open(path))
+        print(f'{run}: the tries in {path}', flush=True)
+    else:
+        print(f'{run}: looking for a won giant-ring try and a control from the act start ...', flush=True)
+        found = find(run, path)
     if len(found) < 2:
         sys.exit(f'FAILED: found only {list(found)} in 400 tries')
+    found['ring_back'] = dict(found['ring'], then=[7, 2, 2, 2])     # jump+right, right x 3
+    json.dump(found, open(path, 'w'))
     res = {}
     for mode in ('charge', 'refund'):
         p = subprocess.run([sys.executable, os.path.abspath(__file__), '--replay', run, mode, path],
@@ -95,7 +112,7 @@ def main():
             sys.exit(f'FAILED: the {mode} replay crashed:\n{p.stdout[-2000:]}\n{p.stderr[-2000:]}')
         res[mode] = json.loads(line[0][7:])
     bad = []
-    for name in ('control', 'ring'):
+    for name in ('control', 'ring', 'ring_back'):
         c, f = res['charge'][name], res['refund'][name]
         print(f"  {name}: charge -> {c['outcome']} at {c['frames']}, return {c['ret']:+.1f};  "
               f"refund -> {f['outcome']} at {f['frames']}, return {f['ret']:+.1f}")
@@ -103,15 +120,18 @@ def main():
             bad.append(f'{name}: the game played differently')
     if abs(res['charge']['control']['ret'] - res['refund']['control']['ret']) > 1e-6:
         bad.append('control: the return changed without a stage')
-    st = res['refund']['ring']['stages'][0]
-    there, back = st.get('trip_there', 0), st.get('trip_back', 0)
-    print(f"  ring: stage {st['board']} {st['outcome']}, emeralds +{st['emeralds']}; "
-          f"trip there {there} frames, back {back} frames forgiven")
-    gain = res['refund']['ring']['ret'] - res['charge']['ring']['ret']
-    if abs(gain - (there + back)) > 1e-6:
-        bad.append(f'ring: refund gained {gain:+.1f}, forgiven {there + back}')
-    if not (0 < there <= 1200 and 0 < back <= 1200):
-        bad.append(f'ring: legs {there}, {back} not both in (0, 1200]')
+    for name, wants_back in (('ring', False), ('ring_back', True)):
+        st = res['refund'][name]['stages'][0]
+        there, back = st.get('trip_there', 0), st.get('trip_back', 0)
+        gain = res['refund'][name]['ret'] - res['charge'][name]['ret']
+        print(f"  {name}: stage {st['board']} {st['outcome']}, emeralds +{st['emeralds']}; "
+              f"trip there {there} frames, back {back} frames forgiven; refund gained {gain:+.1f}")
+        if abs(gain - (there + back)) > 1e-6:
+            bad.append(f'{name}: refund gained {gain:+.1f}, forgiven {there + back}')
+        if not 0 < there <= 1200:
+            bad.append(f'{name}: trip there {there} not in (0, 1200]')
+        if wants_back != (0 < back <= 1200):
+            bad.append(f'{name}: trip back {back}, but it {"did" if wants_back else "did not"} get back')
     if bad:
         print('\nFAILED:\n  ' + '\n  '.join(bad))
         sys.exit(1)

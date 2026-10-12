@@ -102,8 +102,13 @@ the special-stage agent nearly always wins. MG_SS_DETOUR=refund (Tyler
 like the agent to get all 14 emeralds and beat the secret final stage"; the
 default 'charge' is the old rule): when an emerald is won, the trip to the
 ring and back is free too: the frames from the agent's last progress along
-his route before the ring, and from the stage until its next progress, each
-capped at DETOUR_CAP. (The AIZ1 ring is 241 px below his route, past the
+his route before the ring (refunded at the stage), and from the stage until
+its next progress (refunded when that progress comes), each capped at
+DETOUR_CAP. Time after the stage is only refunded on getting back: AIZ1's
+ring sits in a pocket that has to be jumped out of, and a refund paid frame
+by frame made standing there free (every mg1bc/mg2 stage episode, 82 of 82,
+camped there until `stuck`; Tyler 2026-10-12: "sonic appears to be camping
+on the spot where the big ring used to be"). (The AIZ1 ring is 241 px below his route, past the
 96-px route radius, so the trip is off-route time: mg1's episodes with a
 stage had a median 1,240 off-route frames against 296 without.) A lost
 stage's trip is charged as before. Stage frames don't run the
@@ -763,7 +768,7 @@ class SonicCoordinator(gym.Env):
         self.frames = 0
         self._moved_at = 0            # frames when route progress last rose
         self._gain_at = 0             # ... route progress alone (MG_SS_DETOUR)
-        self._free_back = 0           # MG_SS_DETOUR=refund: frames still free on the way back
+        self._back = None             # MG_SS_DETOUR=refund: frames since a won stage, refunded on return
         self._owed = 0                # v2: off-route frames booked, not yet charged
         self._off = 0                 # v2: frames spent off the route this episode
         self._seen = set()            # v2: blocks of the level visited this episode
@@ -831,14 +836,14 @@ class SonicCoordinator(gym.Env):
                                       int(info['mg_boss']) != 0)
             if gain > 0:
                 self._gain_at = self.frames
-            free = 0                                # MG_SS_DETOUR: the way back from a won ring
-            if self._free_back > 0:
-                if gain > 0:
-                    self._free_back = 0             # back on his route: the trip is over
+            if self._back is not None:              # MG_SS_DETOUR: the way back from a won ring is
+                if gain > 0:                        # refunded once he makes progress again; time spent
+                    back = min(self._back, DETOUR_CAP)   # NOT getting back (camping at the ring) is not
+                    r += back
+                    self._stages[-1]['trip_back'] = back
+                    self._back = None
                 else:
-                    free = min(n, self._free_back)
-                    self._free_back -= free
-                    self._stages[-1]['trip_back'] = self._stages[-1].get('trip_back', 0) + free
+                    self._back += n
             new_ground = False
             if MG_V2:
                 blk = (int(info['zone']), int(info['act']), x >> BLOCK_SHIFT,
@@ -847,17 +852,17 @@ class SonicCoordinator(gym.Env):
                 self._seen.add(blk)
             if MG_V2 and not self._route.on and self._route.fight is None:
                 r += n                          # off the route: book it
-                self._owed += n - free
+                self._owed += n
                 self._off += n
             else:
-                r += gain - self._owed + free   # back on it: settle
+                r += gain - self._owed          # back on it: settle
                 self._owed = 0
             if gain > 0 or self._route.fight is not None or new_ground:
                 self._moved_at = self.frames
             elif self.frames - self._moved_at >= STUCK_FRAMES:
                 event = 'stuck'
         if won_trip:
-            self._free_back = DETOUR_CAP            # from the next step: the way back is free
+            self._back = 0                          # from the next step: the way back, refunded on return
         self.ret += r
         terminated = event in ('clear', 'death')
         truncated = event in ('stage', 'stuck') or (
