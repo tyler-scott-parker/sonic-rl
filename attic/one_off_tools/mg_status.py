@@ -82,9 +82,14 @@ def main():
                  f"{sum(bool(r.get('stages')) for r in last)}), emeralds won {won}" if played else ''))
         s = st.setdefault(key, {'ptr': c['ptr'], 'since': steps})
         if c['ptr'] != s['ptr']:
-            s.update(ptr=c['ptr'], since=steps)
+            s.update(ptr=c['ptr'], since=steps, stall_reported=False)
         if steps - s['since'] >= STALL_STEPS and c['ptr'] > 0:
-            alerts.append(f"ALERT stall: {act} start point {c['ptr']} unmoved for {steps - s['since']:,} steps")
+            line = f"stall: {act} start point {c['ptr']} unmoved for {steps - s['since']:,} steps"
+            if s.get('stall_reported'):
+                print('   ', line)                         # reported once per start point
+            else:
+                alerts.append('ALERT ' + line)
+                s['stall_reported'] = True
         if act == 'AIZ1' and steps >= GATE_STEPS and c['ptr'] >= GATE_PTR and not st.get('gate_reported'):
             alerts.append(f"ALERT wall gate: {steps:,} steps and AIZ1 still at start point {c['ptr']}")
             st['gate_reported'] = True

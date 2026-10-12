@@ -17,7 +17,9 @@ every 100k steps) and starts where training currently starts (its curriculum
 start point); F switches between that and the start of the act. --best N plays
 N sampled tries off-screen first (as training samples its actions) and shows
 the best one: the fastest clear, else the one that got furthest along your
-route. The game is deterministic, so the replay is exactly that try. G (or
+route. The game is deterministic, so the replay is exactly that try. The
+tries run in a process of their own (watch_tries.py) while a run plays, two
+runs queued, so something is always playing (a live try if none is ready). G (or
 --ring) shows a try that went into a giant ring instead, when one did.
 
 Special stages (a run with MG_SS=pilot, e.g. mg1) are shown too; S skips the
@@ -38,7 +40,6 @@ Keys: 1-4 speed 25/50/100/200 %   P pause   R restart   F fresh/training start  
 import os
 import sys
 import json
-import collections
 import textwrap
 import time
 import argparse
@@ -98,6 +99,33 @@ if not args.you:
         model = PPO.load(path, device='cpu')
 fresh = args.fresh                                  # --live: start at the act's start (F toggles)
 ring = args.ring                                    # --best: show a giant-ring try when there is one (G)
+tries = tries_flags = None                          # --best: runs found by watch_tries.py
+tries_dir = os.path.join(train_main.HOME, 'logs', f'watch_tries_{args.run}')
+
+
+def tell_tries():
+    """The switches watch_tries.py makes runs with (it reads them per run)."""
+    global tries_flags
+    tries_flags = (fresh, ring)
+    with open(os.path.join(tries_dir, 'flags.json.tmp'), 'w') as f:
+        json.dump({'fresh': fresh, 'ring': ring}, f)
+    os.replace(os.path.join(tries_dir, 'flags.json.tmp'), os.path.join(tries_dir, 'flags.json'))
+
+
+if args.best and not args.you:                      # its own process: one emulator per process
+    import atexit
+    import glob
+    import subprocess
+    os.makedirs(tries_dir, exist_ok=True)
+    for f in glob.glob(os.path.join(tries_dir, 'run_*.json')):
+        os.remove(f)                                # an earlier viewer's
+    tell_tries()
+    tries = subprocess.Popen([sys.executable, '-u', os.path.join(train_main.HOME, 'watch_tries.py'),
+                              args.run, tries_dir, '--n', str(args.best)]
+                             + (['--act', args.act] if args.act else []),
+                             stdout=open(os.path.join(train_main.HOME, 'logs', f'watch_tries_{args.run}.log'), 'w'),
+                             stderr=subprocess.STDOUT)
+    atexit.register(tries.terminate)
 
 
 def refresh_model():
@@ -294,59 +322,19 @@ def wait_for_save():
         time.sleep(1)
 
 
-def set_hud(kk, msg, shown=None):
+def set_hud(kk, msg, shown=None, live_msg=''):
     hud_lines[:] = [(f"{who[:28]}  {key.split(':')[-1]}  start {seg['fracs'][kk]:.0%}  frames "
                      f"{env.frames}/{env._target}  {speed}%" + ('  PAUSED' if paused else '')
                      + ('' if audio is None else '  sound' if sound and speed == 100 else '  muted'),
                      (255, 255, 0))]
     if args.live:
-        hud_lines.append((f"save at {model.num_timesteps:,} steps   "
+        hud_lines.append((f"save at {(shown['steps'] if shown else model.num_timesteps):,} steps   "
                           + ('from the act start' if fresh else 'from where it trains now')
                           + ('' if args.stream else ' (F: switch)'), (255, 255, 0)))
-    if shown:
-        hud_lines.append((shown[3][:80], (255, 255, 0)))
+    if shown or live_msg:
+        hud_lines.append(((shown['desc'] if shown else live_msg)[:80], (255, 255, 0)))
     if msg:
         hud_lines.append((msg[:80], (0, 255, 128)))
-
-
-def best_try(kk):
-    """--best: N sampled tries from start point kk, off-screen; returns (actions, result, progress,
-    description) of the best one, or None to quit. Best = the fastest clear, else the furthest
-    along his route (then the quickest)."""
-    best, outcomes = None, collections.Counter()
-    for i in range(args.best):
-        for ev in pygame.event.get():
-            if ev.type == pygame.QUIT or (ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE):
-                return None
-        show_text(f'try {i + 1} of {args.best} (save at {model.num_timesteps:,} steps) ...')
-        obs, _ = env.reset(options={'key': key, 'ckpt': kk})
-        acts, done = [], False
-        while not done:
-            a, _ = model.predict(obs, deterministic=False)
-            obs, _, term, trunc, info = env.step(int(a))
-            acts.append(int(a))
-            done = term or trunc
-        res = info['mg_result']
-        outcomes[res['outcome']] += 1
-        prog = env._route.best
-        score = (1, -res['frames']) if res['outcome'] == 'clear' else (0, prog, -res['frames'])
-        entered = res['outcome'] == 'stage' or bool(getattr(env, '_stages', None))
-        if entered:
-            outcomes['giant ring'] += 1
-        if ring and entered:
-            score = (2, -res['frames'])
-        if best is None or score > best[0]:
-            best = (score, acts, res, prog, entered)
-    _, acts, res, prog, entered = best
-    tally = ', '.join(f'{n} {o}' for o, n in outcomes.most_common() if o != 'stage')
-    if res['outcome'] == 'clear':
-        desc = f"best of {args.best}: cleared in {res['frames']} frames (you {res['target']})"
-    elif ring and entered:
-        desc = f"a giant-ring try: {prog / seg['T']:.0%} of the act, then {res['outcome']}"
-    else:
-        desc = f"best of {args.best}: {prog / seg['T']:.0%} of the act, then {res['outcome']}"
-    print(f'{args.best} tries: {tally}; showing {res["outcome"]}', flush=True)
-    return acts, res, prog, f'{desc}  ({tally})'
 
 
 def episode():
@@ -357,12 +345,24 @@ def episode():
         if not wait_for_save():
             return False
         kk = live_start()
-    replay, shown = None, None
-    if args.best and not args.you:
-        found = best_try(kk)
-        if found is None:
-            return False
-        replay, shown = list(found[0]), found
+    replay, shown, live_msg = None, None, ''
+    if tries is not None:
+        if tries_flags != (fresh, ring):            # a switch flipped
+            tell_tries()
+        for f in sorted(glob.glob(os.path.join(tries_dir, 'run_*.json'))):     # the oldest first
+            try:
+                with open(f) as fh:
+                    item = json.load(fh)
+                os.remove(f)
+            except (OSError, ValueError):
+                continue
+            if (item['fresh'], item['ring']) == (fresh, ring):                 # else made the old way: drop
+                shown = item
+                break
+        if shown:
+            kk, replay = shown['kk'], list(shown['actions'])
+        else:                                       # none ready: a live try meanwhile
+            live_msg = 'a live try, while the next best run is found'
     obs, _ = env.reset(options={'key': key, 'ckpt': kk})
     ck = env._ck
     step, outcome, msg = 0, None, ''
@@ -390,7 +390,7 @@ def episode():
             audio.clear()                           # slowed, paused, muted or between episodes
         stepped = not paused and outcome is None
         if stepped:
-            set_hud(kk, msg, shown)
+            set_hud(kk, msg, shown, live_msg)
             stepping = True
             if args.you:                            # your inputs, frame for frame
                 f = ck['frame'] + 1 + env.frames
@@ -412,9 +412,9 @@ def episode():
                 obs, r, term, trunc, info = env.step(int(a))
                 if term or trunc:
                     outcome = info['mg_result']['outcome']
-                    if shown and (outcome != shown[1]['outcome'] or env.frames != shown[1]['frames']):
+                    if shown and (outcome != shown['outcome'] or env.frames != shown['frames']):
                         print(f"replay differs from the try: {outcome} at {env.frames} vs "
-                              f"{shown[1]['outcome']} at {shown[1]['frames']}", flush=True)
+                              f"{shown['outcome']} at {shown['frames']}", flush=True)
             stepping = False
             step += 1
             if outcome:
@@ -423,7 +423,7 @@ def episode():
                        f'from here ({margin:+d})' if outcome == 'clear' else outcome.upper())
                 print(msg, flush=True)
                 done_at = time.time()
-        set_hud(kk, msg, shown)
+        set_hud(kk, msg, shown, live_msg)
         if not stepped or outcome:                  # stepped frames were drawn as they ran
             draw(env.render())
             clock.tick(30)
