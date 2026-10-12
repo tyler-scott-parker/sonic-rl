@@ -36,7 +36,8 @@ def build(run, extras):
         bad, rows = [], []
         for s in env._segs:
             ts = [c['t'] for c in s['ckpts']]
-            want = C.MG_EXTRA_STARTS.get(f"{s['demo']}:{s['name']}", C.MG_EXTRA_STARTS.get(s['name'], []))
+            want = sorted(set(C.MG_EXTRA_STARTS.get(f"{s['demo']}:{s['name']}", []))
+                          | set(C.MG_EXTRA_STARTS.get(s['name'], [])))
             ks = set()
             for w in want:
                 k0 = next(k for k in range(len(ts)) if ts[k] >= w)      # the extra itself
@@ -86,7 +87,7 @@ def main():
             sys.exit(f'FAILED: the build crashed:\n{p.stdout[-2000:]}\n{p.stderr[-2000:]}')
         res[ex] = json.loads(line[0][7:])
     import train_main
-    want = train_main.RUNS[run].get('extra_starts', {})
+    want = train_main.extra_starts(run)                  # RUNS 'extra_starts' + automatic stones
     bad = []
     for name, base in res['0'].items():
         new = res['1'][name]

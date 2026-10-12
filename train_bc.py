@@ -39,6 +39,9 @@ def main():
     ap.add_argument('--soft', type=int, default=0, metavar='W',
                     help='target = his rounded actions over frames i-W..i+W (timing-tolerant), not frame i alone')
     ap.add_argument('--jump-weight', type=float, default=1.0, help='weight of samples whose label jumps')
+    ap.add_argument('--exclude-acts', default='', metavar='ACT,ACT',
+                    help="leave these acts out (e.g. one RL already plays better than his copy: a "
+                         "copying pass over AIZ1 erased mg1bc's from-start AIZ1 clears, 5/20 -> 0/20)")
     a = ap.parse_args()
     sys.path.insert(0, HOME)
     import numpy as np
@@ -77,9 +80,11 @@ def main():
             soft[np.arange(n), src_lbl] += 1.0
         soft /= soft.sum(1, keepdims=True)
     held = ((S['t'] // 60) % 20 == 7)                       # 1-second blocks, 1 in 20 of each act
-    tr, va = np.flatnonzero(~held), np.flatnonzero(held)
+    out = np.isin(S['act'], [meta['acts'].index(x) for x in a.exclude_acts.split(',') if x in meta['acts']])
+    tr, va = np.flatnonzero(~held & ~out), np.flatnonzero(held & ~out)
     offs = np.arange(-(C.STACK - 1) * C.FRAME_SKIP, 1, C.FRAME_SKIP)          # -12, -8, -4, 0
-    print(f'{n:,} samples ({len(tr):,} train, {len(va):,} held out) from {len(meta["demos"])} recordings, '
+    print(f'{n:,} samples ({len(tr):,} train, {len(va):,} held out; {int(out.sum()):,} left out: '
+          f'{a.exclude_acts or "none"}) from {len(meta["demos"])} recordings, '
           f'{len(meta["acts"])} acts; init {a.init} ({model.num_timesteps:,} steps); value target '
           f'600 x gamma^steps x {C.REWARD_SCALE} / {ret_std:.3f}', flush=True)
 

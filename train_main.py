@@ -174,6 +174,8 @@ def paths(run):
         stop=os.path.join(HOME, f'STOP_main_{run}'),
         log=os.path.join(HOME, f'mg_log_{run}.jsonl'),
         curriculum=os.path.join(HOME, f'main_{run}_curriculum.json'),
+        stones=os.path.join(HOME, f'main_{run}_stones.json'),     # automatic stepping stones
+        starts=os.path.join(HOME, f'main_{run}_starts.json'),     # every act's start-point times
         prefix=f'main_{run}',
     )
 
@@ -193,6 +195,19 @@ def list_runs():
         print(f"{name:6} acts {','.join(cfg['acts']):10} demos {cfg['demos']} "
               f"({len(demo_paths(cfg))} found)  lr {cfg['lr']:.1e}  {status}")
         print(f"       {cfg['result']}")
+
+
+def extra_starts(run):
+    """{act key: sorted demo frames} of a run's extra start points: RUNS 'extra_starts' and the
+    stepping stones mg_stones.py adds when a start point stalls (main_<run>_stones.json)."""
+    out = {k: set(v) for k, v in RUNS[run].get('extra_starts', {}).items()}
+    try:
+        with open(paths(run)['stones']) as f:
+            for k, v in json.load(f).items():
+                out.setdefault(k, set()).update(v)
+    except (OSError, ValueError):
+        pass
+    return {k: sorted(v) for k, v in out.items()}
 
 
 def configure_env(run):
@@ -216,13 +231,14 @@ def configure_env(run):
     # stage's trip to the ring and back is free too (coordinator.py)
     os.environ['MG_EMERALD_BONUS'] = str(cfg.get('emerald_bonus', 0))
     os.environ['MG_SS_DETOUR'] = cfg.get('ss_detour', 'charge')
-    # extra start points inside a hard second: {act: [demo frames]} (coordinator.py)
     # Sonic's air drawn into the observation (coordinator.obs_frame)
     os.environ['MG_AIR_BAR'] = '1' if cfg.get('air_bar') else '0'
     # the nearest unused giant ring drawn into the observation (coordinator.draw_compass)
     os.environ['MG_RING_COMPASS'] = '1' if cfg.get('ring_compass') else '0'
+    # extra start points: the RUNS entry's plus the stepping stones mg_stones.py added
+    # automatically when a start point stalled (main_<run>_stones.json)
     os.environ['MG_EXTRA_STARTS'] = ';'.join(f"{a}:{','.join(map(str, ts))}"
-                                             for a, ts in cfg.get('extra_starts', {}).items())
+                                             for a, ts in extra_starts(run).items())
     return found
 
 
@@ -456,7 +472,14 @@ class ActCurriculumCallback(BaseCallback):
         if os.path.exists(self.state_path):
             with open(self.state_path) as f:
                 saved = json.load(f)
-        for d in self.training_env.env_method('demo_info', indices=[0])[0]:
+        infos = self.training_env.env_method('demo_info', indices=[0])[0]
+        starts = {d['key']: [round(f * d['T']) for f in d['fracs']] for d in infos}
+        tmp = self.state_path.replace('_curriculum.json', '_starts.json')
+        if tmp != self.state_path:                  # demo times of every start point, for mg_stones.py
+            with open(tmp + '.tmp', 'w') as f:
+                json.dump(starts, f)
+            os.replace(tmp + '.tmp', tmp)
+        for d in infos:
             key, last = d['key'], len(d['fracs']) - 1
             self.fracs[key] = d['fracs']
             self.ptr[key] = min(saved.get(key, {}).get('ptr', last), last)

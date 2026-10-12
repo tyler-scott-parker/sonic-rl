@@ -737,8 +737,8 @@ class SonicCoordinator(gym.Env):
                     seg = dict(demo=demo_io.demo_id(path), name=split.cur['name'],
                                index=len(split.acts), ckpts=[],
                                path=collections.defaultdict(list), regular=None,
-                               extra=list(MG_EXTRA_STARTS.get(f"{did}:{split.cur['name']}",
-                                                              MG_EXTRA_STARTS.get(split.cur['name'], []))))
+                               extra=sorted(set(MG_EXTRA_STARTS.get(f"{did}:{split.cur['name']}", []))
+                                            | set(MG_EXTRA_STARTS.get(split.cur['name'], []))))
                 if seg is None:
                     continue
                 if event == 'clear':

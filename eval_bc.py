@@ -23,12 +23,15 @@ def main():
     ap.add_argument('--points', nargs='*', default=None)
     ap.add_argument('--n', type=int, default=5)
     ap.add_argument('--air-bar', choices=['0', '1'], help="override the setup's air bar (MG_AIR_BAR)")
+    ap.add_argument('--compass', choices=['0', '1'], help="override the setup's ring compass (MG_RING_COMPASS)")
     a = ap.parse_args()
     sys.path.insert(0, HOME)
     import train_main
     train_main.configure_env(a.acts_of)
     if a.air_bar is not None:
         os.environ['MG_AIR_BAR'] = a.air_bar
+    if a.compass is not None:
+        os.environ['MG_RING_COMPASS'] = a.compass
     os.environ.update(MG_LOG=os.devnull, CUDA_VISIBLE_DEVICES='', MG_SS='truncate')
     import torch
     torch.set_num_threads(1)
@@ -39,7 +42,7 @@ def main():
     segs = {s['name']: s for s in (env.demo_info(), env._segs)[1]}
     points = a.points or ['AIZ1:0,60,72,75,76'] + [f'{n}:0' for n in segs if n != 'AIZ1']
     print(f'{a.model} ({model.num_timesteps:,} steps of its own) on {a.acts_of}\'s acts, air bar '
-          f'{C.MG_AIR_BAR}, {a.n} tries each:',
+          f'{C.MG_AIR_BAR}, compass {C.MG_RING_COMPASS}, {a.n} tries each:',
           flush=True)
     for spec in points:
         name, ks = spec.split(':')
