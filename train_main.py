@@ -83,6 +83,10 @@ RUNS = {
         # rings ... I'd like the agent to get all 14 emeralds and beat the secret final stage"):
         # a won stage's trip is free and each emerald pays 300 frames (5 s) on top
         ss_detour='refund', emerald_bonus=300,
+        # from 2026-10-12 ~11:20 (Tyler: "Go ahead"): stepping stones up AIZ1's climb (rock
+        # pile t 4,320 -> collapsing ledge ~4,362 -> top ~4,392): take-off, mid-jump, on the
+        # ledge; start points 0-72 keep their numbers, the new ones are 73-75
+        extra_starts={'AIZ1': [4335, 4350, 4365]},
         result='STARTED 2026-10-12 ~07:40 (Tyler: "i want to start working on the main game"; '
                'd10 paused, board 14 back overnight). Criteria still Claude\'s proposal (doc, '
                'Pre-Committed Criteria "Run mg1"). aiz1 exactly, but on MG env v2 (new ground '
@@ -161,6 +165,9 @@ def configure_env(run):
     # stage's trip to the ring and back is free too (coordinator.py)
     os.environ['MG_EMERALD_BONUS'] = str(cfg.get('emerald_bonus', 0))
     os.environ['MG_SS_DETOUR'] = cfg.get('ss_detour', 'charge')
+    # extra start points inside a hard second: {act: [demo frames]} (coordinator.py)
+    os.environ['MG_EXTRA_STARTS'] = ';'.join(f"{a}:{','.join(map(str, ts))}"
+                                             for a, ts in cfg.get('extra_starts', {}).items())
     return found
 
 

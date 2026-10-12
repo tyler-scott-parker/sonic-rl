@@ -208,6 +208,13 @@ FIGHT_GAP      = 60        # boss-flag gaps shorter than this are one fight
 # Demo start points
 CKPT_EVERY     = 60        # demo frames between start points (1 s)
 CKPT_TAIL      = 30        # no start point this close to the clear
+# Extra start points between the regular ones, where a hard spot falls inside one
+# second (mg1, 2026-10-12: AIZ1's climb from the rock pile onto the collapsing ledge,
+# demo t 4,320 -> ~4,362). "ACT:t,t,...;ACT:..." in demo frames; the regular ones
+# stay where they were, so start points before the first extra keep their numbers.
+MG_EXTRA_STARTS = {name: sorted(int(t) for t in ts.split(','))
+                   for name, ts in (part.split(':') for part in
+                                    os.environ.get('MG_EXTRA_STARTS', '').split(';') if part)}
 DEMO_BAND      = 4         # a start is drawn from [pointer, pointer + band]
 
 DEMO_FILES  = [p for p in os.environ.get('MG_DEMOS', '').split(',') if p.strip()]
@@ -627,7 +634,8 @@ class SonicCoordinator(gym.Env):
                 if event == 'start' and len(split.acts) in want:
                     seg = dict(demo=demo_io.demo_id(path), name=split.cur['name'],
                                index=len(split.acts), ckpts=[],
-                               path=collections.defaultdict(list))
+                               path=collections.defaultdict(list), regular=None,
+                               extra=list(MG_EXTRA_STARTS.get(split.cur['name'], [])))
                 if seg is None:
                     continue
                 if event == 'clear':
@@ -645,7 +653,13 @@ class SonicCoordinator(gym.Env):
                 p['x'].append(int(info['x']))
                 p['y'].append(int(info['y']))
                 p['boss'].append(int(info['mg_boss']) != 0)
-                if timer_on and (not seg['ckpts'] or t - seg['ckpts'][-1]['t'] >= CKPT_EVERY):
+                regular = seg['regular'] is None or t - seg['regular'] >= CKPT_EVERY
+                extra = bool(seg['extra']) and t >= seg['extra'][0]
+                if timer_on and (regular or extra):
+                    if regular:
+                        seg['regular'] = t
+                    while seg['extra'] and seg['extra'][0] <= t:
+                        seg['extra'].pop(0)
                     # a recording's first frames have no history: repeat the oldest
                     frames = [procs[0]] * (procs.maxlen - len(procs)) + list(procs)
                     seg['ckpts'].append(dict(
@@ -666,6 +680,7 @@ class SonicCoordinator(gym.Env):
         seg['ckpts'] = [c for c in seg['ckpts'] if T - c['t'] >= CKPT_TAIL]
         if not seg['ckpts']:
             raise ValueError(f"{seg['demo']} {act['name']}: too short to start from")
+        seg.pop('regular'), seg.pop('extra')
         route = {k: np.asarray(v, dtype=np.int64) for k, v in seg.pop('path').items()}
         route['fights'] = _fights(route['t'], route.pop('boss'))
         route['T'] = T
