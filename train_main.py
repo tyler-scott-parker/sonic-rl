@@ -94,6 +94,22 @@ RUNS = {
                'counts against stuck; off-route time settled; route ties by the clock): '
                'does v2 get past the wall that stopped aiz1 at start point 69 (82%)?',
     ),
+    'mg1bc': dict(
+        # mg1 exactly as it runs now, but from the imitation-pretrained network (train_bc.py bc1:
+        # mg1's network taught Tyler's actions on 407k frames of his play, 52% held-out accuracy)
+        acts=['AIZ1'], demos=['play_20260930-153946'], demo_prob=0.75,
+        lr=2.5e-4, steps=50_000_000, env_version=2,
+        init='bc1', ss='pilot', ss_detour='refund', emerald_bonus=300,
+        curr_at_pointer=True, curr_min_n=32,
+        extra_starts={'AIZ1': [4335, 4350, 4365]},
+        result='STARTED 2026-10-12 ~11:45 (Tyler: "This sounds great!" to imitation first, then '
+               '"you can have the box"). Launched at mg1\'s start point 75 (on the collapsing ledge; '
+               'curriculum file copied from mg1 at 6,874,240 steps). Pretrained alone, 10 sampled '
+               'tries each: from 75 bc1 clears 4/10 near his pace, mg1 0/10; from 72 both 0/10. '
+               'Reads (Claude\'s, proposed): off 75 within 1M steps (mg1: 0 of 32 matched there in '
+               '~0.9M); past 72 within 5M; forgetting = its match rate at 75 falling from ~40% '
+               'toward 0 early (then add a decaying imitation loss).',
+    ),
     'mg2': dict(
         # AIZ1 exactly as mg1 trains it (same recording, start points, stepping stones);
         # the next five acts from his whole-game recording

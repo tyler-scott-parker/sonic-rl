@@ -36,3 +36,6 @@ sonic_ss_multistage_*_demos.json
 # route book: candidates training saves (route_book.py harvest promotes them)
 routes/candidates/
 routes/curriculum/
+
+# ── Imitation datasets (GBs; rebuilt by build_bc_dataset.py) ─────────────────
+datasets/
