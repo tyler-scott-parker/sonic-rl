@@ -40,6 +40,7 @@ import os
 import sys
 import glob
 import json
+import shutil
 import signal
 import argparse
 import collections
@@ -92,6 +93,22 @@ RUNS = {
                'Pre-Committed Criteria "Run mg1"). aiz1 exactly, but on MG env v2 (new ground '
                'counts against stuck; off-route time settled; route ties by the clock): '
                'does v2 get past the wall that stopped aiz1 at start point 69 (82%)?',
+    ),
+    'mg2': dict(
+        # AIZ1 exactly as mg1 trains it (same recording, start points, stepping stones);
+        # the next five acts from his whole-game recording
+        acts=['play_20260930-153946:AIZ1'] + [f'play_20261010-202923:{a}' for a in
+                                              ('AIZ2', 'HCZ1', 'HCZ2', 'MGZ1', 'MGZ2')],
+        demos=['play_20260930-153946', 'play_20261010-202923'], demo_prob=0.75,
+        lr=2.5e-4, steps=100_000_000, env_version=2,
+        init='mg1',     # mg1's weights, VecNormalize and AIZ1 start point at launch; steps from 0
+        ss='pilot', ss_detour='refund', emerald_bonus=300,
+        curr_at_pointer=True, curr_min_n=32, curr_successes=8,
+        extra_starts={'play_20260930-153946:AIZ1': [4335, 4350, 4365]},
+        result='NOT STARTED — DRAFTED by Claude 2026-10-12 (Tyler: "Is there any merit in '
+               'multistage training?", then "Go ahead and draft it"); criteria PROPOSED '
+               '(doc, Pre-Committed Criteria "Run mg2"), need Tyler\'s OK. Six acts at once '
+               'from mg1: do the five new acts learn, and does sharing hurt AIZ1?',
     ),
 }
 
@@ -246,15 +263,18 @@ class ActCurriculumCallback(BaseCallback):
     matched the recording (coordinator: cleared within MATCH_SLACK of its
     time). Pointers persist next to the checkpoint, so --resume keeps them."""
 
-    def __init__(self, state_path, band, at_pointer=False, min_n=CURR_MIN_N):
+    def __init__(self, state_path, band, at_pointer=False, min_n=CURR_MIN_N, successes=None):
         """at_pointer: judge only episodes that began AT the start point, and
         only on a full window of min_n of them. Starts are drawn from [pointer,
         pointer + band]; counting the whole band let the easier later starts
         (past a hard spot) move the pointer before the hard spot itself was
-        learned (mg1 at AIZ1's wall, 2026-10-12)."""
+        learned (mg1 at AIZ1's wall, 2026-10-12). successes: instead, move as
+        soon as this many of the recent (CURR_WINDOW) episodes matched: 8 of
+        32 is the same 25% bar where it's marginal, but an easy start point
+        moves after 8 (mg2: six acts share the training)."""
         super().__init__()
         self.state_path, self.band = state_path, band
-        self.at_pointer, self.min_n = at_pointer, min_n
+        self.at_pointer, self.min_n, self.successes = at_pointer, min_n, successes
         self.ptr, self.fracs, self.recent = {}, {}, {}
 
     def _on_training_start(self):
@@ -291,9 +311,10 @@ class ActCurriculumCallback(BaseCallback):
                 continue                    # began before the pointer moved (or, at_pointer, past it)
             q = self.recent[r['key']]
             q.append(r)
-            if len(q) >= self.min_n and p > 0:
+            if p > 0 and (len(q) >= self.min_n if self.successes is None else True):
                 rate = sum(x['success'] for x in q) / len(q)
-                if rate >= CURR_ADVANCE:
+                if (rate >= CURR_ADVANCE if self.successes is None
+                        else sum(x['success'] for x in q) >= self.successes):
                     margins = [x['margin'] for x in q if x['margin'] is not None]
                     fr = self.fracs[r['key']]
                     self.ptr[r['key']] = p - 1
@@ -383,11 +404,15 @@ def main():
     if os.path.exists(P['stop']):
         os.remove(P['stop'])
 
+    init = paths(CFG['init']) if CFG.get('init') and not resuming else None
+    if init and not os.path.exists(P['curriculum']) and os.path.exists(init['curriculum']):
+        shutil.copy(init['curriculum'], P['curriculum'])   # its start points, for acts they share
+        print(f"Start points from {CFG['init']}: {init['curriculum']}")
     env = SubprocVecEnv([make_env for _ in range(NUM_ENVS)])
-    if os.path.exists(P['pkl']):
-        env = VecNormalize.load(P['pkl'], env)
+    if os.path.exists(P['pkl']) or init:
+        env = VecNormalize.load(P['pkl'] if os.path.exists(P['pkl']) else init['pkl'], env)
         env.training = True
-        print(f"Resumed VecNormalize from {P['pkl']}")
+        print(f"Resumed VecNormalize from {P['pkl'] if os.path.exists(P['pkl']) else init['pkl']}")
     else:
         # clip_reward is effectively off: returns are measured in frames, a
         # death is -18 and a clear +6 before normalization, and a clip of 10
@@ -401,6 +426,12 @@ def main():
                          custom_objects={'learning_rate': float(lr)} if lr else None)
         print(f'Resuming base-game {args.run} at {model.num_timesteps} steps | '
               f'gamma {model.gamma} lr {model.learning_rate}')
+    elif init:
+        model = PPO.load(init['zip'], env=env, device='auto', tensorboard_log=tb_dir,
+                         custom_objects={'learning_rate': CFG['lr']})
+        model.num_timesteps = 0                     # its own steps from 0
+        print(f"Starting base-game {args.run} from {CFG['init']}'s weights "
+              f"({init['zip']}.zip, trained {CFG['init']} steps not counted)")
     else:
         model = PPO('CnnPolicy', env, learning_rate=CFG['lr'], verbose=1,
                     tensorboard_log=tb_dir, device='auto', **PPO_KWARGS)
@@ -414,7 +445,8 @@ def main():
         PruneCheckpointsCallback(P['ckpt_dir']),
         ActCurriculumCallback(P['curriculum'], coordinator.DEMO_BAND,
                               at_pointer=CFG.get('curr_at_pointer', False),
-                              min_n=CFG.get('curr_min_n', CURR_MIN_N)),
+                              min_n=CFG.get('curr_min_n', CURR_MIN_N),
+                              successes=CFG.get('curr_successes')),
     ])
     try:
         model.learn(total_timesteps=CFG['steps'], callback=callbacks,

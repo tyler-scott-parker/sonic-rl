@@ -36,7 +36,7 @@ def build(run, extras):
         bad, rows = [], []
         for s in env._segs:
             ts = [c['t'] for c in s['ckpts']]
-            want = C.MG_EXTRA_STARTS.get(s['name'], [])
+            want = C.MG_EXTRA_STARTS.get(f"{s['demo']}:{s['name']}", C.MG_EXTRA_STARTS.get(s['name'], []))
             ks = set()
             for w in want:
                 k0 = next(k for k in range(len(ts)) if ts[k] >= w)      # the extra itself
@@ -95,12 +95,14 @@ def main():
         print(f'1. {name}: {len(base)} start points; with extras {len(new)}; added at demo t {extra}')
         if regular != base:
             bad.append(f'{name}: the regular start points moved')
-        for w in want.get(name, []):
+        for w in [t for k, ts in want.items() if k.split(':')[-1] == name for t in ts]:
             if not any(w <= t <= w + 2 for t in extra):
                 bad.append(f'{name}: no extra start point at t {w}')
         for t in extra:
             print(f'   new start point {new.index(t)} at t {t}')
     print('2. his inputs from the extras and their neighbours:')
+    if any(want.values()) and not res['1']['_his']['rows']:
+        bad.append('nothing replayed: the extras were not found by act')
     for r in res['1']['_his']['rows']:
         print('   ' + r)
     bad += res['1']['_his']['bad']

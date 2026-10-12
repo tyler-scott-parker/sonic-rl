@@ -18,6 +18,7 @@ import re
 
 REPO = '/home/tyler/Projects/sonic-rl'
 STALL_STEPS = 3_000_000
+STONES_AT = 200          # episodes started AT one start point without moving it: stepping stones (mg2)
 GATE_STEPS, GATE_PTR = 5_000_000, 69
 
 
@@ -34,6 +35,10 @@ def steps_of(run):
     return last
 
 
+def s_get(st, key, name):
+    return st.get(key, {}).get(name)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('run', nargs='?', default='mg1')
@@ -41,9 +46,10 @@ def main():
     a = ap.parse_args()
     steps = steps_of(a.run) or 0
     try:
-        cur = json.load(open(os.path.join(REPO, f'main_{a.run}_curriculum.json')))
+        cpath = os.path.join(REPO, f'main_{a.run}_curriculum.json')
+        cur, since = json.load(open(cpath)), os.path.getmtime(cpath)
     except FileNotFoundError:
-        cur = {}
+        cur, since = {}, 0
     eps = collections.defaultdict(list)
     try:
         for line in open(os.path.join(REPO, f'mg_log_{a.run}.jsonl')):
@@ -73,9 +79,15 @@ def main():
         won = sum(st.get('emeralds', 0) for r in played for st in r['stages'])
         print(f"  {act}: start point {c['ptr']} ({c['frac']:.1%}); last {len(last)}: "
               + ', '.join(f'{k} {v}' for k, v in out.most_common()))
-        at = [r for r in rs if r['start'] == c['ptr']][-32:]
-        if at:                                               # what the at-pointer rule judges (mg1)
-            print(f"    at the start point itself: {sum(r['success'] for r in at)} of the last {len(at)} matched him")
+        at_all = [r for r in rs if r['start'] == c['ptr'] and r['t'] >= since]   # since it moved here
+        at = at_all[-32:]                                    # (the trainer rewrites the file on each move)
+        if at:                                               # what the at-pointer rule judges (mg1, mg2)
+            print(f"    at the start point itself: {sum(r['success'] for r in at)} of the last {len(at)} matched him"
+                  f" ({len(at_all)} started there)")
+        if len(at_all) >= STONES_AT and c['ptr'] > 0 and s_get(st, key, 'stones_reported') != c['ptr']:
+            alerts.append(f"ALERT stepping stones: {act} start point {c['ptr']}: {len(at_all)} starts there, "
+                          f"{sum(r['success'] for r in at)} of the last {len(at)} matched")
+            st.setdefault(key, {})['stones_reported'] = c['ptr']
         print(f"    fresh starts {len(fresh)}, clears {len(fc)}"
               + (f" (last 100: {sum(r['outcome'] == 'clear' for r in recent_f)}), best {min(r['frames'] for r in fc)}"
                  f" vs his {target}" if fc else '')

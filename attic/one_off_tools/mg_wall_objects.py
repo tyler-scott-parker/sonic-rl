@@ -2,7 +2,7 @@
 """mg_wall_objects.py — do the collapsing platforms at AIZ1's wall break under the agent, and how far
 must Sonic go for them to come back?
 
-    python3 attic/one_off_tools/mg_wall_objects.py [RUN] [N]
+    python3 attic/one_off_tools/mg_wall_objects.py [RUN] [N] [START_POINT]
 
 Tyler 2026-10-12: "I think there is normally a ledge there that collapses. If the ledge breaks before you
 clear the area, then you may need to move far enough away so that the ledge despawns and respawns."
@@ -36,7 +36,7 @@ import demos                            # noqa: E402
 from stable_baselines3 import PPO       # noqa: E402
 
 PLATFORMS = {'ledge (3696,872)': (3696, 872), 'top (3857,807)': (3857, 807)}
-K = 72
+K = int(sys.argv[3]) if len(sys.argv) > 3 else 72
 env = C.SonicCoordinator(acts=['AIZ1'], demo_prob=0.0)
 seg = env.demo_info()[0]
 key = seg['key']

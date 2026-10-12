@@ -210,10 +210,10 @@ CKPT_EVERY     = 60        # demo frames between start points (1 s)
 CKPT_TAIL      = 30        # no start point this close to the clear
 # Extra start points between the regular ones, where a hard spot falls inside one
 # second (mg1, 2026-10-12: AIZ1's climb from the rock pile onto the collapsing ledge,
-# demo t 4,320 -> ~4,362). "ACT:t,t,...;ACT:..." in demo frames; the regular ones
+# demo t 4,320 -> ~4,362). "ACT:t,t,...;DEMO:ACT:t,...", in demo frames; the regular ones
 # stay where they were, so start points before the first extra keep their numbers.
 MG_EXTRA_STARTS = {name: sorted(int(t) for t in ts.split(','))
-                   for name, ts in (part.split(':') for part in
+                   for name, ts in (part.rsplit(':', 1) for part in
                                     os.environ.get('MG_EXTRA_STARTS', '').split(';') if part)}
 DEMO_BAND      = 4         # a start is drawn from [pointer, pointer + band]
 
@@ -614,8 +614,10 @@ class SonicCoordinator(gym.Env):
             actions, meta = demo_io.load_play(path)
             table = meta['action_table']
             start = demo_io.play_start_state(meta)
+            did = demo_io.demo_id(path)         # an act may be named 'DEMO:ACT': that recording's only
             want = [i for i, a in enumerate(meta['acts'])
-                    if a['clear'] is not None and (not self.acts or a['name'] in self.acts)]
+                    if a['clear'] is not None and (not self.acts or a['name'] in self.acts
+                                                   or f"{did}:{a['name']}" in self.acts)]
             if not want:
                 continue
             last = meta['acts'][want[-1]]['clear']
@@ -635,7 +637,8 @@ class SonicCoordinator(gym.Env):
                     seg = dict(demo=demo_io.demo_id(path), name=split.cur['name'],
                                index=len(split.acts), ckpts=[],
                                path=collections.defaultdict(list), regular=None,
-                               extra=list(MG_EXTRA_STARTS.get(split.cur['name'], [])))
+                               extra=list(MG_EXTRA_STARTS.get(f"{did}:{split.cur['name']}",
+                                                              MG_EXTRA_STARTS.get(split.cur['name'], []))))
                 if seg is None:
                     continue
                 if event == 'clear':
