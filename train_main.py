@@ -105,7 +105,7 @@ RUNS = {
         # 0 of 32 matched, 87% stuck at x 3,264; his route loops up-left through a path
         # swapper at (3200, 960) there)
         extra_starts={'AIZ1': [4095, 4110, 4125, 4335, 4350, 4365]},
-        # from its resume after 2026-10-12 ~13:15 (Tyler: "yes please. go ahead and build that"):
+        # from its resume at 2026-10-12 ~13:24 (Tyler: "yes please. go ahead and build that"):
         # a fading pull toward his inputs, half of it at the start point it's stuck at
         imitation=dict(data='datasets/bc_v1'),
         result='STARTED 2026-10-12 11:27 (Tyler: "This sounds great!" to imitation first, then '
