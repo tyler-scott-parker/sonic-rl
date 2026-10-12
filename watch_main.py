@@ -65,6 +65,8 @@ k = int(np.searchsorted(seg['fracs'], args.frac, 'right')) - 1 if args.frac > 0 
 k = max(0, k)
 model, model_mtime, path = None, None, None
 if not args.you:
+    import torch
+    torch.set_num_threads(1)                        # one step's decision is tiny; more threads only fight training
     from stable_baselines3 import PPO
     path = args.model or train_main.paths(args.run)['zip'] + '.zip'
     if not os.path.exists(path) and not args.live:
@@ -124,22 +126,43 @@ try:
 except Exception as e:                              # no device / no SDL audio: watch in silence
     print(f'no sound: {e!r}', flush=True)
 sound = audio is not None and not args.no_sound
-stepping = False                                    # sound only while an episode steps (not resets)
+stepping = False                                    # shown and heard only while an episode steps (not resets)
+hud_lines = []                                      # (text, colour), drawn over every frame
 _emu_frame = C.emu_frame
 
 
-def emu_frame_with_sound(base_env, mask):
-    """coordinator.emu_frame plus that frame's sound. The env steps 4 frames per
-    agent step through it, so every frame is heard; at 100% the sound card
+fps_count = {'n': 0, 't': time.time()}
+
+
+def draw(img):
+    fps_count['n'] += 1
+    if time.time() - fps_count['t'] >= 10:          # the log says how smooth the picture is
+        print(f"drawing {fps_count['n'] / (time.time() - fps_count['t']):.1f} frames/s", flush=True)
+        fps_count.update(n=0, t=time.time())
+    surf = pygame.surfarray.make_surface(img.swapaxes(0, 1))
+    screen.blit(pygame.transform.scale(surf, (320 * SCALE, 224 * SCALE)), (0, 0))
+    for i, (text, colour) in enumerate(hud_lines):
+        screen.blit(font.render(text, True, colour), (8, 8 + 22 * i))
+    pygame.display.flip()
+
+
+def emu_frame_shown(base_env, mask):
+    """coordinator.emu_frame, plus that frame on screen and its sound. The env
+    steps 4 frames per agent step through it, so every frame is seen and heard
+    (drawing once per step gave 15 fps). At 100% with sound the sound card
     keeps the time, as in the recorders. Only this viewer patches it."""
     out = _emu_frame(base_env, mask)
-    if stepping and sound and speed == 100:
-        audio.push(base_env.em.get_audio())
-        audio.pace()
+    if stepping:
+        draw(base_env.em.get_screen())
+        if sound and speed == 100:
+            audio.push(base_env.em.get_audio())
+            audio.pace()
+        else:
+            clock.tick(60 * speed / 100)
     return out
 
 
-C.emu_frame = emu_frame_with_sound
+C.emu_frame = emu_frame_shown
 
 
 def wait_for_save():
@@ -155,6 +178,19 @@ def wait_for_save():
         screen.blit(font.render(f'waiting for {args.run}\'s first save ...', True, (255, 255, 0)), (8, 8))
         pygame.display.flip()
         time.sleep(1)
+
+
+def set_hud(kk, msg):
+    hud_lines[:] = [(f"{who[:28]}  {key.split(':')[-1]}  start {seg['fracs'][kk]:.0%}  frames "
+                     f"{env.frames}/{env._target}  {speed}%" + ('  PAUSED' if paused else '')
+                     + ('' if audio is None else '  sound' if sound and speed == 100 else '  muted'),
+                     (255, 255, 0))]
+    if args.live:
+        hud_lines.append((f"save at {model.num_timesteps:,} steps   "
+                          + ('from the act start (F: training start)' if fresh
+                             else 'from where it trains now (F: act start)'), (255, 255, 0)))
+    if msg:
+        hud_lines.append((msg[:80], (0, 255, 128)))
 
 
 def episode():
@@ -187,7 +223,9 @@ def episode():
         paced = sound and speed == 100 and not paused and outcome is None
         if audio is not None and not paced:
             audio.clear()                           # slowed, paused, muted or between episodes
-        if not paused and outcome is None:
+        stepped = not paused and outcome is None
+        if stepped:
+            set_hud(kk, msg)
             stepping = True
             if args.you:                            # your inputs, frame for frame
                 f = ck['frame'] + 1 + env.frames
@@ -214,24 +252,10 @@ def episode():
                        f'from here ({margin:+d})' if outcome == 'clear' else outcome.upper())
                 print(msg, flush=True)
                 done_at = time.time()
-        surf = pygame.surfarray.make_surface(env.render().swapaxes(0, 1))
-        screen.blit(pygame.transform.scale(surf, (320 * SCALE, 224 * SCALE)), (0, 0))
-        hud = (f"{who[:28]}  {key.split(':')[-1]}  start {seg['fracs'][kk]:.0%}  frames "
-               f"{env.frames}/{env._target}  {speed}%" + ('  PAUSED' if paused else '')
-               + ('' if audio is None else '  sound' if sound and speed == 100 else '  muted'))
-        if args.live:
-            hud2 = (f"save at {model.num_timesteps:,} steps   "
-                    + ('from the act start (F: training start)' if fresh
-                       else 'from where it trains now (F: act start)'))
-            screen.blit(font.render(hud2, True, (255, 255, 0)), (8, 30))
-        screen.blit(font.render(hud, True, (255, 255, 0)), (8, 8))
-        if msg:
-            screen.blit(font.render(msg[:80], True, (0, 255, 128)), (8, 52 if args.live else 30))
-        pygame.display.flip()
-        if paced:
-            clock.tick()                            # the sound card kept the time
-        else:
-            clock.tick(60 * speed / 100 / (1 if args.you else C.FRAME_SKIP))
+        set_hud(kk, msg)
+        if not stepped or outcome:                  # stepped frames were drawn as they ran
+            draw(env.render())
+            clock.tick(30)
         if outcome and time.time() - done_at > 2.5:
             return True
 
