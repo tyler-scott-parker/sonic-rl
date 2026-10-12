@@ -31,7 +31,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('out', nargs='?', default=os.path.join(HOME, 'datasets', 'bc_v1'))
     ap.add_argument('--demos', default=DEFAULT_DEMOS)
+    ap.add_argument('--air-bar', action='store_true', help="draw Sonic's air into the frames (MG_AIR_BAR)")
     a = ap.parse_args()
+    os.environ['MG_AIR_BAR'] = '1' if a.air_bar else '0'
     os.environ.setdefault('MG_ENV_VERSION', '2')
     os.environ['CUDA_VISIBLE_DEVICES'] = ''
     os.environ['MG_LOG'] = os.devnull
@@ -45,7 +47,7 @@ def main():
     os.makedirs(a.out, exist_ok=True)
     base = C.make_retro()                                   # an emulator to replay with
     cols = {k: [] for k in ('demo', 'frame', 'action', 'agree', 'act', 't', 'T', 'timer_on')}
-    acts_names, meta = [], {'demos': [], 'actions': C.ACTION_NAMES, 'frame_skip': C.FRAME_SKIP,
+    acts_names, meta = [], {'demos': [], 'air_bar': C.MG_AIR_BAR, 'actions': C.ACTION_NAMES, 'frame_skip': C.FRAME_SKIP,
                             'stack': C.STACK, 'obs_size': C.OBS_SIZE}
     t0 = time.time()
     for di, did in enumerate(a.demos.split(',')):
@@ -61,7 +63,7 @@ def main():
         split, prev, rows, cur = C.ActSplitter(), None, [], None
         for i, act in enumerate(actions):
             raw, info = C.emu_frame(base, table[act])
-            frames[i] = C.process_frame(prev, raw)
+            frames[i] = C.obs_frame(prev, raw, info)
             prev = raw
             event = split.feed(i, info)
             if event == 'start':

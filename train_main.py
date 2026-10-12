@@ -120,10 +120,13 @@ RUNS = {
                                               ('AIZ2', 'HCZ1', 'HCZ2', 'MGZ1', 'MGZ2')],
         demos=['play_20260930-153946', 'play_20261010-202923'], demo_prob=0.75,
         lr=2.5e-4, steps=100_000_000, env_version=2,
-        init='mg1',     # mg1's weights, VecNormalize and AIZ1 start point at launch; steps from 0
+        # from the imitation network with the air bar (train_bc.py bc3: mg1bc's network at
+        # 3.42M steps taught his actions on datasets/bc_v2); at launch, copy mg1bc's curriculum
+        # file to main_mg2_curriculum.json for AIZ1's start point (bc3 has none of its own)
+        init='bc3', air_bar=True,
         ss='pilot', ss_detour='refund', emerald_bonus=300,
         curr_at_pointer=True, curr_min_n=32, curr_successes=8,
-        extra_starts={'play_20260930-153946:AIZ1': [4335, 4350, 4365]},
+        extra_starts={'play_20260930-153946:AIZ1': [4095, 4110, 4125, 4335, 4350, 4365]},
         result='NOT STARTED — DRAFTED by Claude 2026-10-12 (Tyler: "Is there any merit in '
                'multistage training?", then "Go ahead and draft it"); criteria PROPOSED '
                '(doc, Pre-Committed Criteria "Run mg2"), need Tyler\'s OK. Six acts at once '
@@ -202,6 +205,8 @@ def configure_env(run):
     os.environ['MG_EMERALD_BONUS'] = str(cfg.get('emerald_bonus', 0))
     os.environ['MG_SS_DETOUR'] = cfg.get('ss_detour', 'charge')
     # extra start points inside a hard second: {act: [demo frames]} (coordinator.py)
+    # Sonic's air drawn into the observation (coordinator.obs_frame)
+    os.environ['MG_AIR_BAR'] = '1' if cfg.get('air_bar') else '0'
     os.environ['MG_EXTRA_STARTS'] = ';'.join(f"{a}:{','.join(map(str, ts))}"
                                              for a, ts in cfg.get('extra_starts', {}).items())
     return found

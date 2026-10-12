@@ -112,7 +112,7 @@ def main():
                                 for k in range(len(C.ACTION_NAMES)) if per[k, 1]}
 
     acc0, _ = evaluate(va)
-    print(f'before: held-out accuracy {acc0:.1%} (mg1 as it is)', flush=True)
+    print(f'before: held-out accuracy {acc0:.1%} ({a.init} as it is)', flush=True)
     opt = torch.optim.Adam(pol.parameters(), lr=a.lr)
     rng = np.random.default_rng(0)
     total = int(a.epochs * len(tr) / a.batch)

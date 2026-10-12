@@ -70,7 +70,12 @@ so `stuck` cut even the demo's own inputs (check_play_acts.py, 2026-10-10).
 
 ACTIONS — ACTION_BUTTONS, each held for FRAME_SKIP frames.
 OBSERVATION — the last STACK agent frames: 84x84 grayscale, each the max of
-its step's last two emulator frames (sprite flicker).
+its step's last two emulator frames (sprite flicker). MG_AIR_BAR=1 (RUNS
+'air_bar'; Tyler 2026-10-12: "let's add the air bar") draws Sonic's air
+left into each frame's top-right corner (obs_frame): the agent sees 4 frames
+and hears nothing, so it can't otherwise tell how long it has been under
+water before the drowning digits show (Tyler's own run got down to 9 s of
+air in HCZ1 and LBZ2).
 
 SPECIAL STAGES (MG_SS=pilot; default 'truncate' = the line above). On the
 entry frame a trained special-stage agent (MG_SS_RUN, default d9; ss_pilot.py)
@@ -268,6 +273,7 @@ RAM_VARS = {
     'mg_boss':         (0xFFF7AA, '|u1'),   # Boss_flag
     'mg_apparent_act': (0xFFEE4F, '|u1'),   # Apparent_act
     'mg_signpost':     (0xFFFAA6, '>u2'),   # Signpost_addr (test fixture)
+    'mg_air':          (0xFFB02C, '|u1'),   # Player_1+air_left: s of air (30 out of water)
 }
 GM_LEVEL       = 0x0C
 ZONE_DDZ       = 0x0C      # Doomsday: no timer stop; cleared when the game moves on
@@ -340,6 +346,23 @@ def process_frame(prev_raw, raw):
     img = raw if prev_raw is None else np.maximum(prev_raw, raw)
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
     return cv2.resize(gray, (OBS_SIZE, OBS_SIZE), interpolation=cv2.INTER_AREA)
+
+
+MG_AIR_BAR = os.environ.get('MG_AIR_BAR', '0') == '1'
+AIR_FULL = 30                  # air_left out of water; drowned at 0
+AIR_ROWS, AIR_X0 = 2, OBS_SIZE - AIR_FULL      # the bar: top 2 rows, the rightmost 30 columns
+
+
+def obs_frame(prev_raw, raw, info):
+    """process_frame, plus (MG_AIR_BAR) Sonic's air as a bar: one white
+    pixel per second of air left, black for the rest (the strip covers
+    2 x 30 of the 84 x 84)."""
+    f = process_frame(prev_raw, raw)
+    if MG_AIR_BAR:
+        air = min(max(int(info['mg_air']), 0), AIR_FULL)
+        f[:AIR_ROWS, AIR_X0:] = 0
+        f[:AIR_ROWS, AIR_X0:AIR_X0 + air] = 255
+    return f
 
 
 # ── Test fixture: a fake act end ─────────────────────────────────────────────
@@ -630,7 +653,7 @@ class SonicCoordinator(gym.Env):
             seg = None
             for i, a in enumerate(actions[:last + 1]):
                 raw, info = emu_frame(self.base_env, table[a])
-                procs.append(process_frame(prev_raw, raw))
+                procs.append(obs_frame(prev_raw, raw, info))
                 prev_raw = raw
                 event = split.feed(i, info)
                 if event == 'start' and len(split.acts) in want:
@@ -779,7 +802,7 @@ class SonicCoordinator(gym.Env):
                 info, event = stage.pop('info'), None
         if stage is None:
             prev = raws[-2] if len(raws) > 1 else self._last_raw
-            self._stack.append(process_frame(prev, raws[-1]))
+            self._stack.append(obs_frame(prev, raws[-1], info))
             self._last_raw = raws[-1]
         self.frames += n
         x = int(info['x'])
@@ -888,7 +911,7 @@ class SonicCoordinator(gym.Env):
                 n_stage += 1
             else:
                 n_out += 1
-            procs.append(process_frame(prev_raw, raw))
+            procs.append(obs_frame(prev_raw, raw, info))
             prev_raw = raw
             if in_level and timer_on and not dead:
                 break
