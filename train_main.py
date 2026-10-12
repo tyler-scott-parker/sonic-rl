@@ -136,7 +136,9 @@ RUNS = {
         # from its resume after 2026-10-12 ~14:25 (Tyler: "Let's try the compass"): the ring
         # compass on, and the imitation frames drawn with it (bc_v3 = bar + compass)
         ring_compass=True,
-        imitation=dict(data='datasets/bc_v3'),
+        # floor 0.3 from ~19:30 (the pull reaching 0 at 3M steps collapsed every act: rolled
+        # back to the 2,261,000-step checkpoint, logs/archive_mg2_collapse/)
+        imitation=dict(data='datasets/bc_v3', floor=0.3),
         result='STARTED 2026-10-12 ~13:50 from bc4, criteria AGREED (Tyler: "let\'s do it!" after '
                'mg1bc cleared AIZ1 from the start); RESTARTED ~16:25 from mg1bc (bc4 had lost AIZ1 '
                'from the start: 0/20 vs mg1bc 5/20). Six acts at once: do the five new acts learn, '
@@ -160,7 +162,7 @@ PPO_KWARGS = dict(
 
 # Imitation during RL (RUNS 'imitation': dict(data=..., and any of these to override))
 IMITATION_DEFAULTS = dict(weight=1.0, decay_steps=3_000_000, steps=8, batch=256,
-                          behind=120, ahead=600)
+                          behind=120, ahead=600, floor=0.0)
 
 # Backward curriculum
 CURR_WINDOW  = 32      # recent episodes judged at the current start point
@@ -367,12 +369,15 @@ class ImitationCallback(BaseCallback):
                 raise ValueError(f"imitation data {c['data']} {flag}={meta.get(flag)} but the run's "
                                  f"{env}={os.environ.get(env)}: the frames would differ")
         print(f"[imitation] {len(self.all):,} of his frames in {len(self.keys)} acts ({c['data']}); "
-              f"weight {c['weight']} -> 0 over {c['decay_steps']:,} steps from {self.start:,}; "
+              f"weight {c['weight']} -> {c.get('floor', 0.0)} over {c['decay_steps']:,} steps from {self.start:,}; "
               f"{c['steps']} steps of {c['batch']} per update", flush=True)
 
     def weight(self):
+        """Falls linearly to `floor` (default 0) over decay_steps. mg2 (2026-10-12) showed why a
+        floor: once the pull reached 0 at 3M steps, PPO's entropy bonus flattened the policy
+        (entropy 0.6 -> 1.8 of a max 2.2) and every act's clears collapsed (AIZ1 41% -> 0%)."""
         done = (self.model.num_timesteps - self.start) / self.cfg['decay_steps']
-        return self.cfg['weight'] * max(0.0, 1.0 - done)
+        return max(self.cfg.get('floor', 0.0), self.cfg['weight'] * max(0.0, 1.0 - done))
 
     def frontier(self):
         """Sample indices near each act's current start point."""

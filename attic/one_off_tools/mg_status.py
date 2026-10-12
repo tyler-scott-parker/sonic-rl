@@ -19,20 +19,24 @@ import re
 REPO = '/home/tyler/Projects/sonic-rl'
 STALL_STEPS = 3_000_000
 STONES_AT = 200          # episodes started AT one start point without moving it: stepping stones (mg2)
+ENTROPY_MAX = 1.2        # policy entropy (max ln 9 = 2.2): mg2 collapsed as it rose 0.6 -> 1.8
 GATE_STEPS, GATE_PTR = 5_000_000, 69
 
 
 def steps_of(run):
-    last = None
+    last = ent = None
     try:
         with open(os.path.join(REPO, 'logs', f'main_{run}.log'), errors='replace') as f:
             for line in f:
                 m = re.search(r'total_timesteps\s*\|\s*(\d+)', line)
                 if m:
                     last = int(m.group(1))
+                m = re.search(r'entropy_loss\s*\|\s*(-?[\d.]+)', line)
+                if m:
+                    ent = -float(m.group(1))
     except FileNotFoundError:
         pass
-    return last
+    return last, ent
 
 
 def s_get(st, key, name):
@@ -44,7 +48,8 @@ def main():
     ap.add_argument('run', nargs='?', default='mg1')
     ap.add_argument('--state')
     a = ap.parse_args()
-    steps = steps_of(a.run) or 0
+    steps, entropy = steps_of(a.run)
+    steps = steps or 0
     try:
         cpath = os.path.join(REPO, f'main_{a.run}_curriculum.json')
         cur, since = json.load(open(cpath)), os.path.getmtime(cpath)
@@ -63,8 +68,16 @@ def main():
     st = {}
     if a.state and os.path.exists(a.state):
         st = json.load(open(a.state))
-    print(f'{a.run}: {steps:,} steps, {sum(map(len, eps.values())):,} episodes')
+    print(f'{a.run}: {steps:,} steps, {sum(map(len, eps.values())):,} episodes'
+          + (f'; policy entropy {entropy:.2f}' if entropy is not None else ''))
     alerts = []
+    if entropy is not None and entropy > ENTROPY_MAX and not st.get('entropy_reported'):
+        alerts.append(f'ALERT entropy: the policy is flattening ({entropy:.2f} > {ENTROPY_MAX}; '
+                      f'mg2 collapsed this way when its imitation pull reached 0)')
+        st['entropy_reported'] = True
+    elif entropy is not None and entropy <= ENTROPY_MAX - 0.2:
+        st['entropy_reported'] = False
+    n_acts = max(1, len(cur))                                # stall counted per act's share of steps
     for key, c in sorted(cur.items()):
         act = key.split(':')[-1]
         rs = eps.get(act, [])
@@ -101,7 +114,7 @@ def main():
         s = st.setdefault(key, {'ptr': c['ptr'], 'since': steps})
         if c['ptr'] != s['ptr']:
             s.update(ptr=c['ptr'], since=steps, stall_reported=False)
-        if steps - s['since'] >= STALL_STEPS and c['ptr'] > 0:
+        if steps - s['since'] >= STALL_STEPS * n_acts and c['ptr'] > 0:
             line = f"stall: {act} start point {c['ptr']} unmoved for {steps - s['since']:,} steps"
             if s.get('stall_reported'):
                 print('   ', line)                         # reported once per start point
