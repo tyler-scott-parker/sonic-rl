@@ -79,6 +79,9 @@ def main():
         won = sum(st.get('emeralds', 0) for r in played for st in r['stages'])
         print(f"  {act}: start point {c['ptr']} ({c['frac']:.1%}); last {len(last)}: "
               + ', '.join(f'{k} {v}' for k, v in out.most_common()))
+        drowned = sum(r.get('cause') == 'drown' for r in last)
+        if drowned:
+            print(f"    drowned: {drowned} of the last {len(last)} episodes")
         at_all = [r for r in rs if r['start'] == c['ptr'] and r['t'] >= since]   # since it moved here
         at = at_all[-32:]                                    # (the trainer rewrites the file on each move)
         if at:                                               # what the at-pointer rule judges (mg1, mg2)

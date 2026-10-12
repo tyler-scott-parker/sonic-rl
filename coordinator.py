@@ -766,6 +766,8 @@ class SonicCoordinator(gym.Env):
                 event = 'stage'
             elif dead:
                 event = 'death'
+                # routine $C = drowned (Tyler 2026-10-12: "should we measure drowning as it's own type of death?")
+                self._death_cause = 'drown' if int(info['mg_routine']) == 0xC else 'other'
             elif (in_level and not timer_on) or (self._ddz and int(info['zone']) == ZONE_ENDING):
                 event = 'clear'
             if event:
@@ -922,6 +924,8 @@ class SonicCoordinator(gym.Env):
             margin=(self._target - self.frames) if cleared else None,
             success=cleared and self.frames <= self._target * (1 + MATCH_SLACK) + MATCH_ADD,
             progress=round((self._route.best - self._ck['t']) / max(1, self._target), 4))
+        if outcome == 'death':
+            res['cause'] = getattr(self, '_death_cause', 'other')
         self._log(res, info)
         return res
 
@@ -936,6 +940,8 @@ class SonicCoordinator(gym.Env):
             rings=int(info['rings']), duration=round(time.time() - self._t0, 1))
         if MG_V2:
             entry['off_route'] = self._off
+        if 'cause' in res:
+            entry['cause'] = res['cause']                # 'drown' or 'other'
         if self._stages:
             entry['stages'] = self._stages
         try:

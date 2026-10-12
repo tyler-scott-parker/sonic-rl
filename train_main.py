@@ -101,7 +101,10 @@ RUNS = {
         lr=2.5e-4, steps=50_000_000, env_version=2,
         init='bc1', ss='pilot', ss_detour='refund', emerald_bonus=300,
         curr_at_pointer=True, curr_min_n=32,
-        extra_starts={'AIZ1': [4335, 4350, 4365]},
+        # + 4,095 / 4,110 / 4,125 from ~12:15 (the stepping-stones flag at start point 68:
+        # 0 of 32 matched, 87% stuck at x 3,264; his route loops up-left through a path
+        # swapper at (3200, 960) there)
+        extra_starts={'AIZ1': [4095, 4110, 4125, 4335, 4350, 4365]},
         result='STARTED 2026-10-12 11:27 (Tyler: "This sounds great!" to imitation first, then '
                '"you can have the box"). Launched at mg1\'s start point 75 (on the collapsing ledge; '
                'curriculum file copied from mg1 at 6,874,240 steps). Pretrained alone, 10 sampled '
