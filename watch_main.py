@@ -10,10 +10,14 @@ recording of it from the same point, to compare.
   python3 watch_main.py aiz1 --stochastic     # sample actions instead of the argmax
   python3 watch_main.py mg1 --live            # follow a run while it trains
   python3 watch_main.py mg1 --live --fresh    # ... always from the start of the act
+  python3 watch_main.py mg1 --live --fresh --best 20   # ... its best of 20 tries each time
 
 --live reloads the run's save before each episode (the trainer rewrites it
 every 100k steps) and starts where training currently starts (its curriculum
-start point); F switches between that and the start of the act.
+start point); F switches between that and the start of the act. --best N plays
+N sampled tries off-screen first (as training samples its actions) and shows
+the best one: the fastest clear, else the one that got furthest along your
+route. The game is deterministic, so the replay is exactly that try.
 
 Sound plays at 100% speed (game_audio.py, as in the recorders); M mutes,
 --no-sound starts muted.
@@ -44,6 +48,8 @@ ap.add_argument('--live', action='store_true',
                 help='follow a training run: reload its save before each episode, start where it trains')
 ap.add_argument('--fresh', action='store_true', help='with --live: start at the act\'s start (F toggles)')
 ap.add_argument('--no-sound', action='store_true', help='start muted (M toggles)')
+ap.add_argument('--best', type=int, default=0, metavar='N',
+                help='play N sampled tries off-screen, then show the best one')
 args = ap.parse_args()
 
 if args.run not in train_main.RUNS:
@@ -180,7 +186,7 @@ def wait_for_save():
         time.sleep(1)
 
 
-def set_hud(kk, msg):
+def set_hud(kk, msg, shown=None):
     hud_lines[:] = [(f"{who[:28]}  {key.split(':')[-1]}  start {seg['fracs'][kk]:.0%}  frames "
                      f"{env.frames}/{env._target}  {speed}%" + ('  PAUSED' if paused else '')
                      + ('' if audio is None else '  sound' if sound and speed == 100 else '  muted'),
@@ -189,8 +195,42 @@ def set_hud(kk, msg):
         hud_lines.append((f"save at {model.num_timesteps:,} steps   "
                           + ('from the act start (F: training start)' if fresh
                              else 'from where it trains now (F: act start)'), (255, 255, 0)))
+    if shown:
+        hud_lines.append((shown[3][:80], (255, 255, 0)))
     if msg:
         hud_lines.append((msg[:80], (0, 255, 128)))
+
+
+def best_try(kk):
+    """--best: N sampled tries from start point kk, off-screen; returns (actions, result, progress,
+    description) of the best one, or None to quit. Best = the fastest clear, else the furthest
+    along his route (then the quickest)."""
+    best = None
+    for i in range(args.best):
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT or (ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE):
+                return None
+        screen.fill((0, 0, 0))
+        screen.blit(font.render(f'try {i + 1} of {args.best} (save at {model.num_timesteps:,} steps) ...',
+                                True, (255, 255, 0)), (8, 8))
+        pygame.display.flip()
+        obs, _ = env.reset(options={'key': key, 'ckpt': kk})
+        acts, done = [], False
+        while not done:
+            a, _ = model.predict(obs, deterministic=False)
+            obs, _, term, trunc, info = env.step(int(a))
+            acts.append(int(a))
+            done = term or trunc
+        res = info['mg_result']
+        prog = env._route.best
+        score = (1, -res['frames']) if res['outcome'] == 'clear' else (0, prog, -res['frames'])
+        if best is None or score > best[0]:
+            best = (score, acts, res, prog)
+    _, acts, res, prog = best
+    desc = (f"best of {args.best} tries: cleared in {res['frames']} frames (you {res['target']})"
+            if res['outcome'] == 'clear' else
+            f"best of {args.best} tries: {prog / seg['T']:.0%} of the act, then {res['outcome']}")
+    return acts, res, prog, desc
 
 
 def episode():
@@ -201,6 +241,12 @@ def episode():
         if not wait_for_save():
             return False
         kk = live_start()
+    replay, shown = None, None
+    if args.best and not args.you:
+        found = best_try(kk)
+        if found is None:
+            return False
+        replay, shown = list(found[0]), found
     obs, _ = env.reset(options={'key': key, 'ckpt': kk})
     ck = env._ck
     step, outcome, msg = 0, None, ''
@@ -225,7 +271,7 @@ def episode():
             audio.clear()                           # slowed, paused, muted or between episodes
         stepped = not paused and outcome is None
         if stepped:
-            set_hud(kk, msg)
+            set_hud(kk, msg, shown)
             stepping = True
             if args.you:                            # your inputs, frame for frame
                 f = ck['frame'] + 1 + env.frames
@@ -240,10 +286,16 @@ def episode():
                 elif in_stage:
                     outcome = 'stage'
             else:
-                a, _ = model.predict(obs, deterministic=not args.stochastic)
+                if replay:                          # --best: the try being shown
+                    a = replay.pop(0)
+                else:
+                    a, _ = model.predict(obs, deterministic=not args.stochastic)
                 obs, r, term, trunc, info = env.step(int(a))
                 if term or trunc:
                     outcome = info['mg_result']['outcome']
+                    if shown and (outcome != shown[1]['outcome'] or env.frames != shown[1]['frames']):
+                        print(f"replay differs from the try: {outcome} at {env.frames} vs "
+                              f"{shown[1]['outcome']} at {shown[1]['frames']}", flush=True)
             stepping = False
             step += 1
             if outcome:
@@ -252,7 +304,7 @@ def episode():
                        f'from here ({margin:+d})' if outcome == 'clear' else outcome.upper())
                 print(msg, flush=True)
                 done_at = time.time()
-        set_hud(kk, msg)
+        set_hud(kk, msg, shown)
         if not stepped or outcome:                  # stepped frames were drawn as they ran
             draw(env.render())
             clock.tick(30)
