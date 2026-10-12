@@ -102,7 +102,7 @@ RUNS = {
         init='bc1', ss='pilot', ss_detour='refund', emerald_bonus=300,
         curr_at_pointer=True, curr_min_n=32,
         extra_starts={'AIZ1': [4335, 4350, 4365]},
-        result='STARTED 2026-10-12 ~11:45 (Tyler: "This sounds great!" to imitation first, then '
+        result='STARTED 2026-10-12 11:27 (Tyler: "This sounds great!" to imitation first, then '
                '"you can have the box"). Launched at mg1\'s start point 75 (on the collapsing ledge; '
                'curriculum file copied from mg1 at 6,874,240 steps). Pretrained alone, 10 sampled '
                'tries each: from 75 bc1 clears 4/10 near his pace, mg1 0/10; from 72 both 0/10. '
