@@ -9,6 +9,7 @@ recording of it from the same point, to compare.
   python3 watch_main.py aiz1 --model checkpoints_main_aiz1/main_aiz1_1000000_steps.zip
   python3 watch_main.py aiz1 --stochastic     # sample actions instead of the argmax
   python3 watch_main.py mg1 --live            # follow a run while it trains
+  python3 watch_main.py mg1 --live --fresh    # ... always from the start of the act
 
 --live reloads the run's save before each episode (the trainer rewrites it
 every 100k steps) and starts where training currently starts (its curriculum
@@ -38,6 +39,7 @@ ap.add_argument('--model', help='a checkpoint zip (default: the run\'s latest sa
 ap.add_argument('--stochastic', action='store_true')
 ap.add_argument('--live', action='store_true',
                 help='follow a training run: reload its save before each episode, start where it trains')
+ap.add_argument('--fresh', action='store_true', help='with --live: start at the act\'s start (F toggles)')
 args = ap.parse_args()
 
 if args.run not in train_main.RUNS:
@@ -65,7 +67,7 @@ if not args.you:
         sys.exit(f'no model at {path} (train first, or --you to watch your recording)')
     if not args.live:
         model = PPO.load(path, device='cpu')
-fresh = False                                       # --live: F starts at the act's start instead
+fresh = args.fresh                                  # --live: start at the act's start (F toggles)
 
 
 def refresh_model():
