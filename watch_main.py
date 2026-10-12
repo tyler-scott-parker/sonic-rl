@@ -20,11 +20,15 @@ the best one: the fastest clear, else the one that got furthest along your
 route. The game is deterministic, so the replay is exactly that try. G (or
 --ring) shows a try that went into a giant ring instead, when one did.
 
+Special stages (a run with MG_SS=pilot, e.g. mg1) are shown too; S skips the
+one on screen (it runs off-screen at full speed; S again watches the next),
+--skip-ss starts with skipping on.
+
 Sound plays at 100% speed (game_audio.py, as in the recorders); M mutes,
 --no-sound starts muted.
 
 Keys: 1-4 speed 25/50/100/200 %   P pause   R restart   F fresh/training start   M sound
-      G giant-ring tries (--best)   Esc quit
+      G giant-ring tries (--best)   S skip special stages   Esc quit
 """
 import os
 import sys
@@ -54,6 +58,7 @@ ap.add_argument('--no-sound', action='store_true', help='start muted (M toggles)
 ap.add_argument('--best', type=int, default=0, metavar='N',
                 help='play N sampled tries off-screen, then show the best one')
 ap.add_argument('--ring', action='store_true', help='with --best: show a try that entered a giant ring (G toggles)')
+ap.add_argument('--skip-ss', action='store_true', help="don't show special stages (S toggles)")
 args = ap.parse_args()
 
 if args.run not in train_main.RUNS:
@@ -157,13 +162,46 @@ def draw(img):
     pygame.display.flip()
 
 
+skip_ss = args.skip_ss                              # S: special stages run off-screen
+stage = {'on': False, 'n': 0}
+
+
+def stage_keys():
+    """Keys during a special stage: the whole stage is one agent step, so the
+    episode loop can't see them. S and M act now, the rest wait for it."""
+    global skip_ss, sound
+    later = []
+    for ev in pygame.event.get():
+        if ev.type == pygame.KEYDOWN and ev.key == pygame.K_s:
+            skip_ss = not skip_ss
+        elif ev.type == pygame.KEYDOWN and ev.key == pygame.K_m and audio is not None:
+            sound = not sound
+        else:
+            later.append(ev)
+    for ev in later:
+        pygame.event.post(ev)
+
+
 def step_shown(*a, **kw):
     """The emulator's step, plus that frame on screen and its sound. The env
-    steps 4 frames per agent step, and a special stage (MG_SS=pilot) hundreds
+    steps 4 frames per agent step, and a special stage (MG_SS=pilot) thousands
     in one agent step, all through here, so every frame is seen and heard
     (drawing once per agent step gave 15 fps). At 100% with sound the sound
     card keeps the time, as in the recorders. Only this viewer patches it."""
     out = _base_step(*a, **kw)
+    if stepping and stage['on']:
+        stage['n'] += 1
+        if stage['n'] % 10 == 1:
+            stage_keys()
+        if skip_ss:                                 # off-screen at full speed
+            if audio is not None:
+                audio.clear()
+            if stage['n'] % 120 == 1:
+                screen.fill((0, 0, 0))
+                screen.blit(font.render('special stage: skipping ...  (S: watch them)', True,
+                                        (255, 255, 0)), (8, 8))
+                pygame.display.flip()
+            return out
     if stepping:
         draw(env.base_env.em.get_screen())
         if sound and speed == 100:
@@ -175,6 +213,20 @@ def step_shown(*a, **kw):
 
 
 env.base_env.step = step_shown
+_special_stage = env._special_stage
+
+
+def special_stage_shown(info):
+    """coordinator's special stage, marked so step_shown can skip it (S)."""
+    stage.update(on=True, n=0)
+    hud_lines.append(('special stage  (S: skip)', (255, 255, 0)))
+    try:
+        return _special_stage(info)
+    finally:
+        stage['on'] = False
+
+
+env._special_stage = special_stage_shown
 
 
 def wait_for_save():
