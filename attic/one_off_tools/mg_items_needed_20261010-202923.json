@@ -1,0 +1,194 @@
+[
+ {
+  "act": "AIZ1",
+  "item": "invincible",
+  "t0": 1315,
+  "t1": 2513,
+  "start_point": 23,
+  "from_frame": 1379,
+  "kept": [
+   "reached the end of the stretch",
+   0
+  ],
+  "taken_away": [
+   "stuck",
+   1
+  ]
+ },
+ {
+  "act": "HCZ2",
+  "item": "invincible",
+  "t0": 9420,
+  "t1": 10614,
+  "start_point": 158,
+  "from_frame": 9479,
+  "kept": [
+   "reached the end of the stretch",
+   0
+  ],
+  "taken_away": [
+   "reached the end of the stretch",
+   0
+  ]
+ },
+ {
+  "act": "MGZ2",
+  "item": "invincible",
+  "t0": 7397,
+  "t1": 8590,
+  "start_point": 124,
+  "from_frame": 7439,
+  "kept": [
+   "reached the end of the stretch",
+   0
+  ],
+  "taken_away": [
+   "reached the end of the stretch",
+   1
+  ]
+ },
+ {
+  "act": "MGZ2",
+  "item": "fire shield",
+  "t0": 12380,
+  "t1": 13937,
+  "start_point": 207,
+  "from_frame": 12419,
+  "kept": [
+   "reached the end of the stretch",
+   0
+  ],
+  "taken_away": [
+   "reached the end of the stretch",
+   0
+  ]
+ },
+ {
+  "act": "CNZ2",
+  "item": "invincible",
+  "t0": 17858,
+  "t1": 19053,
+  "start_point": 299,
+  "from_frame": 17939,
+  "kept": [
+   "reached the end of the stretch",
+   0
+  ],
+  "taken_away": [
+   "reached the end of the stretch",
+   0
+  ]
+ },
+ {
+  "act": "LBZ2",
+  "item": "invincible",
+  "t0": 8803,
+  "t1": 9996,
+  "start_point": 148,
+  "from_frame": 8879,
+  "kept": [
+   "reached the end of the stretch",
+   0
+  ],
+  "taken_away": [
+   "reached the end of the stretch",
+   1
+  ]
+ },
+ {
+  "act": "FBZ1",
+  "item": "invincible",
+  "t0": 11762,
+  "t1": 12956,
+  "start_point": 197,
+  "from_frame": 11819,
+  "kept": [
+   "reached the end of the stretch",
+   0
+  ],
+  "taken_away": [
+   "death",
+   2
+  ]
+ },
+ {
+  "act": "LRZ1",
+  "item": "fire shield",
+  "t0": 9323,
+  "t1": 12627,
+  "start_point": 156,
+  "from_frame": 9359,
+  "kept": [
+   "reached the end of the stretch",
+   0
+  ],
+  "taken_away": [
+   "death",
+   1
+  ]
+ },
+ {
+  "act": "LRZ2",
+  "item": "fire shield",
+  "t0": 8207,
+  "t1": 9056,
+  "start_point": 138,
+  "from_frame": 8279,
+  "kept": [
+   "reached the end of the stretch",
+   0
+  ],
+  "taken_away": [
+   "death",
+   0
+  ]
+ },
+ {
+  "act": "LRZ3",
+  "item": "fire shield",
+  "t0": 3065,
+  "t1": 4396,
+  "start_point": 52,
+  "from_frame": 3119,
+  "kept": [
+   "reached the end of the stretch",
+   0
+  ],
+  "taken_away": [
+   "death",
+   0
+  ]
+ },
+ {
+  "act": "DEZ1",
+  "item": "invincible",
+  "t0": 7669,
+  "t1": 8862,
+  "start_point": 129,
+  "from_frame": 7739,
+  "kept": [
+   "reached the end of the stretch",
+   0
+  ],
+  "taken_away": [
+   "death",
+   3
+  ]
+ },
+ {
+  "act": "DEZ2",
+  "item": "fire shield",
+  "t0": 1495,
+  "t1": 3051,
+  "start_point": 26,
+  "from_frame": 1559,
+  "kept": [
+   "reached the end of the stretch",
+   0
+  ],
+  "taken_away": [
+   "reached the end of the stretch",
+   0
+  ]
+ }
+]

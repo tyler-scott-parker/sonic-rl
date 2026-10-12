@@ -1,0 +1,1558 @@
+{
+ "AIZ1": {
+  "outcome": "clear",
+  "frames": 5098,
+  "target": 5098,
+  "items": [
+   {
+    "item": "invincible",
+    "t0": 1315,
+    "t1": 2513,
+    "frames": 1199,
+    "at": [
+     8788,
+     862
+    ],
+    "until": [
+     12329,
+     857
+    ],
+    "ended": "lost/expired",
+    "rings_lost_in_hits": 0
+   }
+  ],
+  "loops": [],
+  "barrels": []
+ },
+ "AIZ2": {
+  "outcome": "clear",
+  "frames": 9866,
+  "target": 9866,
+  "items": [
+   {
+    "item": "bubble shield",
+    "t0": 0,
+    "t1": 9345,
+    "frames": 9346,
+    "at": [
+     4589,
+     859
+    ],
+    "until": [
+     18964,
+     508
+    ],
+    "ended": "lost/expired",
+    "rings_lost_in_hits": 0
+   }
+  ],
+  "loops": [
+   {
+    "block": [
+     133,
+     3
+    ],
+    "px": [
+     17024,
+     384
+    ],
+    "visits": 12
+   },
+   {
+    "block": [
+     147,
+     3
+    ],
+    "px": [
+     18816,
+     384
+    ],
+    "visits": 5
+   }
+  ],
+  "barrels": []
+ },
+ "HCZ1": {
+  "outcome": "clear",
+  "frames": 9154,
+  "target": 9154,
+  "items": [
+   {
+    "item": "bubble shield",
+    "t0": 2098,
+    "t1": 9153,
+    "frames": 7056,
+    "at": [
+     5342,
+     2123
+    ],
+    "until": [
+     14116,
+     1706
+    ],
+    "ended": "act end",
+    "rings_lost_in_hits": 0
+   }
+  ],
+  "loops": [],
+  "barrels": []
+ },
+ "HCZ2": {
+  "outcome": "clear",
+  "frames": 16829,
+  "target": 16829,
+  "items": [
+   {
+    "item": "invincible",
+    "t0": 9420,
+    "t1": 10614,
+    "frames": 1195,
+    "at": [
+     10691,
+     1220
+    ],
+    "until": [
+     14261,
+     684
+    ],
+    "ended": "lost/expired",
+    "rings_lost_in_hits": 0
+   },
+   {
+    "item": "bubble shield",
+    "t0": 0,
+    "t1": 3286,
+    "frames": 3287,
+    "at": [
+     292,
+     1772
+    ],
+    "until": [
+     2868,
+     300
+    ],
+    "ended": "lost/expired",
+    "rings_lost_in_hits": 0
+   }
+  ],
+  "loops": [
+   {
+    "block": [
+     129,
+     14
+    ],
+    "px": [
+     16512,
+     1792
+    ],
+    "visits": 6
+   },
+   {
+    "block": [
+     130,
+     15
+    ],
+    "px": [
+     16640,
+     1920
+    ],
+    "visits": 5
+   },
+   {
+    "block": [
+     129,
+     15
+    ],
+    "px": [
+     16512,
+     1920
+    ],
+    "visits": 4
+   },
+   {
+    "block": [
+     130,
+     14
+    ],
+    "px": [
+     16640,
+     1792
+    ],
+    "visits": 4
+   }
+  ],
+  "barrels": []
+ },
+ "MGZ1": {
+  "outcome": "clear",
+  "frames": 13815,
+  "target": 13815,
+  "items": [
+   {
+    "item": "lightning shield",
+    "t0": 316,
+    "t1": 2661,
+    "frames": 2346,
+    "at": [
+     2027,
+     1709
+    ],
+    "until": [
+     2942,
+     1640
+    ],
+    "ended": "lost/expired",
+    "rings_lost_in_hits": 0
+   }
+  ],
+  "loops": [],
+  "barrels": []
+ },
+ "MGZ2": {
+  "outcome": "clear",
+  "frames": 19140,
+  "target": 19140,
+  "items": [
+   {
+    "item": "invincible",
+    "t0": 7397,
+    "t1": 8590,
+    "frames": 1194,
+    "at": [
+     8381,
+     1876
+    ],
+    "until": [
+     7926,
+     2242
+    ],
+    "ended": "lost/expired",
+    "rings_lost_in_hits": 0
+   },
+   {
+    "item": "fire shield",
+    "t0": 12380,
+    "t1": 13937,
+    "frames": 1558,
+    "at": [
+     14309,
+     1758
+    ],
+    "until": [
+     13715,
+     2892
+    ],
+    "ended": "lost/expired",
+    "rings_lost_in_hits": 0
+   },
+   {
+    "item": "lightning shield",
+    "t0": 0,
+    "t1": 1174,
+    "frames": 1175,
+    "at": [
+     155,
+     2237
+    ],
+    "until": [
+     2265,
+     1598
+    ],
+    "ended": "lost/expired",
+    "rings_lost_in_hits": 0
+   }
+  ],
+  "loops": [
+   {
+    "block": [
+     121,
+     14
+    ],
+    "px": [
+     15488,
+     1792
+    ],
+    "visits": 5
+   },
+   {
+    "block": [
+     122,
+     14
+    ],
+    "px": [
+     15616,
+     1792
+    ],
+    "visits": 5
+   },
+   {
+    "block": [
+     123,
+     14
+    ],
+    "px": [
+     15744,
+     1792
+    ],
+    "visits": 5
+   },
+   {
+    "block": [
+     122,
+     13
+    ],
+    "px": [
+     15616,
+     1664
+    ],
+    "visits": 4
+   }
+  ],
+  "barrels": []
+ },
+ "CNZ1": {
+  "outcome": "clear",
+  "frames": 10445,
+  "target": 10445,
+  "items": [],
+  "loops": [
+   {
+    "block": [
+     101,
+     5
+    ],
+    "px": [
+     12928,
+     640
+    ],
+    "visits": 5
+   }
+  ],
+  "barrels": []
+ },
+ "CNZ2": {
+  "outcome": "clear",
+  "frames": 22257,
+  "target": 22257,
+  "items": [
+   {
+    "item": "invincible",
+    "t0": 17858,
+    "t1": 19053,
+    "frames": 1196,
+    "at": [
+     11642,
+     620
+    ],
+    "until": [
+     13465,
+     1260
+    ],
+    "ended": "lost/expired",
+    "rings_lost_in_hits": 0
+   },
+   {
+    "item": "lightning shield",
+    "t0": 14628,
+    "t1": 21741,
+    "frames": 7114,
+    "at": [
+     8599,
+     1292
+    ],
+    "until": [
+     18607,
+     616
+    ],
+    "ended": "lost/expired",
+    "rings_lost_in_hits": 0
+   },
+   {
+    "item": "bubble shield",
+    "t0": 9147,
+    "t1": 12867,
+    "frames": 3721,
+    "at": [
+     8497,
+     672
+    ],
+    "until": [
+     9426,
+     2284
+    ],
+    "ended": "lost/expired",
+    "rings_lost_in_hits": 0
+   }
+  ],
+  "loops": [],
+  "barrels": [
+   {
+    "t0": 4831,
+    "t1": 5076,
+    "switches": 6,
+    "shortest_hold": 41,
+    "median_hold": 47.0,
+    "at": [
+     6197,
+     1493
+    ]
+   },
+   {
+    "t0": 17217,
+    "t1": 17503,
+    "switches": 6,
+    "shortest_hold": 42,
+    "median_hold": 51.0,
+    "at": [
+     11544,
+     407
+    ]
+   }
+  ]
+ },
+ "ICZ1": {
+  "outcome": "clear",
+  "frames": 16514,
+  "target": 16514,
+  "items": [],
+  "loops": [
+   {
+    "block": [
+     198,
+     14
+    ],
+    "px": [
+     25344,
+     1792
+    ],
+    "visits": 7
+   },
+   {
+    "block": [
+     198,
+     13
+    ],
+    "px": [
+     25344,
+     1664
+    ],
+    "visits": 7
+   },
+   {
+    "block": [
+     198,
+     12
+    ],
+    "px": [
+     25344,
+     1536
+    ],
+    "visits": 7
+   },
+   {
+    "block": [
+     189,
+     13
+    ],
+    "px": [
+     24192,
+     1664
+    ],
+    "visits": 6
+   },
+   {
+    "block": [
+     195,
+     7
+    ],
+    "px": [
+     24960,
+     896
+    ],
+    "visits": 5
+   },
+   {
+    "block": [
+     194,
+     8
+    ],
+    "px": [
+     24832,
+     1024
+    ],
+    "visits": 5
+   },
+   {
+    "block": [
+     193,
+     9
+    ],
+    "px": [
+     24704,
+     1152
+    ],
+    "visits": 5
+   },
+   {
+    "block": [
+     192,
+     9
+    ],
+    "px": [
+     24576,
+     1152
+    ],
+    "visits": 5
+   }
+  ],
+  "barrels": []
+ },
+ "ICZ2": {
+  "outcome": "clear",
+  "frames": 10611,
+  "target": 10611,
+  "items": [
+   {
+    "item": "lightning shield",
+    "t0": 611,
+    "t1": 4617,
+    "frames": 4007,
+    "at": [
+     3090,
+     1093
+    ],
+    "until": [
+     13678,
+     2520
+    ],
+    "ended": "lost/expired",
+    "rings_lost_in_hits": 0
+   }
+  ],
+  "loops": [
+   {
+    "block": [
+     87,
+     18
+    ],
+    "px": [
+     11136,
+     2304
+    ],
+    "visits": 5
+   },
+   {
+    "block": [
+     109,
+     11
+    ],
+    "px": [
+     13952,
+     1408
+    ],
+    "visits": 4
+   },
+   {
+    "block": [
+     109,
+     12
+    ],
+    "px": [
+     13952,
+     1536
+    ],
+    "visits": 4
+   }
+  ],
+  "barrels": []
+ },
+ "LBZ1": {
+  "outcome": "clear",
+  "frames": 17307,
+  "target": 17307,
+  "items": [],
+  "loops": [
+   {
+    "block": [
+     125,
+     3
+    ],
+    "px": [
+     16000,
+     384
+    ],
+    "visits": 4
+   }
+  ],
+  "barrels": []
+ },
+ "LBZ2": {
+  "outcome": "clear",
+  "frames": 17184,
+  "target": 17184,
+  "items": [
+   {
+    "item": "invincible",
+    "t0": 8803,
+    "t1": 9996,
+    "frames": 1194,
+    "at": [
+     9288,
+     388
+    ],
+    "until": [
+     8954,
+     1009
+    ],
+    "ended": "lost/expired",
+    "rings_lost_in_hits": 0
+   },
+   {
+    "item": "bubble shield",
+    "t0": 13669,
+    "t1": 17028,
+    "frames": 3360,
+    "at": [
+     12130,
+     1388
+    ],
+    "until": [
+     15087,
+     1493
+    ],
+    "ended": "lost/expired",
+    "rings_lost_in_hits": 0
+   }
+  ],
+  "loops": [
+   {
+    "block": [
+     86,
+     15
+    ],
+    "px": [
+     11008,
+     1920
+    ],
+    "visits": 5
+   },
+   {
+    "block": [
+     89,
+     14
+    ],
+    "px": [
+     11392,
+     1792
+    ],
+    "visits": 5
+   },
+   {
+    "block": [
+     90,
+     14
+    ],
+    "px": [
+     11520,
+     1792
+    ],
+    "visits": 5
+   },
+   {
+    "block": [
+     57,
+     12
+    ],
+    "px": [
+     7296,
+     1536
+    ],
+    "visits": 4
+   },
+   {
+    "block": [
+     87,
+     15
+    ],
+    "px": [
+     11136,
+     1920
+    ],
+    "visits": 4
+   },
+   {
+    "block": [
+     88,
+     15
+    ],
+    "px": [
+     11264,
+     1920
+    ],
+    "visits": 4
+   },
+   {
+    "block": [
+     89,
+     15
+    ],
+    "px": [
+     11392,
+     1920
+    ],
+    "visits": 4
+   },
+   {
+    "block": [
+     91,
+     14
+    ],
+    "px": [
+     11648,
+     1792
+    ],
+    "visits": 4
+   }
+  ],
+  "barrels": []
+ },
+ "LBZ2b": {
+  "outcome": "clear",
+  "frames": 1275,
+  "target": 1275,
+  "items": [],
+  "loops": [
+   {
+    "block": [
+     136,
+     13
+    ],
+    "px": [
+     17408,
+     1664
+    ],
+    "visits": 4
+   }
+  ],
+  "barrels": []
+ },
+ "MHZ1": {
+  "outcome": "clear",
+  "frames": 9032,
+  "target": 9032,
+  "items": [],
+  "loops": [],
+  "barrels": [
+   {
+    "t0": 2418,
+    "t1": 2709,
+    "switches": 14,
+    "shortest_hold": 17,
+    "median_hold": 23.0,
+    "at": [
+     4414,
+     1822
+    ]
+   },
+   {
+    "t0": 2734,
+    "t1": 2965,
+    "switches": 8,
+    "shortest_hold": 19,
+    "median_hold": 27.0,
+    "at": [
+     4414,
+     1628
+    ]
+   }
+  ]
+ },
+ "MHZ2": {
+  "outcome": "clear",
+  "frames": 11549,
+  "target": 11549,
+  "items": [],
+  "loops": [
+   {
+    "block": [
+     71,
+     11
+    ],
+    "px": [
+     9088,
+     1408
+    ],
+    "visits": 5
+   },
+   {
+    "block": [
+     71,
+     10
+    ],
+    "px": [
+     9088,
+     1280
+    ],
+    "visits": 4
+   }
+  ],
+  "barrels": []
+ },
+ "FBZ1": {
+  "outcome": "clear",
+  "frames": 18561,
+  "target": 18561,
+  "items": [
+   {
+    "item": "invincible",
+    "t0": 11762,
+    "t1": 12956,
+    "frames": 1195,
+    "at": [
+     6235,
+     2225
+    ],
+    "until": [
+     4542,
+     1681
+    ],
+    "ended": "lost/expired",
+    "rings_lost_in_hits": 0
+   }
+  ],
+  "loops": [
+   {
+    "block": [
+     26,
+     8
+    ],
+    "px": [
+     3328,
+     1024
+    ],
+    "visits": 5
+   },
+   {
+    "block": [
+     25,
+     8
+    ],
+    "px": [
+     3200,
+     1024
+    ],
+    "visits": 4
+   },
+   {
+    "block": [
+     94,
+     11
+    ],
+    "px": [
+     12032,
+     1408
+    ],
+    "visits": 4
+   }
+  ],
+  "barrels": []
+ },
+ "FBZ2": {
+  "outcome": "clear",
+  "frames": 17442,
+  "target": 17442,
+  "items": [
+   {
+    "item": "lightning shield",
+    "t0": 1047,
+    "t1": 2939,
+    "frames": 1893,
+    "at": [
+     2483,
+     748
+    ],
+    "until": [
+     2098,
+     2467
+    ],
+    "ended": "lost/expired",
+    "rings_lost_in_hits": 0
+   }
+  ],
+  "loops": [
+   {
+    "block": [
+     86,
+     13
+    ],
+    "px": [
+     11008,
+     1664
+    ],
+    "visits": 5
+   },
+   {
+    "block": [
+     87,
+     13
+    ],
+    "px": [
+     11136,
+     1664
+    ],
+    "visits": 5
+   },
+   {
+    "block": [
+     93,
+     12
+    ],
+    "px": [
+     11904,
+     1536
+    ],
+    "visits": 5
+   },
+   {
+    "block": [
+     94,
+     12
+    ],
+    "px": [
+     12032,
+     1536
+    ],
+    "visits": 4
+   }
+  ],
+  "barrels": []
+ },
+ "SOZ1": {
+  "outcome": "clear",
+  "frames": 21636,
+  "target": 21636,
+  "items": [],
+  "loops": [
+   {
+    "block": [
+     134,
+     19
+    ],
+    "px": [
+     17152,
+     2432
+    ],
+    "visits": 5
+   },
+   {
+    "block": [
+     132,
+     19
+    ],
+    "px": [
+     16896,
+     2432
+    ],
+    "visits": 4
+   },
+   {
+    "block": [
+     135,
+     19
+    ],
+    "px": [
+     17280,
+     2432
+    ],
+    "visits": 4
+   }
+  ],
+  "barrels": []
+ },
+ "SOZ2": {
+  "outcome": "clear",
+  "frames": 23667,
+  "target": 23667,
+  "items": [],
+  "loops": [
+   {
+    "block": [
+     27,
+     13
+    ],
+    "px": [
+     3456,
+     1664
+    ],
+    "visits": 5
+   },
+   {
+    "block": [
+     26,
+     13
+    ],
+    "px": [
+     3328,
+     1664
+    ],
+    "visits": 5
+   },
+   {
+    "block": [
+     32,
+     5
+    ],
+    "px": [
+     4096,
+     640
+    ],
+    "visits": 5
+   },
+   {
+    "block": [
+     33,
+     4
+    ],
+    "px": [
+     4224,
+     512
+    ],
+    "visits": 4
+   },
+   {
+    "block": [
+     33,
+     5
+    ],
+    "px": [
+     4224,
+     640
+    ],
+    "visits": 4
+   },
+   {
+    "block": [
+     140,
+     10
+    ],
+    "px": [
+     17920,
+     1280
+    ],
+    "visits": 4
+   }
+  ],
+  "barrels": []
+ },
+ "LRZ1": {
+  "outcome": "clear",
+  "frames": 20123,
+  "target": 20123,
+  "items": [
+   {
+    "item": "fire shield",
+    "t0": 9323,
+    "t1": 12627,
+    "frames": 3305,
+    "at": [
+     5705,
+     1059
+    ],
+    "until": [
+     9348,
+     1901
+    ],
+    "ended": "lost/expired",
+    "rings_lost_in_hits": 0
+   },
+   {
+    "item": "lightning shield",
+    "t0": 7597,
+    "t1": 9322,
+    "frames": 1726,
+    "at": [
+     5703,
+     668
+    ],
+    "until": [
+     5703,
+     1057
+    ],
+    "ended": "lost/expired",
+    "rings_lost_in_hits": 0
+   }
+  ],
+  "loops": [
+   {
+    "block": [
+     89,
+     14
+    ],
+    "px": [
+     11392,
+     1792
+    ],
+    "visits": 13
+   },
+   {
+    "block": [
+     88,
+     15
+    ],
+    "px": [
+     11264,
+     1920
+    ],
+    "visits": 11
+   },
+   {
+    "block": [
+     89,
+     15
+    ],
+    "px": [
+     11392,
+     1920
+    ],
+    "visits": 9
+   },
+   {
+    "block": [
+     88,
+     14
+    ],
+    "px": [
+     11264,
+     1792
+    ],
+    "visits": 7
+   },
+   {
+    "block": [
+     90,
+     15
+    ],
+    "px": [
+     11520,
+     1920
+    ],
+    "visits": 6
+   }
+  ],
+  "barrels": []
+ },
+ "LRZ2": {
+  "outcome": "clear",
+  "frames": 16321,
+  "target": 16321,
+  "items": [
+   {
+    "item": "fire shield",
+    "t0": 8207,
+    "t1": 9056,
+    "frames": 850,
+    "at": [
+     6358,
+     1794
+    ],
+    "until": [
+     6914,
+     1452
+    ],
+    "ended": "lost/expired",
+    "rings_lost_in_hits": 0
+   }
+  ],
+  "loops": [],
+  "barrels": []
+ },
+ "LRZ3": {
+  "outcome": "clear",
+  "frames": 8448,
+  "target": 8448,
+  "items": [
+   {
+    "item": "fire shield",
+    "t0": 3065,
+    "t1": 4396,
+    "frames": 1332,
+    "at": [
+     2744,
+     1091
+    ],
+    "until": [
+     2595,
+     1462
+    ],
+    "ended": "lost/expired",
+    "rings_lost_in_hits": 0
+   },
+   {
+    "item": "lightning shield",
+    "t0": 2823,
+    "t1": 3064,
+    "frames": 242,
+    "at": [
+     3272,
+     1156
+    ],
+    "until": [
+     2745,
+     1089
+    ],
+    "ended": "lost/expired",
+    "rings_lost_in_hits": 0
+   }
+  ],
+  "loops": [
+   {
+    "block": [
+     21,
+     10
+    ],
+    "px": [
+     2688,
+     1280
+    ],
+    "visits": 11
+   },
+   {
+    "block": [
+     20,
+     11
+    ],
+    "px": [
+     2560,
+     1408
+    ],
+    "visits": 9
+   },
+   {
+    "block": [
+     22,
+     11
+    ],
+    "px": [
+     2816,
+     1408
+    ],
+    "visits": 4
+   }
+  ],
+  "barrels": []
+ },
+ "HPZ1": {
+  "outcome": "clear",
+  "frames": 3470,
+  "target": 3470,
+  "items": [],
+  "loops": [
+   {
+    "block": [
+     35,
+     8
+    ],
+    "px": [
+     4480,
+     1024
+    ],
+    "visits": 4
+   },
+   {
+    "block": [
+     36,
+     8
+    ],
+    "px": [
+     4608,
+     1024
+    ],
+    "visits": 4
+   }
+  ],
+  "barrels": []
+ },
+ "SSZ1": {
+  "outcome": "clear",
+  "frames": 18792,
+  "target": 18792,
+  "items": [],
+  "loops": [
+   {
+    "block": [
+     4,
+     16
+    ],
+    "px": [
+     512,
+     2048
+    ],
+    "visits": 5
+   },
+   {
+    "block": [
+     31,
+     20
+    ],
+    "px": [
+     3968,
+     2560
+    ],
+    "visits": 4
+   },
+   {
+    "block": [
+     30,
+     20
+    ],
+    "px": [
+     3840,
+     2560
+    ],
+    "visits": 4
+   },
+   {
+    "block": [
+     4,
+     15
+    ],
+    "px": [
+     512,
+     1920
+    ],
+    "visits": 4
+   }
+  ],
+  "barrels": []
+ },
+ "DEZ1": {
+  "outcome": "clear",
+  "frames": 14169,
+  "target": 14169,
+  "items": [
+   {
+    "item": "invincible",
+    "t0": 7669,
+    "t1": 8862,
+    "frames": 1194,
+    "at": [
+     8770,
+     1855
+    ],
+    "until": [
+     9556,
+     2120
+    ],
+    "ended": "lost/expired",
+    "rings_lost_in_hits": 0
+   }
+  ],
+  "loops": [
+   {
+    "block": [
+     110,
+     5
+    ],
+    "px": [
+     14080,
+     640
+    ],
+    "visits": 6
+   }
+  ],
+  "barrels": []
+ },
+ "DEZ2": {
+  "outcome": "clear",
+  "frames": 21902,
+  "target": 21902,
+  "items": [
+   {
+    "item": "fire shield",
+    "t0": 1495,
+    "t1": 3051,
+    "frames": 1557,
+    "at": [
+     1910,
+     1689
+    ],
+    "until": [
+     3266,
+     2588
+    ],
+    "ended": "lost/expired",
+    "rings_lost_in_hits": 0
+   },
+   {
+    "item": "lightning shield",
+    "t0": 3052,
+    "t1": 4193,
+    "frames": 1142,
+    "at": [
+     3265,
+     2588
+    ],
+    "until": [
+     3443,
+     2280
+    ],
+    "ended": "lost/expired",
+    "rings_lost_in_hits": 0
+   },
+   {
+    "item": "lightning shield",
+    "t0": 16285,
+    "t1": 16479,
+    "frames": 195,
+    "at": [
+     10471,
+     2412
+    ],
+    "until": [
+     10929,
+     2252
+    ],
+    "ended": "lost/expired",
+    "rings_lost_in_hits": 0
+   },
+   {
+    "item": "bubble shield",
+    "t0": 4728,
+    "t1": 6698,
+    "frames": 1971,
+    "at": [
+     3573,
+     1975
+    ],
+    "until": [
+     6731,
+     1473
+    ],
+    "ended": "lost/expired",
+    "rings_lost_in_hits": 0
+   }
+  ],
+  "loops": [
+   {
+    "block": [
+     25,
+     19
+    ],
+    "px": [
+     3200,
+     2432
+    ],
+    "visits": 5
+   },
+   {
+    "block": [
+     107,
+     6
+    ],
+    "px": [
+     13696,
+     768
+    ],
+    "visits": 5
+   },
+   {
+    "block": [
+     107,
+     5
+    ],
+    "px": [
+     13696,
+     640
+    ],
+    "visits": 5
+   },
+   {
+    "block": [
+     26,
+     19
+    ],
+    "px": [
+     3328,
+     2432
+    ],
+    "visits": 4
+   },
+   {
+    "block": [
+     26,
+     18
+    ],
+    "px": [
+     3328,
+     2304
+    ],
+    "visits": 4
+   },
+   {
+    "block": [
+     105,
+     6
+    ],
+    "px": [
+     13440,
+     768
+    ],
+    "visits": 4
+   },
+   {
+    "block": [
+     104,
+     5
+    ],
+    "px": [
+     13312,
+     640
+    ],
+    "visits": 4
+   },
+   {
+    "block": [
+     105,
+     4
+    ],
+    "px": [
+     13440,
+     512
+    ],
+    "visits": 4
+   }
+  ],
+  "barrels": []
+ },
+ "DEZ3": {
+  "outcome": "clear",
+  "frames": 5907,
+  "target": 5907,
+  "items": [],
+  "loops": [
+   {
+    "block": [
+     11,
+     0
+    ],
+    "px": [
+     1408,
+     0
+    ],
+    "visits": 8
+   },
+   {
+    "block": [
+     12,
+     0
+    ],
+    "px": [
+     1536,
+     0
+    ],
+    "visits": 7
+   }
+  ],
+  "barrels": []
+ }
+}

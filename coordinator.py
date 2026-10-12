@@ -339,8 +339,9 @@ SLOTTED_OBJECT_BITS = 0xFA9A   # the signpost needs bit 0 free or it deletes
 def _ram_words(env, info):
     raw = np.frombuffer(bytes(env.get_ram()), dtype=np.uint8)
     swapped = raw.reshape(-1, 2)[:, ::-1].reshape(-1)
-    for ram in (raw, swapped):
-        if (int(ram[0xB010]) << 8 | int(ram[0xB011])) == int(info['x']):
+    for ram in (raw, swapped):                     # x and y: an x like $1E1E reads the same both ways
+        if ((int(ram[0xB010]) << 8 | int(ram[0xB011])) == int(info['x'])
+                and (int(ram[0xB014]) << 8 | int(ram[0xB015])) == int(info['y'])):
             return ram
     raise RuntimeError('cannot locate Player_1 in RAM')
 
