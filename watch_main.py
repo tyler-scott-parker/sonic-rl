@@ -15,7 +15,10 @@ recording of it from the same point, to compare.
 every 100k steps) and starts where training currently starts (its curriculum
 start point); F switches between that and the start of the act.
 
-Keys: 1-4 speed 25/50/100/200 %   P pause   R restart   F fresh/training start   Esc quit
+Sound plays at 100% speed (game_audio.py, as in the recorders); M mutes,
+--no-sound starts muted.
+
+Keys: 1-4 speed 25/50/100/200 %   P pause   R restart   F fresh/training start   M sound   Esc quit
 """
 import os
 import sys
@@ -40,6 +43,7 @@ ap.add_argument('--stochastic', action='store_true')
 ap.add_argument('--live', action='store_true',
                 help='follow a training run: reload its save before each episode, start where it trains')
 ap.add_argument('--fresh', action='store_true', help='with --live: start at the act\'s start (F toggles)')
+ap.add_argument('--no-sound', action='store_true', help='start muted (M toggles)')
 args = ap.parse_args()
 
 if args.run not in train_main.RUNS:
@@ -113,6 +117,30 @@ font = pygame.font.SysFont('monospace', 18, bold=True)
 clock = pygame.time.Clock()
 speed, paused, running = 100, False, True
 
+audio = None
+try:
+    import game_audio                               # noqa: E402
+    audio = game_audio.GameAudio(env.base_env.em.get_audio_rate())
+except Exception as e:                              # no device / no SDL audio: watch in silence
+    print(f'no sound: {e!r}', flush=True)
+sound = audio is not None and not args.no_sound
+stepping = False                                    # sound only while an episode steps (not resets)
+_emu_frame = C.emu_frame
+
+
+def emu_frame_with_sound(base_env, mask):
+    """coordinator.emu_frame plus that frame's sound. The env steps 4 frames per
+    agent step through it, so every frame is heard; at 100% the sound card
+    keeps the time, as in the recorders. Only this viewer patches it."""
+    out = _emu_frame(base_env, mask)
+    if stepping and sound and speed == 100:
+        audio.push(base_env.em.get_audio())
+        audio.pace()
+    return out
+
+
+C.emu_frame = emu_frame_with_sound
+
 
 def wait_for_save():
     """--live before the run's first save: a waiting screen; returns False to quit."""
@@ -131,7 +159,7 @@ def wait_for_save():
 
 def episode():
     """One episode; returns False to quit."""
-    global speed, paused, fresh
+    global speed, paused, fresh, sound, stepping
     kk = k
     if args.live:
         if not wait_for_save():
@@ -152,9 +180,15 @@ def episode():
                 elif ev.key == pygame.K_f and args.live:
                     fresh = not fresh
                     return True
+                elif ev.key == pygame.K_m and audio is not None:
+                    sound = not sound
                 elif pygame.K_1 <= ev.key <= pygame.K_4:
                     speed = SPEEDS[ev.key - pygame.K_0]
+        paced = sound and speed == 100 and not paused and outcome is None
+        if audio is not None and not paced:
+            audio.clear()                           # slowed, paused, muted or between episodes
         if not paused and outcome is None:
+            stepping = True
             if args.you:                            # your inputs, frame for frame
                 f = ck['frame'] + 1 + env.frames
                 a = int(demo_actions[f]) if f < len(demo_actions) else 0
@@ -172,6 +206,7 @@ def episode():
                 obs, r, term, trunc, info = env.step(int(a))
                 if term or trunc:
                     outcome = info['mg_result']['outcome']
+            stepping = False
             step += 1
             if outcome:
                 margin = env._target - env.frames
@@ -182,7 +217,8 @@ def episode():
         surf = pygame.surfarray.make_surface(env.render().swapaxes(0, 1))
         screen.blit(pygame.transform.scale(surf, (320 * SCALE, 224 * SCALE)), (0, 0))
         hud = (f"{who[:28]}  {key.split(':')[-1]}  start {seg['fracs'][kk]:.0%}  frames "
-               f"{env.frames}/{env._target}  {speed}%" + ('  PAUSED' if paused else ''))
+               f"{env.frames}/{env._target}  {speed}%" + ('  PAUSED' if paused else '')
+               + ('' if audio is None else '  sound' if sound and speed == 100 else '  muted'))
         if args.live:
             hud2 = (f"save at {model.num_timesteps:,} steps   "
                     + ('from the act start (F: training start)' if fresh
@@ -192,12 +228,17 @@ def episode():
         if msg:
             screen.blit(font.render(msg[:80], True, (0, 255, 128)), (8, 52 if args.live else 30))
         pygame.display.flip()
-        clock.tick(60 * speed / 100 / (1 if args.you else C.FRAME_SKIP))
+        if paced:
+            clock.tick()                            # the sound card kept the time
+        else:
+            clock.tick(60 * speed / 100 / (1 if args.you else C.FRAME_SKIP))
         if outcome and time.time() - done_at > 2.5:
             return True
 
 
 while episode():
     pass
+if audio is not None:
+    audio.close()
 pygame.quit()
 env.close()
