@@ -105,6 +105,9 @@ RUNS = {
         # 0 of 32 matched, 87% stuck at x 3,264; his route loops up-left through a path
         # swapper at (3200, 960) there)
         extra_starts={'AIZ1': [4095, 4110, 4125, 4335, 4350, 4365]},
+        # from its resume after 2026-10-12 ~13:15 (Tyler: "yes please. go ahead and build that"):
+        # a fading pull toward his inputs, half of it at the start point it's stuck at
+        imitation=dict(data='datasets/bc_v1'),
         result='STARTED 2026-10-12 11:27 (Tyler: "This sounds great!" to imitation first, then '
                '"you can have the box"). Launched at mg1\'s start point 75 (on the collapsing ledge; '
                'curriculum file copied from mg1 at 6,874,240 steps). Pretrained alone, 10 sampled '
@@ -127,6 +130,7 @@ RUNS = {
         ss='pilot', ss_detour='refund', emerald_bonus=300,
         curr_at_pointer=True, curr_min_n=32, curr_successes=8,
         extra_starts={'play_20260930-153946:AIZ1': [4095, 4110, 4125, 4335, 4350, 4365]},
+        imitation=dict(data='datasets/bc_v2'),      # the frames with the air bar
         result='NOT STARTED — DRAFTED by Claude 2026-10-12 (Tyler: "Is there any merit in '
                'multistage training?", then "Go ahead and draft it"); criteria PROPOSED '
                '(doc, Pre-Committed Criteria "Run mg2"), need Tyler\'s OK. Six acts at once '
@@ -147,6 +151,10 @@ PPO_KWARGS = dict(
     gae_lambda=0.95, clip_range=0.1, ent_coef=0.01,
     vf_coef=0.5, max_grad_norm=0.5,
 )
+
+# Imitation during RL (RUNS 'imitation': dict(data=..., and any of these to override))
+IMITATION_DEFAULTS = dict(weight=1.0, decay_steps=3_000_000, steps=8, batch=256,
+                          behind=120, ahead=600)
 
 # Backward curriculum
 CURR_WINDOW  = 32      # recent episodes judged at the current start point
@@ -263,6 +271,129 @@ class GracefulStopCallback(BaseCallback):
         if os.path.exists(self.stop_file):
             os.remove(self.stop_file)
         return False
+
+
+class ImitationCallback(BaseCallback):
+    """A fading pull toward Tyler's own inputs during RL (Tyler 2026-10-12:
+    "yes please. go ahead and build that"). After each PPO update (at the
+    start of the next rollout, so the rollout is collected by the policy it
+    trains), `steps` extra gradient steps on the log-likelihood of his action
+    on his frames (build_bc_dataset.py's pairs, weighted by how many of the 4
+    frames agree), with its own Adam at PPO's learning rate times a weight
+    that falls linearly from `weight` to 0 over `decay_steps` env steps from
+    when it starts (also on a resume). The weight scales the step size, not
+    the loss: Adam undoes any constant scaling of a loss. Half of each batch comes
+    from around each act's current curriculum start point (his frames from
+    `behind` before it to `ahead` after it: the hard spot the pointer is
+    stuck at), half from the run's whole acts (not to forget the rest). The
+    value head is left alone. Logged under imitation/ (loss, weight,
+    accuracy on the batch)."""
+
+    def __init__(self, cfg, run, curriculum_path):
+        super().__init__()
+        self.cfg, self.run, self.curriculum_path = dict(cfg), run, curriculum_path
+        self.start = None
+
+    def _on_training_start(self):
+        import torch
+        import coordinator as C                     # imported by main() after configure_env
+        self.C = C
+        c = self.cfg
+        data = os.path.join(HOME, c['data'])
+        meta = json.load(open(os.path.join(data, 'meta.json')))
+        S = dict(np.load(os.path.join(data, 'samples.npz')))
+        self.frames = [np.load(os.path.join(data, f"frames_{d['id']}.npy"), mmap_mode='r')
+                       for d in meta['demos']]
+        demo_ids = [d['id'] for d in meta['demos']]
+        trained_on = {os.path.basename(p)[:-4] for p in demo_paths(RUNS[self.run])}   # its recordings only
+        keep = np.zeros(len(S['action']), dtype=bool)
+        self.keys = {}                       # curriculum key -> sample indices of that act's recording
+        for a in RUNS[self.run]['acts']:
+            demo, _, name = a.rpartition(':')
+            for di, did in enumerate(demo_ids):
+                if (demo and did != demo) or did not in trained_on:
+                    continue
+                if name not in meta['acts']:
+                    continue
+                m = (S['demo'] == di) & (S['act'] == meta['acts'].index(name))
+                if m.any():
+                    keep |= m
+                    self.keys[f'{did}:{name}'] = np.flatnonzero(m)
+        self.S, self.all = S, np.flatnonzero(keep)
+        self.offs = np.arange(-(C.STACK - 1) * C.FRAME_SKIP, 1, C.FRAME_SKIP)
+        self.w = (S['agree'] / C.FRAME_SKIP).astype(np.float32)
+        lr = self.model.learning_rate
+        self.base_lr = lr(1.0) if callable(lr) else float(lr)
+        self.opt = torch.optim.Adam(self.model.policy.parameters(), lr=self.base_lr)
+        self.start = self.model.num_timesteps
+        if bool(meta.get('air_bar')) != (os.environ.get('MG_AIR_BAR') == '1'):
+            raise ValueError(f"imitation data {c['data']} air_bar={meta.get('air_bar')} but the run's "
+                             f"MG_AIR_BAR={os.environ.get('MG_AIR_BAR')}: the frames would differ")
+        print(f"[imitation] {len(self.all):,} of his frames in {len(self.keys)} acts ({c['data']}); "
+              f"weight {c['weight']} -> 0 over {c['decay_steps']:,} steps from {self.start:,}; "
+              f"{c['steps']} steps of {c['batch']} per update", flush=True)
+
+    def weight(self):
+        done = (self.model.num_timesteps - self.start) / self.cfg['decay_steps']
+        return self.cfg['weight'] * max(0.0, 1.0 - done)
+
+    def frontier(self):
+        """Sample indices near each act's current start point."""
+        try:
+            with open(self.curriculum_path) as f:
+                cur = json.load(f)
+        except (OSError, ValueError):
+            return self.all
+        out = []
+        for key, idx in self.keys.items():
+            if key not in cur:
+                continue
+            T = int(self.S['T'][idx[0]])
+            t0 = cur[key]['frac'] * T
+            t = self.S['t'][idx]
+            near = idx[(t >= t0 - self.cfg['behind']) & (t <= t0 + self.cfg['ahead'])]
+            out.append(near)
+        out = np.concatenate(out) if out else np.array([], dtype=int)
+        return out if len(out) else self.all
+
+    def _on_rollout_start(self):
+        import torch
+        if self.start is None:
+            return
+        lam = self.weight()
+        if lam <= 0:
+            return
+        c, pol = self.cfg, self.model.policy
+        for g in self.opt.param_groups:
+            g['lr'] = self.base_lr * lam                # the fade: smaller steps, same loss
+        front, rng = self.frontier(), np.random.default_rng()
+        tot = hits = n = 0.0
+        for _ in range(c['steps']):
+            half = c['batch'] // 2
+            idx = np.concatenate([rng.choice(front, half), rng.choice(self.all, c['batch'] - half)])
+            obs = np.empty((len(idx), self.C.STACK, self.C.OBS_SIZE, self.C.OBS_SIZE), dtype=np.uint8)
+            for j, s in enumerate(idx):
+                obs[j] = self.frames[self.S['demo'][s]][np.clip(self.S['frame'][s] + self.offs, 0, None)]
+            obs_t = torch.as_tensor(obs, device=pol.device).float()
+            act = torch.as_tensor(self.S['action'][idx], device=pol.device)
+            w = torch.as_tensor(self.w[idx], device=pol.device)
+            dist = pol.get_distribution(obs_t)
+            logp = dist.log_prob(act)
+            loss = -(w * logp).sum() / w.sum()
+            self.opt.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(pol.parameters(), 0.5)
+            self.opt.step()
+            tot += loss.item()
+            hits += (dist.distribution.probs.argmax(-1) == act).float().sum().item()
+            n += len(idx)
+        self.logger.record('imitation/loss', tot / c['steps'])
+        self.logger.record('imitation/weight', lam)
+        self.logger.record('imitation/accuracy', hits / n)
+        self.logger.record('imitation/frontier_frames', len(front))
+
+    def _on_step(self):
+        return True
 
 
 class PruneCheckpointsCallback(BaseCallback):
@@ -471,7 +602,8 @@ def main():
                               at_pointer=CFG.get('curr_at_pointer', False),
                               min_n=CFG.get('curr_min_n', CURR_MIN_N),
                               successes=CFG.get('curr_successes')),
-    ])
+    ] + ([ImitationCallback({**IMITATION_DEFAULTS, **CFG['imitation']}, args.run, P['curriculum'])]
+         if CFG.get('imitation') else []))
     try:
         model.learn(total_timesteps=CFG['steps'], callback=callbacks,
                     reset_num_timesteps=False, tb_log_name=f'main_{args.run}')
