@@ -216,6 +216,8 @@ def configure_env(run):
     # extra start points inside a hard second: {act: [demo frames]} (coordinator.py)
     # Sonic's air drawn into the observation (coordinator.obs_frame)
     os.environ['MG_AIR_BAR'] = '1' if cfg.get('air_bar') else '0'
+    # the nearest unused giant ring drawn into the observation (coordinator.draw_compass)
+    os.environ['MG_RING_COMPASS'] = '1' if cfg.get('ring_compass') else '0'
     os.environ['MG_EXTRA_STARTS'] = ';'.join(f"{a}:{','.join(map(str, ts))}"
                                              for a, ts in cfg.get('extra_starts', {}).items())
     return found
@@ -327,9 +329,10 @@ class ImitationCallback(BaseCallback):
         self.base_lr = lr(1.0) if callable(lr) else float(lr)
         self.opt = torch.optim.Adam(self.model.policy.parameters(), lr=self.base_lr)
         self.start = self.model.num_timesteps
-        if bool(meta.get('air_bar')) != (os.environ.get('MG_AIR_BAR') == '1'):
-            raise ValueError(f"imitation data {c['data']} air_bar={meta.get('air_bar')} but the run's "
-                             f"MG_AIR_BAR={os.environ.get('MG_AIR_BAR')}: the frames would differ")
+        for flag, env in (('air_bar', 'MG_AIR_BAR'), ('ring_compass', 'MG_RING_COMPASS')):
+            if bool(meta.get(flag)) != (os.environ.get(env) == '1'):
+                raise ValueError(f"imitation data {c['data']} {flag}={meta.get(flag)} but the run's "
+                                 f"{env}={os.environ.get(env)}: the frames would differ")
         print(f"[imitation] {len(self.all):,} of his frames in {len(self.keys)} acts ({c['data']}); "
               f"weight {c['weight']} -> 0 over {c['decay_steps']:,} steps from {self.start:,}; "
               f"{c['steps']} steps of {c['batch']} per update", flush=True)

@@ -75,7 +75,11 @@ its step's last two emulator frames (sprite flicker). MG_AIR_BAR=1 (RUNS
 left into each frame's top-right corner (obs_frame): the agent sees 4 frames
 and hears nothing, so it can't otherwise tell how long it has been under
 water before the drowning digits show (Tyler's own run got down to 9 s of
-air in HCZ1 and LBZ2).
+air in HCZ1 and LBZ2). MG_RING_COMPASS=1 (RUNS 'ring_compass'; Tyler
+2026-10-12: "Let's try the compass") draws, under the air bar, an 11x11 box
+with one dot where the nearest giant ring of Sonic's zone and internal act
+is (from the ROM's object layouts) that he hasn't used this episode: the
+needed rings lie 80-250 px off his route, off-screen from it (draw_compass).
 
 SPECIAL STAGES (MG_SS=pilot; default 'truncate' = the line above). On the
 entry frame a trained special-stage agent (MG_SS_RUN, default d9; ss_pilot.py)
@@ -158,6 +162,8 @@ import zlib
 import gzip
 import random
 import hashlib
+import math
+import struct
 import collections
 
 import numpy as np
@@ -358,16 +364,82 @@ AIR_FULL = 30                  # air_left out of water; drowned at 0
 AIR_ROWS, AIR_X0 = 2, OBS_SIZE - AIR_FULL      # the bar: top 2 rows, the rightmost 30 columns
 
 
-def obs_frame(prev_raw, raw, info):
+def obs_frame(prev_raw, raw, info, used=frozenset()):
     """process_frame, plus (MG_AIR_BAR) Sonic's air as a bar: one white
     pixel per second of air left, black for the rest (the strip covers
-    2 x 30 of the 84 x 84)."""
+    2 x 30 of the 84 x 84), and (MG_RING_COMPASS) the ring compass."""
     f = process_frame(prev_raw, raw)
     if MG_AIR_BAR:
         air = min(max(int(info['mg_air']), 0), AIR_FULL)
         f[:AIR_ROWS, AIR_X0:] = 0
         f[:AIR_ROWS, AIR_X0:AIR_X0 + air] = 255
+    if MG_RING_COMPASS:
+        draw_compass(f, info, used)
     return f
+
+
+# ── The ring compass ─────────────────────────────────────────────────────────
+MG_RING_COMPASS = os.environ.get('MG_RING_COMPASS', '0') == '1'
+RING_TABLE, RING_ID = 0x1E3D98, 0x85   # object layout pointers; object $85 = giant ring
+COMPASS_R = 5                          # an 11 x 11 box, top right, under the air bar
+COMPASS_Y0, COMPASS_X0 = AIR_ROWS + 1, OBS_SIZE - (2 * COMPASS_R + 1)
+COMPASS_RANGE = 768                    # px: rings this far or farther sit on the box's edge
+RING_NEAR = 160                        # px: entering a stage this close to a ring uses it
+
+
+def giant_rings():
+    """{(zone, internal act): [(x, y), ...]} of every giant ring, from the ROM's
+    object layouts (attic/one_off_tools/giant_rings.py: 77 in all)."""
+    path = os.path.join(os.path.dirname(stable_retro.__file__), 'data', 'stable', GAME, 'rom.md')
+    rom = open(path, 'rb').read()
+    out = collections.defaultdict(list)
+    for z in range(13):
+        for a in (0, 1):
+            p = struct.unpack('>I', rom[RING_TABLE + 4 * (2 * z + a):RING_TABLE + 4 * (2 * z + a) + 4])[0]
+            while True:
+                x, yf, oid, _ = struct.unpack('>HHBB', rom[p:p + 6])
+                if x == 0xFFFF:
+                    break
+                if oid == RING_ID:
+                    out[(z, a)].append((x, yf & 0x0FFF))
+                p += 6
+    return dict(out)
+
+
+GIANT_RINGS = giant_rings() if MG_RING_COMPASS else {}
+
+
+def nearest_ring(info, used=frozenset()):
+    """(key, dx, dy) of the nearest giant ring in Sonic's zone and internal act
+    not in `used` (keys (zone, act, x, y)), or None."""
+    za = (int(info['zone']), int(info['act']))
+    x, y = int(info['x']), int(info['y'])
+    best = None
+    for rx, ry in GIANT_RINGS.get(za, ()):
+        key = za + (rx, ry)
+        if key in used:
+            continue
+        d2 = (rx - x) ** 2 + (ry - y) ** 2
+        if best is None or d2 < best[0]:
+            best = (d2, key, rx - x, ry - y)
+    return None if best is None else best[1:]
+
+
+def draw_compass(f, info, used=frozenset()):
+    """The box black with a dim centre (Sonic) and one white dot toward the
+    nearest unused ring: exact direction, distance squeezed by a square root so
+    the near rings (the ones worth a detour) get most of the box; none = empty."""
+    c = (COMPASS_Y0 + COMPASS_R, COMPASS_X0 + COMPASS_R)
+    f[COMPASS_Y0:COMPASS_Y0 + 2 * COMPASS_R + 1, COMPASS_X0:COMPASS_X0 + 2 * COMPASS_R + 1] = 0
+    f[c] = 96
+    near = nearest_ring(info, used)
+    if near is None:
+        return
+    _, dx, dy = near
+    dist = math.hypot(dx, dy)
+    reach = COMPASS_R * math.sqrt(min(dist, COMPASS_RANGE) / COMPASS_RANGE)
+    px, py = (dx / dist * reach, dy / dist * reach) if dist else (0.0, 0.0)
+    f[c[0] + int(round(py)), c[1] + int(round(px))] = 255
 
 
 # ── Test fixture: a fake act end ─────────────────────────────────────────────
@@ -658,7 +730,7 @@ class SonicCoordinator(gym.Env):
             seg = None
             for i, a in enumerate(actions[:last + 1]):
                 raw, info = emu_frame(self.base_env, table[a])
-                procs.append(obs_frame(prev_raw, raw, info))
+                procs.append(obs_frame(prev_raw, raw, info))       # his play: no ring used
                 prev_raw = raw
                 event = split.feed(i, info)
                 if event == 'start' and len(split.acts) in want:
@@ -773,6 +845,7 @@ class SonicCoordinator(gym.Env):
         self._off = 0                 # v2: frames spent off the route this episode
         self._seen = set()            # v2: blocks of the level visited this episode
         self._stages = []             # pilot: the special stages played this episode
+        self._used_rings = set()      # MG_RING_COMPASS: giant rings entered this episode
         self._stage_frames = 0        # pilot: frames charged for them (not on the timeout clock)
         self.ret = 0.0
         self._t0 = time.time()
@@ -807,7 +880,7 @@ class SonicCoordinator(gym.Env):
                 info, event = stage.pop('info'), None
         if stage is None:
             prev = raws[-2] if len(raws) > 1 else self._last_raw
-            self._stack.append(obs_frame(prev, raws[-1], info))
+            self._stack.append(obs_frame(prev, raws[-1], info, self._used_rings))
             self._last_raw = raws[-1]
         self.frames += n
         x = int(info['x'])
@@ -889,6 +962,9 @@ class SonicCoordinator(gym.Env):
         back (MG_SS_TIME, MG_EMERALD_BONUS: module docstring). None if it
         couldn't (the episode is then truncated, as with MG_SS=truncate)."""
         em0 = int(info['chaos_emeralds']) + int(info['super_emeralds'])
+        near = nearest_ring(info, self._used_rings)      # the ring he just touched: gone now
+        if near is not None and math.hypot(near[1], near[2]) <= RING_NEAR:
+            self._used_rings.add(near[0])
         shrine = None
         try:
             import ss_pilot
@@ -916,7 +992,7 @@ class SonicCoordinator(gym.Env):
                 n_stage += 1
             else:
                 n_out += 1
-            procs.append(obs_frame(prev_raw, raw, info))
+            procs.append(obs_frame(prev_raw, raw, info, self._used_rings))
             prev_raw = raw
             if in_level and timer_on and not dead:
                 break

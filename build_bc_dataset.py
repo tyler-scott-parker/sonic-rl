@@ -32,8 +32,10 @@ def main():
     ap.add_argument('out', nargs='?', default=os.path.join(HOME, 'datasets', 'bc_v1'))
     ap.add_argument('--demos', default=DEFAULT_DEMOS)
     ap.add_argument('--air-bar', action='store_true', help="draw Sonic's air into the frames (MG_AIR_BAR)")
+    ap.add_argument('--compass', action='store_true', help='draw the ring compass into the frames (MG_RING_COMPASS)')
     a = ap.parse_args()
     os.environ['MG_AIR_BAR'] = '1' if a.air_bar else '0'
+    os.environ['MG_RING_COMPASS'] = '1' if a.compass else '0'
     os.environ.setdefault('MG_ENV_VERSION', '2')
     os.environ['CUDA_VISIBLE_DEVICES'] = ''
     os.environ['MG_LOG'] = os.devnull
@@ -47,7 +49,8 @@ def main():
     os.makedirs(a.out, exist_ok=True)
     base = C.make_retro()                                   # an emulator to replay with
     cols = {k: [] for k in ('demo', 'frame', 'action', 'agree', 'act', 't', 'T', 'timer_on')}
-    acts_names, meta = [], {'demos': [], 'air_bar': C.MG_AIR_BAR, 'actions': C.ACTION_NAMES, 'frame_skip': C.FRAME_SKIP,
+    acts_names, meta = [], {'demos': [], 'air_bar': C.MG_AIR_BAR, 'ring_compass': C.MG_RING_COMPASS,
+                            'actions': C.ACTION_NAMES, 'frame_skip': C.FRAME_SKIP,
                             'stack': C.STACK, 'obs_size': C.OBS_SIZE}
     t0 = time.time()
     for di, did in enumerate(a.demos.split(',')):
