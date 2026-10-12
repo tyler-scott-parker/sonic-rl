@@ -13,13 +13,17 @@ $E500-$E5FF and the controller bytes $F604/$F605 (a button press leaves a copy
 there for 64 frames while play itself is unchanged), but the jump button's
 held bit is kept, since it decides whether the next press is a press. A
 direction pressed mid-cell IS kept: it buffers a turn ($E42A). Above `beam`
-states per frame, the ones with fewer spheres left and nearer a blue sphere are
-kept, at most `per` per (cell, heading, jump state) first so that one idea
-can't fill the beam. Each kept state costs ~1 MB of RAM.
+states per frame, half the beam follows the book: its own path is always kept,
+then states exactly on its track (same position, heading, jump state and
+spheres left as the book at some frame), most frames ahead of the book first.
+The rest go to the ones with fewer spheres left and nearer a blue sphere, at
+most `per` per (cell, heading, jump state) first so that one idea can't fill
+the beam. Each kept state costs ~1 MB of RAM.
 
-It searches up to the book's own time: finding exactly the book's time means
-the beam kept the book's path and nothing within it is faster (the sanity
-check). A faster clear (the book's frames up to FROM_FRAME + the found frames)
+It searches up to the book's own time, so finding exactly the book's time
+means nothing within the beam is faster. (The book half was added 2026-10-12:
+without it, a greedy beam from 288 and 344 frames before the end lost the
+book's path, ending boxed in with 2 spheres left, and answered nothing.) A faster clear (the book's frames up to FROM_FRAME + the found frames)
 is saved to routes/candidates/, where `route_book.py harvest` checks and
 promotes it like any other.
 
@@ -62,6 +66,17 @@ def main():
         env._step_frames(int(act), 1)
     em, base = env.base_env.em, env.base_env
     buttons = [env._actions[i] for i in range(len(sse.ACTION_BUTTONS))]
+    s0 = em.get_state()
+
+    def track_of(info, ram):
+        return (int(info.get('ss_x', 0)), int(info.get('ss_y', 0)), int(ram[sse.ADDR_HEADING]),
+                int(ram[sse.ADDR_JUMPING]), int(info.get('blue_spheres_remaining', 999)))
+
+    track = {}                                # the book's (position, heading, jump, left) -> its first frame
+    for t in range(F0, len(book)):
+        _, _, _, _, info = base.step(buttons[int(book[t])])
+        track.setdefault(track_of(info, env._ram()), t + 1)
+    em.set_state(s0)
 
     def key_of(ram):
         k = ram.copy()
@@ -78,15 +93,14 @@ def main():
         dr, dc = np.abs(blues[:, 0] - cell[0]), np.abs(blues[:, 1] - cell[1])
         return int((np.minimum(dr, 32 - dr) + np.minimum(dc, 32 - dc)).min())
 
-    s0 = em.get_state()
-    frontier = [(s0, None)]                   # (emulator state, path node); node = (parent, action)
+    frontier = [(s0, None, True)]             # (emulator state, path node, on the book's path); node = (parent, action)
     t0 = time.time()
     print(f'board {B}: book {len(book)} frames; searching from frame {F0}, beam {K}, '
           f'{len(s0) // 1024} KB per state', flush=True)
     found = None
     for t in range(F0, len(book)):
         seen, new = set(), []
-        for st, node in frontier:
+        for st, node, on_book in frontier:
             for i, btn in enumerate(buttons):
                 em.set_state(st)
                 _, _, _, _, info = base.step(btn)
@@ -97,13 +111,16 @@ def main():
                 if ram[sse.ADDR_EXIT_TIMER]:
                     continue                    # touched a red: the stage is ending
                 k = key_of(ram)
-                if k in seen:
+                mine = on_book and i == int(book[t])
+                if k in seen and not mine:
                     continue
                 seen.add(k)
                 cell = env._cell(int(info.get('ss_x', 0)), int(info.get('ss_y', 0)))
+                tb = track.get(track_of(info, ram))
                 new.append((em.get_state(), (node, i),
                             (int(info.get('blue_spheres_remaining', 999)), dist_of(ram, cell)),
-                            (cell, int(ram[sse.ADDR_HEADING]), int(ram[sse.ADDR_JUMPING]))))
+                            (cell, int(ram[sse.ADDR_HEADING]), int(ram[sse.ADDR_JUMPING])),
+                            mine, None if tb is None else tb - (t + 1)))
             if found:
                 break
         if found:
@@ -111,18 +128,26 @@ def main():
         n_distinct = len(new)
         new.sort(key=lambda x: x[2])
         if len(new) > K:
+            mine = [x for x in new if x[4]]
+            ahead = sorted((x for x in new if x[5] is not None and x[5] >= 0 and not x[4]), key=lambda x: (-x[5], x[2]))
+            book_half = mine + ahead[:K // 2 - len(mine)]
+            taken = {id(x) for x in book_half}
             per, keep, rest = {}, [], []
             for x in new:
+                if id(x) in taken:
+                    continue
                 n = per.get(x[3], 0)
                 (keep if n < a.per else rest).append(x)
                 per[x[3]] = n + 1
-            new = sorted((keep + rest)[:K], key=lambda x: x[2])
-        frontier = [(x[0], x[1]) for x in new]
+            new = sorted(book_half + (keep + rest)[:K - len(book_half)], key=lambda x: x[2])
+        frontier = [(x[0], x[1], x[4]) for x in new]
         if (t - F0) % 10 == 0:
+            on_track = [x[5] for x in new if x[5] is not None]
             print(f'  frame {t + 1}: {n_distinct} distinct states, kept {len(frontier)}, best (left, distance) '
-                  f'{new[0][2] if new else "-"} [{time.time() - t0:.0f} s]', flush=True)
+                  f'{new[0][2] if new else "-"}, {len(on_track)} on the book\'s track, most ahead '
+                  f'{max(on_track) if on_track else "-"} [{time.time() - t0:.0f} s]', flush=True)
     if not found:
-        print(f'no clear by frame {len(book)} within the beam (the book\'s path was dropped) '
+        print(f'no clear by frame {len(book)}: the book\'s own path failed to replay (a bug) '
               f'[{time.time() - t0:.0f} s]')
         return
     node, frames = found
