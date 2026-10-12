@@ -125,10 +125,11 @@ RUNS = {
                                               ('AIZ2', 'HCZ1', 'HCZ2', 'MGZ1', 'MGZ2')],
         demos=['play_20260930-153946', 'play_20261010-202923'], demo_prob=0.75,
         lr=2.5e-4, steps=100_000_000, env_version=2,
-        # from the imitation network with the air bar (train_bc.py bc4: mg1bc's network at
-        # 4,835,616 steps, which clears AIZ1 from the start, + one epoch of his actions on
-        # datasets/bc_v2); mg1bc's curriculum file copied at launch (AIZ1 starts at 63)
-        init='bc4', air_bar=True,
+        # from mg1bc's own network (it clears AIZ1 from the start: 5/20), no upfront copying
+        # pass: one (bc4; even bc5 with AIZ1 left out) dropped that to 0/20; the fading
+        # imitation pull teaches the five new acts instead. mg1bc's curriculum file copied at
+        # launch (AIZ1 starts at 63). First attempt from bc4: logs/archive_mg2_from_bc4/
+        init='mg1bc', air_bar=True,
         ss='pilot', ss_detour='refund', emerald_bonus=300,
         curr_at_pointer=True, curr_min_n=32, curr_successes=8,
         extra_starts={'play_20260930-153946:AIZ1': [4095, 4110, 4125, 4335, 4350, 4365]},
@@ -136,9 +137,10 @@ RUNS = {
         # compass on, and the imitation frames drawn with it (bc_v3 = bar + compass)
         ring_compass=True,
         imitation=dict(data='datasets/bc_v3'),
-        result='STARTED 2026-10-12 ~13:50, criteria AGREED (Tyler: "let\'s do it!" after mg1bc '
-               'cleared AIZ1 from the start). Six acts at once from the imitation network: '
-               'do the five new acts learn, and does sharing hurt AIZ1? (doc "Run mg2")',
+        result='STARTED 2026-10-12 ~13:50 from bc4, criteria AGREED (Tyler: "let\'s do it!" after '
+               'mg1bc cleared AIZ1 from the start); RESTARTED ~16:25 from mg1bc (bc4 had lost AIZ1 '
+               'from the start: 0/20 vs mg1bc 5/20). Six acts at once: do the five new acts learn, '
+               'and does sharing hurt AIZ1? (doc "Run mg2")',
     ),
 }
 
