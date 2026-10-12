@@ -74,6 +74,7 @@ RUNS = {
     'mg1': dict(
         acts=['AIZ1'], demos=['play_20260930-153946'], demo_prob=0.75,
         lr=2.5e-4, steps=50_000_000, env_version=2,
+        ss='pilot',     # from 2026-10-12 ~10:45 (Tyler: "can we have special stages turned on?")
         result='STARTED 2026-10-12 ~07:40 (Tyler: "i want to start working on the main game"; '
                'd10 paused, board 14 back overnight). Criteria still Claude\'s proposal (doc, '
                'Pre-Committed Criteria "Run mg1"). aiz1 exactly, but on MG env v2 (new ground '
@@ -145,6 +146,9 @@ def configure_env(run):
     # 1 = the 2026-09-30 env (smoke, aiz1); new runs set env_version=2
     # (new ground counts against `stuck`; off-route time settled on return)
     os.environ['MG_ENV_VERSION'] = str(cfg.get('env_version', 1))
+    # special stages: 'truncate' (default: a giant ring ends the episode) or
+    # 'pilot' (the special-stage agent / route book plays it; coordinator.py)
+    os.environ['MG_SS'] = cfg.get('ss', 'truncate')
     return found
 
 

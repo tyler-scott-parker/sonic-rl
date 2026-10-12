@@ -139,7 +139,7 @@ except Exception as e:                              # no device / no SDL audio: 
 sound = audio is not None and not args.no_sound
 stepping = False                                    # shown and heard only while an episode steps (not resets)
 hud_lines = []                                      # (text, colour), drawn over every frame
-_emu_frame = C.emu_frame
+_base_step = env.base_env.step
 
 
 fps_count = {'n': 0, 't': time.time()}
@@ -157,23 +157,24 @@ def draw(img):
     pygame.display.flip()
 
 
-def emu_frame_shown(base_env, mask):
-    """coordinator.emu_frame, plus that frame on screen and its sound. The env
-    steps 4 frames per agent step through it, so every frame is seen and heard
-    (drawing once per step gave 15 fps). At 100% with sound the sound card
-    keeps the time, as in the recorders. Only this viewer patches it."""
-    out = _emu_frame(base_env, mask)
+def step_shown(*a, **kw):
+    """The emulator's step, plus that frame on screen and its sound. The env
+    steps 4 frames per agent step, and a special stage (MG_SS=pilot) hundreds
+    in one agent step, all through here, so every frame is seen and heard
+    (drawing once per agent step gave 15 fps). At 100% with sound the sound
+    card keeps the time, as in the recorders. Only this viewer patches it."""
+    out = _base_step(*a, **kw)
     if stepping:
-        draw(base_env.em.get_screen())
+        draw(env.base_env.em.get_screen())
         if sound and speed == 100:
-            audio.push(base_env.em.get_audio())
+            audio.push(env.base_env.em.get_audio())
             audio.pace()
         else:
             clock.tick(60 * speed / 100)
     return out
 
 
-C.emu_frame = emu_frame_shown
+env.base_env.step = step_shown
 
 
 def wait_for_save():
@@ -230,16 +231,19 @@ def best_try(kk):
         outcomes[res['outcome']] += 1
         prog = env._route.best
         score = (1, -res['frames']) if res['outcome'] == 'clear' else (0, prog, -res['frames'])
-        if ring and res['outcome'] == 'stage':
+        entered = res['outcome'] == 'stage' or bool(getattr(env, '_stages', None))
+        if entered:
+            outcomes['giant ring'] += 1
+        if ring and entered:
             score = (2, -res['frames'])
         if best is None or score > best[0]:
             best = (score, acts, res, prog)
     _, acts, res, prog = best
-    tally = ', '.join(f'{n} {"giant ring" if o == "stage" else o}' for o, n in outcomes.most_common())
+    tally = ', '.join(f'{n} {o}' for o, n in outcomes.most_common() if o != 'stage')
     if res['outcome'] == 'clear':
         desc = f"best of {args.best}: cleared in {res['frames']} frames (you {res['target']})"
-    elif res['outcome'] == 'stage':
-        desc = f"a giant-ring try, {res['frames']} frames in"
+    elif ring and (res['outcome'] == 'stage' or getattr(env, '_stages', None)):
+        desc = f"a giant-ring try: {prog / seg['T']:.0%} of the act, then {res['outcome']}"
     else:
         desc = f"best of {args.best}: {prog / seg['T']:.0%} of the act, then {res['outcome']}"
     print(f'{args.best} tries: {tally}; showing {res["outcome"]}', flush=True)
