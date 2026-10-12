@@ -8,7 +8,8 @@
    its accuracy on his actions rises over a few updates, its weight falls linearly to 0 over decay_steps
    (no steps at 0), and the value head is not trained by it directly
 2. a tiny end-to-end run inside PPO's real loop: one env, the run's settings, two rollouts of 512 steps,
-   a temporary copy of the curriculum file, nothing saved: imitation/* is logged and nothing crashes
+   a temporary copy of the curriculum file, nothing saved: imitation/* is logged, nothing crashes, and
+   the fade continues from the start kept in its state file (a resume doesn't restart it)
 CPU only (2 threads). Ends with ALL CHECKS PASS or the failures.
 """
 import json
@@ -97,6 +98,8 @@ def main():
     model = PPO.load(P['zip'] + '.zip', env=env, device='cpu')
     start = model.num_timesteps
     cb2 = T.ImitationCallback(cfg, run, cur)
+    state = cur + '.imitation.json'                     # the fade's start, kept across resumes
+    json.dump({cfg['data']: start - 12345}, open(state, 'w'))
     seen = {}
 
     class Grab(T.BaseCallback):
@@ -107,9 +110,12 @@ def main():
             return True
     model.learn(total_timesteps=2 * model.n_steps, callback=[T.ActCurriculumCallback(cur, C.DEMO_BAND), cb2, Grab()],
                 reset_num_timesteps=False)
-    print(f'2. PPO ran {model.num_timesteps - start} steps with imitation; logged {sorted(seen)}')
+    print(f'2. PPO ran {model.num_timesteps - start} steps with imitation; logged {sorted(seen)}; '
+          f'fade start {cb2.start:,} (kept from the state file: {start - 12345:,})')
     if 'imitation/loss' not in seen:
         bad.append('2: no imitation step inside the PPO loop')
+    if cb2.start != start - 12345:
+        bad.append('2: a resume restarted the fade instead of continuing it')
     shutil.rmtree(tmp)
     if bad:
         print('\nFAILED:\n  ' + '\n  '.join(bad))

@@ -132,7 +132,10 @@ RUNS = {
         ss='pilot', ss_detour='refund', emerald_bonus=300,
         curr_at_pointer=True, curr_min_n=32, curr_successes=8,
         extra_starts={'play_20260930-153946:AIZ1': [4095, 4110, 4125, 4335, 4350, 4365]},
-        imitation=dict(data='datasets/bc_v2'),      # the frames with the air bar
+        # from its resume after 2026-10-12 ~14:25 (Tyler: "Let's try the compass"): the ring
+        # compass on, and the imitation frames drawn with it (bc_v3 = bar + compass)
+        ring_compass=True,
+        imitation=dict(data='datasets/bc_v3'),
         result='STARTED 2026-10-12 ~13:50, criteria AGREED (Tyler: "let\'s do it!" after mg1bc '
                'cleared AIZ1 from the start). Six acts at once from the imitation network: '
                'do the five new acts learn, and does sharing hurt AIZ1? (doc "Run mg2")',
@@ -284,7 +287,8 @@ class ImitationCallback(BaseCallback):
     on his frames (build_bc_dataset.py's pairs, weighted by how many of the 4
     frames agree), with its own Adam at PPO's learning rate times a weight
     that falls linearly from `weight` to 0 over `decay_steps` env steps from
-    when it starts (also on a resume). The weight scales the step size, not
+    when it first ran on this data (kept in main_<run>_imitation.json, so a
+    resume continues the fade instead of restarting it; new data restarts it). The weight scales the step size, not
     the loss: Adam undoes any constant scaling of a loss. Half of each batch comes
     from around each act's current curriculum start point (his frames from
     `behind` before it to `ahead` after it: the hard spot the pointer is
@@ -328,7 +332,18 @@ class ImitationCallback(BaseCallback):
         lr = self.model.learning_rate
         self.base_lr = lr(1.0) if callable(lr) else float(lr)
         self.opt = torch.optim.Adam(self.model.policy.parameters(), lr=self.base_lr)
-        self.start = self.model.num_timesteps
+        cp = self.curriculum_path
+        state = (cp[:-len('_curriculum.json')] + '_imitation.json' if cp.endswith('_curriculum.json')
+                 else cp + '.imitation.json')
+        try:
+            starts = json.load(open(state))
+        except (OSError, ValueError):
+            starts = {}
+        self.start = int(starts.get(c['data'], self.model.num_timesteps))
+        starts[c['data']] = self.start
+        with open(state + '.tmp', 'w') as f:
+            json.dump(starts, f)
+        os.replace(state + '.tmp', state)
         for flag, env in (('air_bar', 'MG_AIR_BAR'), ('ring_compass', 'MG_RING_COMPASS')):
             if bool(meta.get(flag)) != (os.environ.get(env) == '1'):
                 raise ValueError(f"imitation data {c['data']} {flag}={meta.get(flag)} but the run's "
