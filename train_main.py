@@ -125,18 +125,17 @@ RUNS = {
                                               ('AIZ2', 'HCZ1', 'HCZ2', 'MGZ1', 'MGZ2')],
         demos=['play_20260930-153946', 'play_20261010-202923'], demo_prob=0.75,
         lr=2.5e-4, steps=100_000_000, env_version=2,
-        # from the imitation network with the air bar (train_bc.py bc3: mg1bc's network at
-        # 3.42M steps taught his actions on datasets/bc_v2); at launch, copy mg1bc's curriculum
-        # file to main_mg2_curriculum.json for AIZ1's start point (bc3 has none of its own)
-        init='bc3', air_bar=True,
+        # from the imitation network with the air bar (train_bc.py bc4: mg1bc's network at
+        # 4,835,616 steps, which clears AIZ1 from the start, + one epoch of his actions on
+        # datasets/bc_v2); mg1bc's curriculum file copied at launch (AIZ1 starts at 63)
+        init='bc4', air_bar=True,
         ss='pilot', ss_detour='refund', emerald_bonus=300,
         curr_at_pointer=True, curr_min_n=32, curr_successes=8,
         extra_starts={'play_20260930-153946:AIZ1': [4095, 4110, 4125, 4335, 4350, 4365]},
         imitation=dict(data='datasets/bc_v2'),      # the frames with the air bar
-        result='NOT STARTED — DRAFTED by Claude 2026-10-12 (Tyler: "Is there any merit in '
-               'multistage training?", then "Go ahead and draft it"); criteria PROPOSED '
-               '(doc, Pre-Committed Criteria "Run mg2"), need Tyler\'s OK. Six acts at once '
-               'from mg1: do the five new acts learn, and does sharing hurt AIZ1?',
+        result='STARTED 2026-10-12 ~13:50, criteria AGREED (Tyler: "let\'s do it!" after mg1bc '
+               'cleared AIZ1 from the start). Six acts at once from the imitation network: '
+               'do the five new acts learn, and does sharing hurt AIZ1? (doc "Run mg2")',
     ),
 }
 
