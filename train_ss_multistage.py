@@ -135,6 +135,9 @@ RUNS = {
     ),
     # Learning from Tyler's play. `demos` = patterns under demos/ (record with
     # record_demo.py); `demo_prob` = share of episodes that start on a demo.
+    # `demo_mix` = share of demo starts drawn from any start point between the
+    # curriculum pointer and the end instead of the band just after it
+    # (SS_DEMO_MIX; default 0).
     # Pin a run's demos to exact files: a wildcard like 'stage1_*' would pull
     # a NEW recording into the run on its next resume and change the experiment.
     'd1': dict(
@@ -278,6 +281,7 @@ RUNS = {
                  SS_SPEED_BONUS='7'),       # d8's speed term: a clear pays 7 x (18,000 - frames)
         demos='book',                       # the route book's current route per board, kept current
         demo_prob=0.75,
+        demo_mix=0.3,                       # SS_DEMO_MIX, from the 2026-10-11 ~20:30 resume
         ppo=dict(gamma=0.99),
         init='d9',                          # first launch starts from d9's save
         result='DEFINED 2026-10-11 ~15:45 (Tyler: "Yes that sounds great" to starting '
@@ -286,7 +290,10 @@ RUNS = {
                'book\'s current best route per board instead of Tyler\'s recordings, '
                'switched live as the book improves. Goal: the book beats Tyler on '
                'all 14 boards (route_book.py). LAUNCHED 2026-10-11 ~16:35 by Claude '
-               '(Tyler: "Let\'s go ahead and start it") from d9 at 5,059,832 steps.',
+               '(Tyler: "Let\'s go ahead and start it") from d9 at 5,059,832 steps. '
+               'demo_mix=0.3 added 2026-10-11 ~20:26 (Tyler: "Yes"): stopped at '
+               '1,103,800 steps and resumed, because the late stretches of boards '
+               '13 and 14 had faded to ~0 clears beyond the curriculum band.',
     ),
     'd6': dict(
         stages=[1, 2, 3, 4], lstm=512, lr=3e-4,
@@ -436,6 +443,7 @@ if CFG.get('demos') and not DEMOS:
              f"  record one:  python3 record_demo.py <stage>\n")
 os.environ['SS_DEMOS'] = ','.join(DEMOS)
 os.environ['SS_DEMO_PROB'] = str(CFG.get('demo_prob', 0.5))
+os.environ['SS_DEMO_MIX'] = str(CFG.get('demo_mix', 0))   # not in obs: the pilot never starts on a demo
 
 import torch                                                    # noqa: E402
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize  # noqa: E402
@@ -742,6 +750,9 @@ if __name__ == '__main__':
     if DEMOS:
         print(f"  demos        : {len(DEMOS)} at {CFG.get('demo_prob', 0.5):.0%} of "
               f"episodes: {', '.join(os.path.basename(d) for d in DEMOS)}")
+        if special_stage_env.DEMO_MIX:
+            print(f"  demo mix     : {special_stage_env.DEMO_MIX:.0%} of demo starts anywhere from "
+                  f"the start point to the end (else within {special_stage_env.DEMO_BAND} of it)")
     print(f"  log          : {P['log']}")
     print(f"  autosave every {AUTOSAVE_STEPS:,} steps | "
           f"graceful stop: touch {P['stop']}")

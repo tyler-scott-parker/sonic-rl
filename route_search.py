@@ -85,7 +85,7 @@ def main():
         torch.manual_seed(a.seed)
         env.reset(options={'stage_file': sse.stage_file(boards[0])})     # builds the start points
         demos_all = list(env._demos)
-        sse.DEMO_BAND = 0
+        sse.DEMO_BAND = sse.DEMO_MIX = 0                                 # start exactly at start point i
         book0 = route_book.book_frames()
         best = dict(book0)
         print(f'route search: {a.run} ({a.model or "latest save"}), boards {boards}, '

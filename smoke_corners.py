@@ -283,11 +283,12 @@ for path, d in zip(DEMOS, env._demos):
         env.set_demo_pointers({d['id']: i})
         random.seed(0)                     # the band draw: pin it to this point
         sse.DEMO_BAND, band = 0, sse.DEMO_BAND
+        sse.DEMO_MIX, mix = 0, sse.DEMO_MIX
         all_demos, env._demos = env._demos, [d]   # this demo, not a random one
         try:
             env.reset()
         finally:
-            sse.DEMO_BAND = band
+            sse.DEMO_BAND, sse.DEMO_MIX = band, mix
             env._demos = all_demos
         k = at.get(ck['fields']['steps'] - 1)
         queued = int(env._ram()[0xE42A]) if env._ram_swapped is not None else None
