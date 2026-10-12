@@ -17,16 +17,19 @@ every 100k steps) and starts where training currently starts (its curriculum
 start point); F switches between that and the start of the act. --best N plays
 N sampled tries off-screen first (as training samples its actions) and shows
 the best one: the fastest clear, else the one that got furthest along your
-route. The game is deterministic, so the replay is exactly that try.
+route. The game is deterministic, so the replay is exactly that try. G (or
+--ring) shows a try that went into a giant ring instead, when one did.
 
 Sound plays at 100% speed (game_audio.py, as in the recorders); M mutes,
 --no-sound starts muted.
 
-Keys: 1-4 speed 25/50/100/200 %   P pause   R restart   F fresh/training start   M sound   Esc quit
+Keys: 1-4 speed 25/50/100/200 %   P pause   R restart   F fresh/training start   M sound
+      G giant-ring tries (--best)   Esc quit
 """
 import os
 import sys
 import json
+import collections
 import time
 import argparse
 
@@ -50,6 +53,7 @@ ap.add_argument('--fresh', action='store_true', help='with --live: start at the 
 ap.add_argument('--no-sound', action='store_true', help='start muted (M toggles)')
 ap.add_argument('--best', type=int, default=0, metavar='N',
                 help='play N sampled tries off-screen, then show the best one')
+ap.add_argument('--ring', action='store_true', help='with --best: show a try that entered a giant ring (G toggles)')
 args = ap.parse_args()
 
 if args.run not in train_main.RUNS:
@@ -80,6 +84,7 @@ if not args.you:
     if not args.live:
         model = PPO.load(path, device='cpu')
 fresh = args.fresh                                  # --live: start at the act's start (F toggles)
+ring = args.ring                                    # --best: show a giant-ring try when there is one (G)
 
 
 def refresh_model():
@@ -205,7 +210,7 @@ def best_try(kk):
     """--best: N sampled tries from start point kk, off-screen; returns (actions, result, progress,
     description) of the best one, or None to quit. Best = the fastest clear, else the furthest
     along his route (then the quickest)."""
-    best = None
+    best, outcomes = None, collections.Counter()
     for i in range(args.best):
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT or (ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE):
@@ -222,20 +227,28 @@ def best_try(kk):
             acts.append(int(a))
             done = term or trunc
         res = info['mg_result']
+        outcomes[res['outcome']] += 1
         prog = env._route.best
         score = (1, -res['frames']) if res['outcome'] == 'clear' else (0, prog, -res['frames'])
+        if ring and res['outcome'] == 'stage':
+            score = (2, -res['frames'])
         if best is None or score > best[0]:
             best = (score, acts, res, prog)
     _, acts, res, prog = best
-    desc = (f"best of {args.best} tries: cleared in {res['frames']} frames (you {res['target']})"
-            if res['outcome'] == 'clear' else
-            f"best of {args.best} tries: {prog / seg['T']:.0%} of the act, then {res['outcome']}")
-    return acts, res, prog, desc
+    tally = ', '.join(f'{n} {"giant ring" if o == "stage" else o}' for o, n in outcomes.most_common())
+    if res['outcome'] == 'clear':
+        desc = f"best of {args.best}: cleared in {res['frames']} frames (you {res['target']})"
+    elif res['outcome'] == 'stage':
+        desc = f"a giant-ring try, {res['frames']} frames in"
+    else:
+        desc = f"best of {args.best}: {prog / seg['T']:.0%} of the act, then {res['outcome']}"
+    print(f'{args.best} tries: {tally}; showing {res["outcome"]}', flush=True)
+    return acts, res, prog, f'{desc}  ({tally})'
 
 
 def episode():
     """One episode; returns False to quit."""
-    global speed, paused, fresh, sound, stepping
+    global speed, paused, fresh, sound, stepping, ring
     kk = k
     if args.live:
         if not wait_for_save():
@@ -264,6 +277,9 @@ def episode():
                     return True
                 elif ev.key == pygame.K_m and audio is not None:
                     sound = not sound
+                elif ev.key == pygame.K_g and args.best:
+                    ring = not ring
+                    return True
                 elif pygame.K_1 <= ev.key <= pygame.K_4:
                     speed = SPEEDS[ev.key - pygame.K_0]
         paced = sound and speed == 100 and not paused and outcome is None
