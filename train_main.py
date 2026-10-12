@@ -114,7 +114,9 @@ RUNS = {
                'tries each: from 75 bc1 clears 4/10 near his pace, mg1 0/10; from 72 both 0/10. '
                'Reads (Claude\'s, proposed): off 75 within 1M steps (mg1: 0 of 32 matched there in '
                '~0.9M); past 72 within 5M; forgetting = its match rate at 75 falling from ~40% '
-               'toward 0 early (then add a decaying imitation loss).',
+               'toward 0 early (then add a decaying imitation loss). RESULT 2026-10-12 ~13:35: '
+               'past the wall in 17 min; with imitation from ~13:24, through the loop-back; '
+               'FIRST FRESH CLEARS of AIZ1 at ~4.5M steps, best 1:14.65 vs his 1:25.43.',
     ),
     'mg2': dict(
         # AIZ1 exactly as mg1 trains it (same recording, start points, stepping stones);
