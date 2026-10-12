@@ -74,8 +74,9 @@ RUNS = {
     'mg1': dict(
         acts=['AIZ1'], demos=['play_20260930-153946'], demo_prob=0.75,
         lr=2.5e-4, steps=50_000_000, env_version=2,
-        result='NOT STARTED — PROPOSED by Claude 2026-10-11 (doc, Pre-Committed Criteria '
-               '"Run mg1"); needs Tyler\'s OK. aiz1 exactly, but on MG env v2 (new ground '
+        result='STARTED 2026-10-12 ~07:40 (Tyler: "i want to start working on the main game"; '
+               'd10 paused, board 14 back overnight). Criteria still Claude\'s proposal (doc, '
+               'Pre-Committed Criteria "Run mg1"). aiz1 exactly, but on MG env v2 (new ground '
                'counts against stuck; off-route time settled; route ties by the clock): '
                'does v2 get past the wall that stopped aiz1 at start point 69 (82%)?',
     ),
