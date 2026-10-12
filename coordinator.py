@@ -92,7 +92,16 @@ so a won stage costs nothing and a lost one its whole time. =real: charged,
 never paid back; =game: only the frames outside the stage (~50 of the reload),
 as the act clock counts. MG_EMERALD_BONUS (default 0) pays frames per emerald
 on top: with 0 a ring can only break even, so the agent takes rings only where
-the special-stage agent nearly always wins. Stage frames don't run the
+the special-stage agent nearly always wins. MG_SS_DETOUR=refund (Tyler
+2026-10-12: "I don't want to discourage it from finding big rings ... I'd
+like the agent to get all 14 emeralds and beat the secret final stage"; the
+default 'charge' is the old rule): when an emerald is won, the trip to the
+ring and back is free too: the frames from the agent's last progress along
+his route before the ring, and from the stage until its next progress, each
+capped at DETOUR_CAP. (The AIZ1 ring is 241 px below his route, past the
+96-px route radius, so the trip is off-route time: mg1's episodes with a
+stage had a median 1,240 off-route frames against 296 without.) A lost
+stage's trip is charged as before. Stage frames don't run the
 episode's timeout clock (a stage isn't a hopeless attempt); they do count in
 its frames. Logged per episode as 'stages'. Bonus stages are always truncated.
 With all 7 Chaos Emeralds, a giant ring in a Sonic & Knuckles zone sends Sonic
@@ -224,6 +233,8 @@ MG_SS_RUN    = os.environ.get('MG_SS_RUN', 'd9')      # the train_ss_multistage 
 MG_SS_MODEL  = os.environ.get('MG_SS_MODEL', '')      # its .zip (default: the run's latest save)
 MG_SS_TIME   = os.environ.get('MG_SS_TIME', 'refund')  # or 'real', 'game'
 MG_EMERALD_BONUS = float(os.environ.get('MG_EMERALD_BONUS', '0'))   # frames per emerald won, on top
+MG_SS_DETOUR = os.environ.get('MG_SS_DETOUR', 'charge')    # or 'refund': a won stage's trip is free
+DETOUR_CAP = 1200                                          # frames forgiven per leg at most (20 s)
 # Hidden Palace: which gray Super Emerald to take: 'auto' (ss_pilot.choose_super:
 # most emeralds per frame, learned from results) or boards, most preferred first
 MG_SS_SUPER = os.environ.get('MG_SS_SUPER', 'auto')
@@ -710,6 +721,8 @@ class SonicCoordinator(gym.Env):
         self._max_frames = int(self._target * TIMEOUT_MULT + TIMEOUT_ADD)
         self.frames = 0
         self._moved_at = 0            # frames when route progress last rose
+        self._gain_at = 0             # ... route progress alone (MG_SS_DETOUR)
+        self._free_back = 0           # MG_SS_DETOUR=refund: frames still free on the way back
         self._owed = 0                # v2: off-route frames booked, not yet charged
         self._off = 0                 # v2: frames spent off the route this episode
         self._seen = set()            # v2: blocks of the level visited this episode
@@ -753,7 +766,15 @@ class SonicCoordinator(gym.Env):
         self._xmax = x if self._xmax is None else max(self._xmax, x)
 
         r = -float(n)
+        won_trip = False
         if stage is not None:
+            if MG_SS_DETOUR == 'refund' and stage['emeralds'] > 0:
+                there = min(self.frames - self._gain_at, DETOUR_CAP)   # the trip to the ring: free
+                booked = min(self._owed, there)     # off-route frames not yet charged: drop them
+                self._owed -= booked
+                r += there - booked                 # the rest were charged: pay them back
+                self._stages[-1]['trip_there'] = there
+                won_trip = True
             self.frames += stage['cost']
             self._stage_frames += stage['cost']
             r += stage['paid'] - stage['cost']
@@ -765,6 +786,16 @@ class SonicCoordinator(gym.Env):
         elif event is None:
             gain = self._route.update(info['zone'], info['act'], x, int(info['y']),
                                       int(info['mg_boss']) != 0)
+            if gain > 0:
+                self._gain_at = self.frames
+            free = 0                                # MG_SS_DETOUR: the way back from a won ring
+            if self._free_back > 0:
+                if gain > 0:
+                    self._free_back = 0             # back on his route: the trip is over
+                else:
+                    free = min(n, self._free_back)
+                    self._free_back -= free
+                    self._stages[-1]['trip_back'] = self._stages[-1].get('trip_back', 0) + free
             new_ground = False
             if MG_V2:
                 blk = (int(info['zone']), int(info['act']), x >> BLOCK_SHIFT,
@@ -773,15 +804,17 @@ class SonicCoordinator(gym.Env):
                 self._seen.add(blk)
             if MG_V2 and not self._route.on and self._route.fight is None:
                 r += n                          # off the route: book it
-                self._owed += n
+                self._owed += n - free
                 self._off += n
             else:
-                r += gain - self._owed          # back on it: settle
+                r += gain - self._owed + free   # back on it: settle
                 self._owed = 0
             if gain > 0 or self._route.fight is not None or new_ground:
                 self._moved_at = self.frames
             elif self.frames - self._moved_at >= STUCK_FRAMES:
                 event = 'stuck'
+        if won_trip:
+            self._free_back = DETOUR_CAP            # from the next step: the way back is free
         self.ret += r
         terminated = event in ('clear', 'death')
         truncated = event in ('stage', 'stuck') or (

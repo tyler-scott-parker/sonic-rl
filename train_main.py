@@ -79,6 +79,10 @@ RUNS = {
         # the pointer moved back to 72 (just before AIZ1's wall climb) and judged only on
         # episodes starting AT it, a full window of 32 (>= 25% matched) before it moves
         curr_at_pointer=True, curr_min_n=32,
+        # from 2026-10-12 ~10:40 (Tyler: "I don't want to discourage it from finding big
+        # rings ... I'd like the agent to get all 14 emeralds and beat the secret final stage"):
+        # a won stage's trip is free and each emerald pays 300 frames (5 s) on top
+        ss_detour='refund', emerald_bonus=300,
         result='STARTED 2026-10-12 ~07:40 (Tyler: "i want to start working on the main game"; '
                'd10 paused, board 14 back overnight). Criteria still Claude\'s proposal (doc, '
                'Pre-Committed Criteria "Run mg1"). aiz1 exactly, but on MG env v2 (new ground '
@@ -153,6 +157,10 @@ def configure_env(run):
     # special stages: 'truncate' (default: a giant ring ends the episode) or
     # 'pilot' (the special-stage agent / route book plays it; coordinator.py)
     os.environ['MG_SS'] = cfg.get('ss', 'truncate')
+    # with 'pilot': frames per emerald won, on top of the refund; 'refund' = a won
+    # stage's trip to the ring and back is free too (coordinator.py)
+    os.environ['MG_EMERALD_BONUS'] = str(cfg.get('emerald_bonus', 0))
+    os.environ['MG_SS_DETOUR'] = cfg.get('ss_detour', 'charge')
     return found
 
 
