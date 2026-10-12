@@ -100,7 +100,8 @@ if not args.you:
 fresh = args.fresh                                  # --live: start at the act's start (F toggles)
 ring = args.ring                                    # --best: show a giant-ring try when there is one (G)
 tries = tries_flags = None                          # --best: runs found by watch_tries.py
-tries_dir = os.path.join(train_main.HOME, 'logs', f'watch_tries_{args.run}')
+tries_dir = os.path.join(train_main.HOME, 'logs',          # one per viewer: a window and a
+                         f"watch_tries_{args.run}_{'stream' if args.stream else 'window'}")   # stream at once
 
 
 def tell_tries():
@@ -123,7 +124,7 @@ if args.best and not args.you:                      # its own process: one emula
     tries = subprocess.Popen([sys.executable, '-u', os.path.join(train_main.HOME, 'watch_tries.py'),
                               args.run, tries_dir, '--n', str(args.best)]
                              + (['--act', args.act] if args.act else []),
-                             stdout=open(os.path.join(train_main.HOME, 'logs', f'watch_tries_{args.run}.log'), 'w'),
+                             stdout=open(tries_dir + '.log', 'w'),
                              stderr=subprocess.STDOUT)
     atexit.register(tries.terminate)
 
@@ -161,11 +162,11 @@ if args.you:                                        # replayed with its own butt
                                               if demos.demo_id(p) == s['demo']))
     table = meta['action_table']
 
-if args.stream:
+if args.stream:                                     # the picture, then the text in a panel under it
     os.environ['SDL_VIDEODRIVER'] = 'dummy'         # no window: the frames go to the stream
-    PIC, PANEL = (640, 448), 100                    # the picture x2, then a text panel under it
+    PIC, PANEL, LINE, WRAP = (640, 448), 100, 19, 62
 else:
-    PIC, PANEL = (320 * SCALE, 224 * SCALE), 0
+    PIC, PANEL, LINE, WRAP = (320 * SCALE, 224 * SCALE), 118, 23, 84
 pygame.init()
 screen = pygame.display.set_mode((PIC[0], PIC[1] + PANEL))
 who = 'your recording' if args.you else os.path.basename(args.model or train_main.paths(args.run)['zip'])
@@ -206,8 +207,8 @@ last_img = None
 
 
 def draw(img, extra=None, force=False):
-    """One frame: the picture, the text (over it, or in the stream's panel)
-    and, streaming, every other frame (the stream runs at 30 fps) to it."""
+    """One frame: the picture, the text in the panel under it and, streaming,
+    every other frame (the stream runs at 30 fps) to the stream."""
     global last_img
     last_img = img
     fps_count['n'] += 1
@@ -217,26 +218,22 @@ def draw(img, extra=None, force=False):
     surf = pygame.surfarray.make_surface(img.swapaxes(0, 1))
     screen.blit(pygame.transform.scale(surf, PIC), (0, 0))
     lines = hud_lines + ([(extra, (255, 255, 0))] if extra else [])
-    if args.stream:
-        screen.fill((0, 0, 0), (0, PIC[1], PIC[0], PANEL))
-        y = PIC[1] + 4
-        for text, colour in lines:
-            for part in textwrap.wrap(text, 62) or ['']:
-                if y + 18 <= PIC[1] + PANEL:
-                    screen.blit(font.render(part, True, colour), (8, y))
-                y += 19
-    else:
-        for i, (text, colour) in enumerate(lines):
-            screen.blit(font.render(text, True, colour), (8, 8 + 22 * i))
+    screen.fill((0, 0, 0), (0, PIC[1], PIC[0], PANEL))
+    y = PIC[1] + 4
+    for text, colour in lines:
+        for part in textwrap.wrap(text, WRAP) or ['']:
+            if y + LINE - 1 <= PIC[1] + PANEL:
+                screen.blit(font.render(part, True, colour), (8, y))
+            y += LINE
     pygame.display.flip()
     if args.stream and (force or fps_count['n'] % 2 == 0):
         audio.frame(pygame.image.tostring(screen, 'RGB'))
 
 
 def show_text(text):
-    """A status line between runs: on a black window, or streaming, under the
-    last picture (the phone keeps seeing the game)."""
-    if args.stream and last_img is not None:
+    """A status line between runs, in the panel under the last picture (black
+    before the first)."""
+    if last_img is not None:
         return draw(last_img, extra=text, force=True)
     screen.fill((0, 0, 0))
     screen.blit(font.render(text, True, (255, 255, 0)), (8, 8))
