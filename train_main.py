@@ -74,7 +74,7 @@ RUNS = {
     'mg1': dict(
         acts=['AIZ1'], demos=['play_20260930-153946'], demo_prob=0.75,
         lr=2.5e-4, steps=50_000_000, env_version=2,
-        ss='pilot',     # from 2026-10-12 ~10:45 (Tyler: "can we have special stages turned on?")
+        ss='pilot',     # from 2026-10-12 ~09:10 (Tyler: "can we have special stages turned on?")
         result='STARTED 2026-10-12 ~07:40 (Tyler: "i want to start working on the main game"; '
                'd10 paused, board 14 back overnight). Criteria still Claude\'s proposal (doc, '
                'Pre-Committed Criteria "Run mg1"). aiz1 exactly, but on MG env v2 (new ground '
