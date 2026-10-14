@@ -112,6 +112,8 @@ def main():
               + (f"; special stages played in {len(played)} episodes (last 500: "
                  f"{sum(bool(r.get('stages')) for r in last)}), emeralds won {won}" if played else ''))
         s = st.setdefault(key, {'ptr': c['ptr'], 'since': steps})
+        if s['since'] > steps:                               # a rollback (mg2 2026-10-12) left it in the future
+            s['since'] = steps
         if c['ptr'] != s['ptr']:
             s.update(ptr=c['ptr'], since=steps, stall_reported=False)
         if steps - s['since'] >= STALL_STEPS * n_acts and c['ptr'] > 0:
