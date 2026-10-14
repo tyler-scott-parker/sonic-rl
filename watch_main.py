@@ -34,13 +34,23 @@ buttons for the switches. The on-screen text sits in a panel under the picture.
 Sound plays at 100% speed (game_audio.py, as in the recorders); M mutes,
 --no-sound starts muted.
 
+--focus: what the agent is paying attention to (focus.py: blur one patch of
+its view at a time and see how much that moves it), drawn over the picture:
+orange = what moves its decision, cyan = what moves its expectation of how
+it'll go (--focus decision / value: just one). V cycles off / decision /
+value / both. The inset bottom right is what it actually sees: 84 x 84 gray,
+with its air bar and ring compass. It runs on the GPU (a few ms a step; ~300
+MB of VRAM), or without one on a CPU thread, trailing the picture a little.
+  python3 watch_main.py mg2 --live --fresh --best 20 --ring --focus
+
 Keys: 1-4 speed 25/50/100/200 %   P pause   R restart   F fresh/training start   M sound
-      G giant-ring tries (--best)   S skip special stages   Esc quit
+      G giant-ring tries (--best)   S skip special stages   V focus   Esc quit
 """
 import os
 import sys
 import json
 import textwrap
+import threading
 import time
 import argparse
 
@@ -66,6 +76,9 @@ ap.add_argument('--best', type=int, default=0, metavar='N',
                 help='play N sampled tries off-screen, then show the best one')
 ap.add_argument('--ring', action='store_true', help='with --best: show a try that entered a giant ring (G toggles)')
 ap.add_argument('--skip-ss', action='store_true', help="don't show special stages (S toggles)")
+ap.add_argument('--focus', nargs='?', const='both', default='off',
+                choices=['off', 'decision', 'value', 'both'],
+                help='draw what the agent pays attention to (V cycles; see above)')
 ap.add_argument('--stream', type=int, metavar='PORT',
                 help='no window: stream picture + sound to a phone on the tailnet at PORT')
 args = ap.parse_args()
@@ -97,6 +110,8 @@ if not args.you:
         sys.exit(f'no model at {path} (train first, or --you to watch your recording)')
     if not args.live:
         model = PPO.load(path, device='cpu')
+    import focus as F
+focus_mode = 'off' if args.you else args.focus      # V cycles off / decision / value / both
 fresh = args.fresh                                  # --live: start at the act's start (F toggles)
 ring = args.ring                                    # --best: show a giant-ring try when there is one (G)
 tries = tries_flags = None                          # --best: runs found by watch_tries.py
@@ -202,6 +217,68 @@ _base_step = env.base_env.step
 
 fps_count = {'n': 0, 't': time.time()}
 
+EYE = PIC[0] * 7 // 40                              # the agent's-eye inset: 168 px in the window
+focus_job = {'obs': None, 'ov': None, 'eye': None, 'new': False}
+focus_ready, focus_lock = threading.Event(), threading.Lock()
+focus_shown = {'ov': None, 'eye': None}             # the surfaces drawn (made on this thread)
+
+
+def focus_worker():
+    """--focus: the maps for the newest observation, off the drawing thread
+    (a pass is ~100 ms; the agent decides every 67 ms, so the maps trail
+    the picture by a step or two instead of slowing it). Observations that
+    arrive while a pass runs are skipped: only the newest is worked on."""
+    fo = None
+    while True:
+        focus_ready.wait()
+        focus_ready.clear()
+        obs, mode = focus_job['obs'], focus_mode
+        if obs is None or model is None or mode == 'off':
+            continue
+        if fo is None:
+            fo = F.Focus()                          # the GPU when there is one (focus.py)
+            print(f'focus on {fo.device}', flush=True)
+        fo.use(model)                               # --live swaps in each new save
+        maps = fo(obs)
+        ov, ey = F.overlay(maps, mode), F.eye(obs, maps, mode, EYE)
+        with focus_lock:
+            focus_job.update(ov=ov, eye=ey, new=True)
+
+
+def focus_request(obs):
+    if focus_mode != 'off':
+        focus_job['obs'] = obs
+        focus_ready.set()
+
+
+def focus_clear():
+    with focus_lock:
+        focus_job.update(obs=None, ov=None, eye=None, new=False)
+    focus_shown.update(ov=None, eye=None)
+
+
+if not args.you:
+    threading.Thread(target=focus_worker, daemon=True).start()
+
+
+def draw_focus():
+    """The overlay and the agent's-eye inset, over the picture just drawn."""
+    if focus_mode == 'off' or stage['on']:          # a special stage isn't this network playing
+        return
+    with focus_lock:
+        if focus_job['new']:
+            ov = focus_job['ov']
+            focus_shown['ov'] = pygame.transform.smoothscale(
+                pygame.image.frombytes(ov.tobytes(), (ov.shape[1], ov.shape[0]), 'RGBA'), PIC)
+            focus_shown['eye'] = pygame.surfarray.make_surface(focus_job['eye'].swapaxes(0, 1))
+            focus_job['new'] = False
+    if focus_shown['ov'] is None:
+        return
+    screen.blit(focus_shown['ov'], (0, 0))
+    x, y = PIC[0] - EYE - 6, PIC[1] - EYE - 6
+    screen.fill((255, 255, 255), (x - 2, y - 2, EYE + 4, EYE + 4))
+    screen.blit(focus_shown['eye'], (x, y))
+
 
 last_img = None
 
@@ -217,6 +294,7 @@ def draw(img, extra=None, force=False):
         fps_count.update(n=0, t=time.time())
     surf = pygame.surfarray.make_surface(img.swapaxes(0, 1))
     screen.blit(pygame.transform.scale(surf, PIC), (0, 0))
+    draw_focus()
     lines = hud_lines + ([(extra, (255, 255, 0))] if extra else [])
     screen.fill((0, 0, 0), (0, PIC[1], PIC[0], PANEL))
     y = PIC[1] + 4
@@ -327,7 +405,9 @@ def set_hud(kk, msg, shown=None, live_msg=''):
     if args.live:
         hud_lines.append((f"save at {(shown['steps'] if shown else model.num_timesteps):,} steps   "
                           + ('from the act start' if fresh else 'from where it trains now')
-                          + ('' if args.stream else ' (F: switch)'), (255, 255, 0)))
+                          + ('' if args.stream else ' (F: switch)')
+                          + ('' if args.you else f'   focus {focus_mode}' + ('' if args.stream else ' (V)')),
+                          (255, 255, 0)))
     if shown or live_msg:
         hud_lines.append(((shown['desc'] if shown else live_msg)[:80], (255, 255, 0)))
     if msg:
@@ -336,7 +416,7 @@ def set_hud(kk, msg, shown=None, live_msg=''):
 
 def episode():
     """One episode; returns False to quit."""
-    global speed, paused, fresh, sound, stepping, ring
+    global speed, paused, fresh, sound, stepping, ring, focus_mode
     kk = k
     if args.live:
         if not wait_for_save():
@@ -361,6 +441,8 @@ def episode():
         else:                                       # none ready: a live try meanwhile
             live_msg = 'a live try, while the next best run is found'
     obs, _ = env.reset(options={'key': key, 'ckpt': kk})
+    focus_clear()                                   # not the last episode's maps
+    focus_request(obs)
     ck = env._ck
     step, outcome, msg = 0, None, ''
     while True:
@@ -380,6 +462,10 @@ def episode():
                 elif ev.key == pygame.K_g and args.best:
                     ring = not ring
                     return True
+                elif ev.key == pygame.K_v and not args.you:
+                    focus_mode = F.MODES[(F.MODES.index(focus_mode) + 1) % len(F.MODES)]
+                    focus_clear()
+                    focus_request(obs)
                 elif pygame.K_1 <= ev.key <= pygame.K_4:
                     speed = SPEEDS[ev.key - pygame.K_0]
         paced = sound and speed == 100 and not paused and outcome is None
@@ -407,6 +493,7 @@ def episode():
                 else:
                     a, _ = model.predict(obs, deterministic=not args.stochastic)
                 obs, r, term, trunc, info = env.step(int(a))
+                focus_request(obs)
                 if term or trunc:
                     outcome = info['mg_result']['outcome']
                     if shown and (outcome != shown['outcome'] or env.frames != shown['frames']):
