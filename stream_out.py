@@ -46,6 +46,7 @@ PAGE = """<!doctype html>
   <button id="skip_ss" onclick="flip('skip_ss')">Skip special stages</button>
   <button id="ring" onclick="flip('ring')">Giant-ring tries</button>
   <button id="fresh" onclick="flip('fresh')">From the act start</button>
+  <button id="act" onclick="flip('act')">Next act</button>
 </div>
 <p>Tap the video for sound. It runs a few seconds behind live; switches apply from the next run.</p>
 <script src="HLS_JS"></script>

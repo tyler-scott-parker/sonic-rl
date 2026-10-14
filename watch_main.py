@@ -34,6 +34,11 @@ buttons for the switches. The on-screen text sits in a panel under the picture.
 Sound plays at 100% speed (game_audio.py, as in the recorders); M mutes,
 --no-sound starts muted.
 
+A run with several acts (mg2: six): A goes to the next act, Shift+A the one
+before (--act picks the first shown; the phone stream has a Next act button).
+Every act of the run is built at launch from the recordings (mg2: ~75 s,
+~800 MB, in this process and in watch_tries.py's); the window says so meanwhile.
+
 --focus: what the agent is paying attention to (focus.py: blur one patch of
 its view at a time and see how much that moves it), drawn over the picture:
 orange = what moves its decision, cyan = what moves its expectation of how
@@ -44,7 +49,7 @@ MB of VRAM), or without one on a CPU thread, trailing the picture a little.
   python3 watch_main.py mg2 --live --fresh --best 20 --ring --focus
 
 Keys: 1-4 speed 25/50/100/200 %   P pause   R restart   F fresh/training start   M sound
-      G giant-ring tries (--best)   S skip special stages   V focus   Esc quit
+      G giant-ring tries (--best)   S skip special stages   V focus   A / Shift+A act   Esc quit
 """
 import os
 import sys
@@ -62,7 +67,7 @@ SPEEDS = {1: 25, 2: 50, 3: 100, 4: 200}
 ap = argparse.ArgumentParser(description=__doc__,
                              formatter_class=argparse.RawDescriptionHelpFormatter)
 ap.add_argument('run', help='run name from train_main.RUNS')
-ap.add_argument('--act', help='act to watch (default: the run\'s first)')
+ap.add_argument('--act', help='act to watch first (default: the run\'s first; A switches)')
 ap.add_argument('--frac', type=float, default=0.0,
                 help='start this far into your recording of the act (0 = its start)')
 ap.add_argument('--you', action='store_true', help='play back your recording instead')
@@ -95,11 +100,10 @@ import pygame                                       # noqa: E402
 import coordinator as C                             # noqa: E402
 import demos                                        # noqa: E402
 
-env = C.SonicCoordinator(acts=[args.act] if args.act else cfg['acts'][:1], demo_prob=0.0)
-seg = env.demo_info()[0]
-key = seg['key']
-k = int(np.searchsorted(seg['fracs'], args.frac, 'right')) - 1 if args.frac > 0 else 0
-k = max(0, k)
+env = C.SonicCoordinator(acts=cfg['acts'], demo_prob=0.0)   # every act of the run: A switches
+segs = seg = key = None                             # built once the window is up (build_acts)
+ai, k = 0, 0                                        # the act shown (index into segs); its --frac start point
+act_req = {'n': 0}                                  # the stream's Next act button (a server thread)
 model, model_mtime, path = None, None, None
 if not args.you:
     import torch
@@ -122,9 +126,9 @@ tries_dir = os.path.join(train_main.HOME, 'logs',          # one per viewer: a w
 def tell_tries():
     """The switches watch_tries.py makes runs with (it reads them per run)."""
     global tries_flags
-    tries_flags = (fresh, ring)
+    tries_flags = (fresh, ring, key)
     with open(os.path.join(tries_dir, 'flags.json.tmp'), 'w') as f:
-        json.dump({'fresh': fresh, 'ring': ring}, f)
+        json.dump({'fresh': fresh, 'ring': ring, 'act': key}, f)
     os.replace(os.path.join(tries_dir, 'flags.json.tmp'), os.path.join(tries_dir, 'flags.json'))
 
 
@@ -170,12 +174,7 @@ def live_start():
             return int(json.load(f)[key]['ptr'])
     except (OSError, ValueError, KeyError):
         return k
-demo_actions = table = None
-if args.you:                                        # replayed with its own button table
-    s = next(s for s in env._segs if s['key'] == key)
-    demo_actions, meta = demos.load_play(next(p for p in env.demo_files
-                                              if demos.demo_id(p) == s['demo']))
-    table = meta['action_table']
+demo_actions = table = None                         # --you: his inputs, with their own button table
 
 if args.stream:                                     # the picture, then the text in a panel under it
     os.environ['SDL_VIDEODRIVER'] = 'dummy'         # no window: the frames go to the stream
@@ -187,7 +186,7 @@ screen = pygame.display.set_mode((PIC[0], PIC[1] + PANEL))
 who = 'your recording' if args.you else os.path.basename(args.model or train_main.paths(args.run)['zip'])
 if args.live:
     who = f'{args.run} live'
-pygame.display.set_caption(f'watch_main — {key} — {who}')
+pygame.display.set_caption(f'watch_main — {args.run} — {who}')
 font = pygame.font.SysFont('monospace', 16 if args.stream else 18, bold=True)
 clock = pygame.time.Clock()
 speed, paused, running = 100, False, True
@@ -202,7 +201,9 @@ try:
             return (lambda: globals()[name]), (lambda v: globals().__setitem__(name, v))
         audio = stream_out.StreamOut(os.path.join(train_main.HOME, 'logs', f'stream_{args.run}'),
                                      (PIC[0], PIC[1] + PANEL), args.stream,
-                                     {n: switch(n) for n in ('skip_ss', 'ring', 'fresh')},
+                                     {**{n: switch(n) for n in ('skip_ss', 'ring', 'fresh')},
+                                      'act': (lambda: False,      # Next act: a request, never "on"
+                                              lambda v: act_req.__setitem__('n', act_req['n'] + 1))},
                                      rate=env.base_env.em.get_audio_rate())
         print(f'streaming at {audio.url}', flush=True)
     else:
@@ -324,6 +325,48 @@ skip_ss = args.skip_ss                              # S: special stages run off-
 stage = {'on': False, 'n': 0}
 
 
+def build_acts():
+    """Every act of the run, built from the recordings (coordinator replays
+    them: mg2's six take ~75 s) on a thread, while the window says so and
+    stays responsive."""
+    done = {}
+    th = threading.Thread(target=lambda: done.update(segs=env.demo_info()), daemon=True)
+    th.start()
+    t0 = time.time()
+    while th.is_alive():
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT or (ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE):
+                sys.exit(0)
+        show_text(f"preparing {args.run}'s acts from the recordings ... {time.time() - t0:.0f} s")
+        time.sleep(0.25)
+    if 'segs' not in done:
+        sys.exit('building the acts failed (above)')
+    return done['segs']
+
+
+def set_act(i):
+    """Show act i of the run from the next episode (A / Shift+A, the stream's Next act)."""
+    global ai, seg, key, k, demo_actions, table
+    ai = i % len(segs)
+    seg, key = segs[ai], segs[ai]['key']
+    k = max(0, int(np.searchsorted(seg['fracs'], args.frac, 'right')) - 1) if args.frac > 0 else 0
+    pygame.display.set_caption(f'watch_main — {key} — {who}')
+    if args.you:                                    # replayed with its own button table
+        demo_actions, meta = demos.load_play(next(p for p in env.demo_files
+                                                  if demos.demo_id(p) == seg['demo']))
+        table = meta['action_table']
+
+
+segs = build_acts()
+fps_count.update(n=0, t=time.time())                # not the build's wait
+if args.act:
+    match = [i for i, s in enumerate(segs) if args.act in (s['key'], s['name'])]
+    if not match:
+        sys.exit(f"no act {args.act!r} in {args.run}: {', '.join(s['name'] for s in segs)}")
+    ai = match[0]
+set_act(ai)
+
+
 def stage_keys():
     """Keys during a special stage: the whole stage is one agent step, so the
     episode loop can't see them. S and M act now, the rest wait for it."""
@@ -398,7 +441,9 @@ def wait_for_save():
 
 
 def set_hud(kk, msg, shown=None, live_msg=''):
-    hud_lines[:] = [(f"{who[:28]}  {key.split(':')[-1]}  start {seg['fracs'][kk]:.0%}  frames "
+    hud_lines[:] = [(f"{who[:28]}  {seg['name']}"
+                     + (f" {ai + 1}/{len(segs)}" + ('' if args.stream else ' (A)') if len(segs) > 1 else '')
+                     + f"  start {seg['fracs'][kk]:.0%}  frames "
                      f"{env.frames}/{env._target}  {speed}%" + ('  PAUSED' if paused else '')
                      + ('' if audio is None else '  sound' if sound and speed == 100 else '  muted'),
                      (255, 255, 0))]
@@ -424,7 +469,7 @@ def episode():
         kk = live_start()
     replay, shown, live_msg = None, None, ''
     if tries is not None:
-        if tries_flags != (fresh, ring):            # a switch flipped
+        if tries_flags != (fresh, ring, key):       # a switch flipped
             tell_tries()
         for f in sorted(glob.glob(os.path.join(tries_dir, 'run_*.json'))):     # the oldest first
             try:
@@ -433,7 +478,7 @@ def episode():
                 os.remove(f)
             except (OSError, ValueError):
                 continue
-            if (item['fresh'], item['ring']) == (fresh, ring):                 # else made the old way: drop
+            if (item['fresh'], item['ring'], item.get('key')) == (fresh, ring, key):   # else the old way: drop
                 shown = item
                 break
         if shown:
@@ -446,6 +491,10 @@ def episode():
     ck = env._ck
     step, outcome, msg = 0, None, ''
     while True:
+        if act_req['n']:                            # the stream's Next act
+            n, act_req['n'] = act_req['n'], 0
+            set_act(ai + n)
+            return True
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT or (ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE):
                 return False
@@ -466,6 +515,9 @@ def episode():
                     focus_mode = F.MODES[(F.MODES.index(focus_mode) + 1) % len(F.MODES)]
                     focus_clear()
                     focus_request(obs)
+                elif ev.key == pygame.K_a and len(segs) > 1:
+                    set_act(ai + (-1 if ev.mod & pygame.KMOD_SHIFT else 1))
+                    return True
                 elif pygame.K_1 <= ev.key <= pygame.K_4:
                     speed = SPEEDS[ev.key - pygame.K_0]
         paced = sound and speed == 100 and not paused and outcome is None

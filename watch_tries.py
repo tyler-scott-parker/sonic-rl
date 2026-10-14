@@ -6,14 +6,17 @@ queue up footage so that there is always something playing?").
     python3 watch_tries.py RUN DIR [--act AIZ1] [--n 20] [--keep 2]
     (watch_main.py --best starts it and stops it; it also stops when the viewer is gone)
 
-Builds its own env (stable-retro allows one emulator per process), reloads the
-run's save when it changes, plays N sampled tries from the start point the
-viewer asks for (DIR/flags.json: fresh = the act's start, else where training
-starts now; ring = a try that went into a giant ring first), and writes the
-best one to DIR/run_<time>.json: the fastest clear, else the furthest along
-his route (then the quickest). It keeps at most KEEP runs waiting, so what
-plays is never far behind the latest save. The game is deterministic, so the
-viewer replays a try exactly from its start point and actions.
+Builds its own env with every act of the run (stable-retro allows one
+emulator per process), reloads the run's save when it changes, plays N
+sampled tries from the start point the viewer asks for (DIR/flags.json: act =
+which act, else --act or the run's first; fresh = the act's start, else where
+training starts now; ring = a try that went into a giant ring first), and
+writes the best one to DIR/run_<time>.json: the fastest clear, else the
+furthest along his route (then the quickest). A switch flipped mid-batch
+drops the batch after the try in progress. It keeps at most KEEP runs
+waiting, so what plays is never far behind the latest save. The game is
+deterministic, so the viewer replays a try exactly from its start point and
+actions.
 """
 import argparse
 import collections
@@ -22,10 +25,13 @@ import os
 import time
 
 
-def best_of(env, model, key, kk, n, ring):
-    """N sampled tries from start point kk; the best one as a dict."""
+def best_of(env, model, key, kk, n, ring, stale):
+    """N sampled tries from start point kk; the best one as a dict, or None
+    if stale() turns true (the viewer flipped a switch) between tries."""
     best, outcomes = None, collections.Counter()
     for _ in range(n):
+        if stale():
+            return None
         obs, _ = env.reset(options={'key': key, 'ckpt': kk})
         acts, done = [], False
         while not done:
@@ -45,7 +51,7 @@ def best_of(env, model, key, kk, n, ring):
         if best is None or score > best[0]:
             best = (score, acts, res, prog, entered)
     _, acts, res, prog, entered = best
-    T = env.demo_info()[0]['T']
+    T = next(s['T'] for s in env.demo_info() if s['key'] == key)
     tally = ', '.join(f'{c} {o}' for o, c in outcomes.most_common() if o != 'stage')
     if res['outcome'] == 'clear':
         desc = f"best of {n}: cleared in {res['frames']} frames (you {res['target']})"
@@ -54,16 +60,17 @@ def best_of(env, model, key, kk, n, ring):
     else:
         desc = f"best of {n}: {prog / T:.0%} of the act, then {res['outcome']}"
     return dict(kk=kk, actions=acts, outcome=res['outcome'], frames=res['frames'],
-                desc=f'{desc}  ({tally})', steps=int(model.num_timesteps))
+                desc=f'{desc}  ({tally})', steps=int(model.num_timesteps), key=key)
 
 
 def flags(d):
+    """(fresh, ring, act key or None) as the viewer last set them."""
     try:
         with open(os.path.join(d, 'flags.json')) as f:
             fl = json.load(f)
-        return bool(fl.get('fresh')), bool(fl.get('ring'))
+        return bool(fl.get('fresh')), bool(fl.get('ring')), fl.get('act')
     except (OSError, ValueError):
-        return True, False
+        return True, False, None
 
 
 def main():
@@ -84,11 +91,17 @@ def main():
     import coordinator as C
     from stable_baselines3 import PPO
     cfg, P = train_main.RUNS[a.run], train_main.paths(a.run)
-    env = C.SonicCoordinator(acts=[a.act] if a.act else cfg['acts'][:1], demo_prob=0.0)
-    key = env.demo_info()[0]['key']
+    env = C.SonicCoordinator(acts=cfg['acts'], demo_prob=0.0)
+    keys = [s['key'] for s in env.demo_info()]          # builds every act (mg2: ~75 s)
+    first = next((s['key'] for s in env.demo_info() if a.act in (s['key'], s['name'])), keys[0])
     os.makedirs(a.dir, exist_ok=True)
     path, model, mtime = P['zip'] + '.zip', None, None
-    print(f'watch_tries: {a.run} {key}, best of {a.n}, up to {a.keep} waiting in {a.dir}', flush=True)
+    print(f'watch_tries: {a.run} ({len(keys)} acts, first {first}), best of {a.n}, '
+          f'up to {a.keep} waiting in {a.dir}', flush=True)
+
+    def want():                                         # what the viewer asks for, its act resolved
+        fresh, ring, act = flags(a.dir)
+        return fresh, ring, act if act in keys else first
     while os.getppid() == parent:                       # the viewer is gone: stop
         if len([f for f in os.listdir(a.dir) if f.startswith('run_')]) >= a.keep:
             time.sleep(0.5)
@@ -101,7 +114,8 @@ def main():
             if model is None:
                 time.sleep(2)
                 continue
-        fresh, ring = flags(a.dir)
+        fl = want()
+        fresh, ring, key = fl
         kk = 0
         if not fresh:
             try:
@@ -110,13 +124,17 @@ def main():
             except (OSError, ValueError, KeyError):
                 pass
         t0 = time.time()
-        item = best_of(env, model, key, kk, a.n, ring)
+        item = best_of(env, model, key, kk, a.n, ring, lambda: want() != fl)
+        if item is None:
+            print(f"{time.strftime('%H:%M:%S')} switched mid-batch: dropped", flush=True)
+            continue
         item.update(fresh=fresh, ring=ring)
         out = os.path.join(a.dir, f'run_{time.time():.3f}.json')
         with open(out + '.tmp', 'w') as f:
             json.dump(item, f)
         os.replace(out + '.tmp', out)
-        print(f"{time.strftime('%H:%M:%S')} {item['desc']} [{time.time() - t0:.0f} s]", flush=True)
+        print(f"{time.strftime('%H:%M:%S')} {key.split(':')[-1]}: {item['desc']} [{time.time() - t0:.0f} s]",
+              flush=True)
 
 
 if __name__ == '__main__':
