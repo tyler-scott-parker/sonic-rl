@@ -101,7 +101,15 @@ so a won stage costs nothing and a lost one its whole time. =real: charged,
 never paid back; =game: only the frames outside the stage (~50 of the reload),
 as the act clock counts. MG_EMERALD_BONUS (default 0) pays frames per emerald
 on top: with 0 a ring can only break even, so the agent takes rings only where
-the special-stage agent nearly always wins. MG_SS_DETOUR=refund (Tyler
+the special-stage agent nearly always wins. When: MG_EMERALD_PAY=stage
+(default) at the stage; =return (Tyler 2026-10-15: "Let's try your
+recommendation") on the first step of new route progress after it, or at a
+clear: an emerald pays only once Sonic is back on his way, so a ring followed
+by getting stuck earns nothing extra (mg2 had learned to skip rings: AIZ1 fresh
+starts that took the ring cleared 28% vs 63%, mostly stuck in its pocket).
+Not at the clear itself: gamma 0.995 per step is a ~13 s horizon, and AIZ1's
+ring is ~75 s before its clear (a bonus there is worth <1% at the ring). An
+emerald kept after a later death is the game's own rule. MG_SS_DETOUR=refund (Tyler
 2026-10-12: "I don't want to discourage it from finding big rings ... I'd
 like the agent to get all 14 emeralds and beat the secret final stage"; the
 default 'charge' is the old rule): when an emerald is won, the trip to the
@@ -125,8 +133,9 @@ MG_SS_SUPER=auto (default) takes the most Super Emeralds per frame
 (ss_pilot.choose_super: the shortest route in the book; a board without one
 by the special-stage agent's own results, learned as they come in), or a
 list of boards in order of preference; afterwards the game returns to the act
-at the ring. (Doomsday Zone, after DEZ3 with all 14 emeralds, has no recording
-yet, so no act to train.)
+at the ring. (Doomsday Zone, after DEZ3 with all 14 emeralds: Tyler's
+recording demos/play_20261011-095800.npz, act DDZ1, from
+states/doomsday_start.state; it clears on the first frame of the ending zone.)
 
 RAM facts (checked against the S3K disassembly, skdisasm, and in the
 emulator on 2026-09-30):
@@ -256,6 +265,7 @@ MG_SS_RUN    = os.environ.get('MG_SS_RUN', 'd9')      # the train_ss_multistage 
 MG_SS_MODEL  = os.environ.get('MG_SS_MODEL', '')      # its .zip (default: the run's latest save)
 MG_SS_TIME   = os.environ.get('MG_SS_TIME', 'refund')  # or 'real', 'game'
 MG_EMERALD_BONUS = float(os.environ.get('MG_EMERALD_BONUS', '0'))   # frames per emerald won, on top
+MG_EMERALD_PAY = os.environ.get('MG_EMERALD_PAY', 'stage')   # or 'return': once back on the route
 MG_SS_DETOUR = os.environ.get('MG_SS_DETOUR', 'charge')    # or 'refund': a won stage's trip is free
 DETOUR_CAP = 1200                                          # frames forgiven per leg at most (20 s)
 # Hidden Palace: which gray Super Emerald to take: 'auto' (ss_pilot.choose_super:
@@ -977,6 +987,7 @@ class SonicCoordinator(gym.Env):
         self._used_rings = set()      # MG_RING_COMPASS: giant rings entered this episode
         self._bt = BossTracker.restore(ck.get('bt'), self.base_env) if MG_BOSS else None
         self._hit_paid = 0.0          # MG_BOSS_PAY: paid for hits, not yet taken back
+        self._em_owed = 0.0           # MG_EMERALD_PAY=return: bonus for won emeralds, paid on getting back
         self._boss_hits = 0
         self._stage_frames = 0        # pilot: frames charged for them (not on the timeout clock)
         self.ret = 0.0
@@ -1043,8 +1054,12 @@ class SonicCoordinator(gym.Env):
             self._stage_frames += stage['cost']
             r += stage['paid'] - stage['cost']
             self._moved_at = self.frames            # a fresh stuck clock at the ring
+            if MG_EMERALD_PAY == 'return' and stage['emeralds'] > 0:
+                self._em_owed += MG_EMERALD_BONUS * stage['emeralds']
+                self._stages[-1]['bonus'] = MG_EMERALD_BONUS * stage['emeralds']
         if event == 'clear':
             r += self._route.finish() + CLEAR_BONUS
+            r += self._pay_emeralds()               # MG_EMERALD_PAY=return: a clear is back for sure
         elif event == 'death':
             r -= DEATH_PENALTY
         elif event is None:
@@ -1056,6 +1071,7 @@ class SonicCoordinator(gym.Env):
                 self._hit_paid = 0.0
             if gain > 0:
                 self._gain_at = self.frames
+                r += self._pay_emeralds()           # MG_EMERALD_PAY=return: back on his way
             if self._back is not None:              # MG_SS_DETOUR: the way back from a won ring is
                 if gain > 0:                        # refunded once he makes progress again; time spent
                     back = min(self._back, DETOUR_CAP)   # NOT getting back (camping at the ring) is not
@@ -1103,6 +1119,17 @@ class SonicCoordinator(gym.Env):
             info = dict(info)
             info['mg_result'] = self._result(outcome, info)
         return self._obs(), r * REWARD_SCALE, terminated, truncated, info
+
+    def _pay_emeralds(self):
+        """MG_EMERALD_PAY=return: the bonus owed for emeralds won this episode,
+        now that Sonic is back on his way (each stage record gets 'bonus_paid_at')."""
+        if not self._em_owed:
+            return 0.0
+        for st in self._stages:
+            if 'bonus' in st and 'bonus_paid_at' not in st:
+                st['bonus_paid_at'] = self.frames
+        owed, self._em_owed = self._em_owed, 0.0
+        return owed
 
     def _special_stage(self, info):
         """MG_SS=pilot, on the frame Sonic enters a special stage (entry flag
@@ -1161,7 +1188,7 @@ class SonicCoordinator(gym.Env):
         self._last_raw = prev_raw
         emeralds = int(info['chaos_emeralds']) + int(info['super_emeralds']) - em0
         cost = n_out + (0 if MG_SS_TIME == 'game' else n_stage)
-        paid = (MG_EMERALD_BONUS * emeralds
+        paid = (MG_EMERALD_BONUS * emeralds * (MG_EMERALD_PAY == 'stage')
                 + (cost if MG_SS_TIME == 'refund' and emeralds > 0 else 0))
         rec = dict(board=res['board'], outcome=res['outcome'], spheres=res['spheres'],
                    total=res['total'], emeralds=emeralds, in_stage=n_stage, reload=n_out,

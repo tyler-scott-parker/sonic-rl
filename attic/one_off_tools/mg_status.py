@@ -90,6 +90,7 @@ def main():
         stage_all = sum(r['outcome'] == 'stage' for r in rs)
         played = [r for r in rs if r.get('stages')]          # MG_SS=pilot: a special stage played
         won = sum(st.get('emeralds', 0) for r in played for st in r['stages'])
+        owed = [st for r in played for st in r['stages'] if 'bonus' in st]    # MG_EMERALD_PAY=return
         print(f"  {act}: start point {c['ptr']} ({c['frac']:.1%}); last {len(last)}: "
               + ', '.join(f'{k} {v}' for k, v in out.most_common()))
         drowned = sum(r.get('cause') == 'drown' for r in last)
@@ -113,7 +114,9 @@ def main():
               + f"; giant-ring exits {stage_all} of {len(rs)} ({stage_all / max(1, len(rs)):.1%}),"
                 f" last 500 {out.get('stage', 0)}"
               + (f"; special stages played in {len(played)} episodes (last 500: "
-                 f"{sum(bool(r.get('stages')) for r in last)}), emeralds won {won}" if played else ''))
+                 f"{sum(bool(r.get('stages')) for r in last)}), emeralds won {won}" if played else '')
+              + (f"; got back after {sum('bonus_paid_at' in st for st in owed)} of the {len(owed)} "
+                 f"paid on return" if owed else ''))
         s = st.setdefault(key, {'ptr': c['ptr'], 'since': steps})
         if s['since'] > steps:                               # a rollback (mg2 2026-10-12) left it in the future
             s['since'] = steps

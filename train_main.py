@@ -130,7 +130,7 @@ RUNS = {
         # imitation pull teaches the five new acts instead. mg1bc's curriculum file copied at
         # launch (AIZ1 starts at 63). First attempt from bc4: logs/archive_mg2_from_bc4/
         init='mg1bc', air_bar=True,
-        ss='pilot', ss_detour='refund', emerald_bonus=300,
+        ss='pilot', ss_detour='refund', emerald_bonus=1200,   # 300 until 2026-10-15 (emerald_pay below)
         curr_at_pointer=True, curr_min_n=32, curr_successes=8,
         extra_starts={'play_20260930-153946:AIZ1': [4095, 4110, 4125, 4335, 4350, 4365]},
         # from its resume after 2026-10-12 ~14:25 (Tyler: "Let's try the compass"): the ring
@@ -145,6 +145,12 @@ RUNS = {
         # hit paid 120 frames up front and taken back with the fight's lump, and a hit counts as
         # progress for `stuck` (coordinator "Boss hits"; check_boss.py)
         boss_bar=True, boss_pay=120,
+        # from its resume at ~36.9M steps (2026-10-15 ~06:50; Tyler: "Let's try your recommendation"):
+        # each emerald pays 1,200 frames (20 s; was 300 at the stage) once Sonic makes route progress
+        # again after the stage (or clears), nothing if he never gets back: it had learned to skip
+        # rings (AIZ1 fresh starts with the ring cleared 28% vs 63%, stuck in its pocket; took it
+        # 8% -> <1%); check_emerald_pay.py
+        emerald_pay='return',
         result='STARTED 2026-10-12 ~13:50 from bc4, criteria AGREED (Tyler: "let\'s do it!" after '
                'mg1bc cleared AIZ1 from the start); RESTARTED ~16:25 from mg1bc (bc4 had lost AIZ1 '
                'from the start: 0/20 vs mg1bc 5/20). Six acts at once: do the five new acts learn, '
@@ -240,6 +246,8 @@ def configure_env(run):
     # with 'pilot': frames per emerald won, on top of the refund; 'refund' = a won
     # stage's trip to the ring and back is free too (coordinator.py)
     os.environ['MG_EMERALD_BONUS'] = str(cfg.get('emerald_bonus', 0))
+    # when: 'stage' (at the special stage) or 'return' (once Sonic makes route progress again)
+    os.environ['MG_EMERALD_PAY'] = cfg.get('emerald_pay', 'stage')
     os.environ['MG_SS_DETOUR'] = cfg.get('ss_detour', 'charge')
     # Sonic's air drawn into the observation (coordinator.obs_frame)
     os.environ['MG_AIR_BAR'] = '1' if cfg.get('air_bar') else '0'
