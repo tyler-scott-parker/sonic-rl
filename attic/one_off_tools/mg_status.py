@@ -103,6 +103,11 @@ def main():
             print(f"    boss share: {len(bs)} episodes; last {len(bs[-500:])}: "
                   + ', '.join(f'{k} {v}' for k, v in bo.most_common())
                   + f"; matched him {sum(r['success'] for r in bs[-500:])}")
+        hurt = [h for r in last for h in r.get('hurt', [])]      # logged from 2026-10-15
+        if hurt:
+            lost = [h[1] - h[2] for h in hurt if h[2] < h[1]]
+            print(f"    hits survived: {len(hurt)} in the last {len(last)} episodes, {len(lost)} lost rings"
+                  + (f" (median {sorted(lost)[len(lost) // 2]})" if lost else ''))
         drowned = sum(r.get('cause') == 'drown' for r in last)
         if drowned:
             print(f"    drowned: {drowned} of the last {len(last)} episodes")

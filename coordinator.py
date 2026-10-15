@@ -314,6 +314,7 @@ ZONE_DDZ       = 0x0C      # Doomsday: no timer stop; cleared when the game move
 ZONE_ENDING    = 0x0D      # ... to the ending (Tyler's recording, 2026-10-11)
 STAGE_MODES    = (0x34, 0x48)              # special stage, its results
 DEAD_ROUTINES  = (6, 8, 0xC)
+HURT_ROUTINE   = 4         # hit and survived: thrown back, rings dropped (a shield is lost instead)
 
 ZONE_NAMES = {0: 'AIZ', 1: 'HCZ', 2: 'MGZ', 3: 'CNZ', 4: 'FBZ', 5: 'ICZ',
               6: 'LBZ', 7: 'MHZ', 8: 'SOZ', 9: 'LRZ', 0xA: 'SSZ', 0xB: 'DEZ',
@@ -1035,6 +1036,8 @@ class SonicCoordinator(gym.Env):
         self._hit_paid = 0.0          # MG_BOSS_PAY: paid for hits, not yet taken back
         self._em_owed = 0.0           # MG_EMERALD_PAY=return: bonus for won emeralds, paid on getting back
         self._boss_hits = 0
+        self._hurt = []               # [frame, rings held, rings left] per hit survived
+        self._rt_prev, self._rings_prev = None, 0
         self._stage_frames = 0        # pilot: frames charged for them (not on the timeout clock)
         self.ret = 0.0
         self._t0 = time.time()
@@ -1052,6 +1055,12 @@ class SonicCoordinator(gym.Env):
             n += 1
             raws.append(raw)
             in_level, in_stage, dead, timer_on = frame_flags(info)
+            rt, rings = int(info['mg_routine']), int(info['rings'])
+            if rt == HURT_ROUTINE and self._rt_prev != HURT_ROUTINE and in_level:
+                # the hits Sonic survives, logged as [frame, rings held, rings left]: what a hit
+                # costs in rings, to size a ring value (Tyler 2026-10-15, "option 2")
+                self._hurt.append([self.frames + n, self._rings_prev, rings])
+            self._rt_prev, self._rings_prev = rt, rings
             if in_stage:
                 event = 'stage'
             elif dead:
@@ -1273,6 +1282,8 @@ class SonicCoordinator(gym.Env):
             entry['off_route'] = self._off
         if self._boss_start:
             entry['boss_share'] = True                   # MG_BOSS_SHARE drew this start
+        if self._hurt:
+            entry['hurt'] = self._hurt                   # [frame, rings held, rings left] per hit survived
         if 'cause' in res:
             entry['cause'] = res['cause']                # 'drown' or 'other'
         if MG_BOSS:
