@@ -7,6 +7,7 @@ can resume near those areas and don't have to replay the whole level").
   python3 ring_clips.py                      # list the rings: where your run passes, the agent's record
   python3 ring_clips.py 4                    # record ring 4 from the point on your route nearest it
   python3 ring_clips.py 4 --back 20          # ... from 20 s earlier on your route (the way in may branch off before)
+  python3 ring_clips.py 4 --back -10         # ... from 10 s LATER on your route (the way in may come after)
   python3 ring_clips.py 4 --speed 100        # anything else goes to record_play.py (speed, --no-sound)
   python3 ring_clips.py --export             # (once) build the start states from your recordings
 
@@ -40,7 +41,7 @@ RUN = 'mg2'
 OUT_DIR = os.path.join('states', 'ring_clips')
 INDEX = os.path.join(OUT_DIR, 'index.json')
 CLIP_DIR = os.path.join('demos', 'clips')
-BACKS = (0, 5, 10, 15, 20, 30, 45, 60)     # seconds earlier on his route
+BACKS = (-20, -15, -10, -5, 0, 5, 10, 15, 20, 30, 45, 60)   # seconds earlier on his route (negative: later)
 TAKES = 0.2                                # the agent takes a ring this often from its start: no clip needed
 ENTERED_PX = 96                            # Sonic this close to a ring on the frame before a stage: went in
 
@@ -87,10 +88,16 @@ def export():
         ts = [c['t'] for c in seg['ckpts']]
         starts = {}
         for back in BACKS:
-            kk = next(j for j, t in enumerate(ts) if t >= ts[k] - 60 * back)
-            name = f"ring{n:02d}_{seg['name']}_{rx}_{ry}_back{back:02d}.state.gz"
-            with gzip.open(os.path.join(HOME, OUT_DIR, name), 'wb', compresslevel=6) as f:
-                f.write(zlib.decompress(seg['ckpts'][kk]['state']))
+            kk = next((j for j, t in enumerate(ts) if t >= ts[k] - 60 * back), len(ts) - 1)
+            when = f'back{back:02d}' if back >= 0 else f'ahead{-back:02d}'
+            name = f"ring{n:02d}_{seg['name']}_{rx}_{ry}_{when}.state.gz"
+            dest = os.path.join(HOME, OUT_DIR, name)
+            # never rewrite one: a rebuild's emulator state differs in bytes (not in play), and each clip
+            # checks its start file's sha1, so a rewrite orphans every clip recorded from it (2026-10-15)
+            if not os.path.exists(dest):
+                with gzip.open(dest + '.tmp', 'wb', compresslevel=6) as f:     # atomic: a recorder may be reading it
+                    f.write(zlib.decompress(seg['ckpts'][kk]['state']))
+                os.replace(dest + '.tmp', dest)
             j = int(np.searchsorted(r['t'], ts[kk]))
             starts[str(back)] = dict(file=os.path.join(OUT_DIR, name), start_point=kk, t=int(ts[kk]),
                                      x=int(r['x'][min(j, len(r['x']) - 1)]), y=int(r['y'][min(j, len(r['y']) - 1)]))
@@ -100,8 +107,9 @@ def export():
                                            px=round(float(d[i]))),
                           ring_start_point=k, tries=tries, took=took, starts=starts))
         print(f"  ring {n:2d} {seg['name']} ({rx},{ry}): {len(starts)} starts", flush=True)
-    with open(os.path.join(HOME, INDEX), 'w') as f:
+    with open(os.path.join(HOME, INDEX) + '.tmp', 'w') as f:
         json.dump(dict(run=RUN, made=time.strftime('%Y-%m-%d %H:%M:%S'), rings=rings), f, indent=1)
+    os.replace(os.path.join(HOME, INDEX) + '.tmp', os.path.join(HOME, INDEX))
     print(f'wrote {len(rings)} rings to {INDEX}')
 
 
@@ -112,8 +120,14 @@ def load_index():
         sys.exit(f'no {INDEX} yet: run  python3 ring_clips.py --export  once (CPU, a few minutes)')
 
 
-def clips_of(ring):
-    return sorted(glob.glob(os.path.join(HOME, CLIP_DIR, f"ring{ring['n']:02d}_*.npz")))
+def clips_of(ring, went_in=True):
+    """The ring's clip files; went_in: only those that went into it."""
+    out = sorted(glob.glob(os.path.join(HOME, CLIP_DIR, f"ring{ring['n']:02d}_*.npz")))
+    if not went_in:
+        return out
+    sys.path.insert(0, HOME)
+    import demos
+    return [p for p in out if demos.load_play(p)[1].get('clip', {}).get('entered_at') is not None]
 
 
 def show(rings):
@@ -125,8 +139,11 @@ def show(rings):
         print(f"  {g['n']:2d}  {g['act']}  ring at ({rx},{ry})  your run passes {h['px']} px away at "
               f"{fmt(h['t'])} into the act   agent {g['took']}/{g['tries']}"
               + ('  (finds it: no clip needed)' if need else '')
-              + (f"   clips: {len(clips_of(g))}" if clips_of(g) else ''))
-    print(f"\nRecord:  python3 ring_clips.py N [--back S]   S = {', '.join(map(str, BACKS))} s earlier on your route")
+              + (f"   clips in: {len(clips_of(g))}" if clips_of(g) else '')
+              + (f" (+{len(clips_of(g, False)) - len(clips_of(g))} that missed)"
+                 if len(clips_of(g, False)) > len(clips_of(g)) else ''))
+    print(f"\nRecord:  python3 ring_clips.py N [--back S]   S = {', '.join(map(str, BACKS))} s earlier on your route"
+          f" (negative: later)")
 
 
 def stage_entry(path):
@@ -153,26 +170,37 @@ def stage_entry(path):
 
 
 def file_clip(path, g, back):
-    """Check which ring a recording from ring g's start went into, label it, move it to demos/clips/."""
+    """Check which ring a recording from ring g's start went into, label it, move it to demos/clips/.
+    A clip that went into another ring on the list is filed under that one (it started from g's start:
+    meta['clip']['started_for'])."""
     sys.path.insert(0, HOME)
     import demos
     actions, meta = demos.load_play(path)
     ent = stage_entry(path)
-    z, a, rx, ry = g['ring']
-    hit = [e for e in ent if e[2] and tuple(e[2]) == (rx, ry) and e[3] <= ENTERED_PX]
-    meta['clip'] = dict(ring=g['ring'], ring_n=g['n'], act=g['act'], act_key=g['act_key'], demo=g['demo'],
+    by_ring = {tuple(x['ring'][2:]): x for x in load_index()}
+    went = [(e, by_ring[tuple(e[2])]) for e in ent if e[2] and tuple(e[2]) in by_ring and e[3] <= ENTERED_PX]
+    hit = next(((e, x) for e, x in went if x['n'] == g['n']), went[0] if went else None)
+    into = hit[1] if hit else g
+    z, a, rx, ry = into['ring']
+    meta['clip'] = dict(ring=into['ring'], ring_n=into['n'], act=into['act'], act_key=into['act_key'],
+                        demo=into['demo'], started_for=g['n'],
                         back_s=back, start_point=g['starts'][str(back)]['start_point'],
                         start_t=g['starts'][str(back)]['t'],
                         entered_at=hit[0][0] if hit else None,
                         stages=[dict(frame=e[0], at=list(e[1]), ring=list(e[2]) if e[2] else None,
                                      px=round(e[3]) if e[3] is not None else None) for e in ent])
     os.makedirs(os.path.join(HOME, CLIP_DIR), exist_ok=True)
-    dest = os.path.join(HOME, CLIP_DIR, f"ring{g['n']:02d}_{g['act']}_{rx}_{ry}_{demos.demo_id(path)}.npz")
+    stamp = 'play_' + demos.demo_id(path).rsplit('play_', 1)[-1]      # a fresh recording, or a filed clip
+    dest = os.path.join(HOME, CLIP_DIR, f"ring{into['n']:02d}_{into['act']}_{rx}_{ry}_{stamp}.npz")
     demos.save_play(dest, actions, meta)
-    os.remove(path)
-    if hit:
+    if os.path.abspath(path) != os.path.abspath(dest):
+        os.remove(path)
+    if hit and into['n'] == g['n']:
         print(f"clip saved: {os.path.relpath(dest, HOME)}: went into ring {g['n']} at frame {hit[0][0]} "
               f"({hit[0][0] / 60:.1f} s), {len(actions)} frames in all")
+    elif hit:
+        print(f"clip saved: {os.path.relpath(dest, HOME)}: started from ring {g['n']}'s start but went into "
+              f"ring {into['n']} ({into['act']} {rx},{ry}) at frame {hit[0][0]} ({hit[0][0] / 60:.1f} s): filed as ring {into['n']}")
     else:
         other = ', '.join(f"ring at {e[2]} ({e[3]:.0f} px)" for e in ent if e[2]) or 'none'
         print(f"clip saved: {os.path.relpath(dest, HOME)}, but it did NOT go into ring {g['n']} "
@@ -183,7 +211,8 @@ def file_clip(path, g, back):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('ring', nargs='?', type=int, help='ring number from the list')
-    ap.add_argument('--back', type=int, default=0, choices=BACKS, help='start this many seconds earlier on your route')
+    ap.add_argument('--back', type=int, default=0, help=f'start this many seconds earlier on your route (negative: '
+                                                        f'later); one of {BACKS}')
     ap.add_argument('--export', action='store_true', help='build the start states (once)')
     args, extra = ap.parse_known_args()
     os.chdir(HOME)
@@ -195,10 +224,13 @@ def main():
     g = next((x for x in rings if x['n'] == args.ring), None)
     if g is None:
         sys.exit(f'no ring {args.ring}: 1..{len(rings)}')
+    if str(args.back) not in g['starts']:
+        sys.exit(f"no start {args.back} s back for ring {g['n']}: {', '.join(sorted(g['starts'], key=int))} "
+                 f"(run --export again for the newer offsets)")
     st = g['starts'][str(args.back)]
     z, a, rx, ry = g['ring']
     print(f"ring {g['n']}: {g['act']}, giant ring at ({rx},{ry}). You start {fmt(st['t'])} into the act at "
-          f"({st['x']},{st['y']}), {args.back} s before your run passes nearest it.\n"
+          f"({st['x']},{st['y']}), {abs(args.back)} s {'before' if args.back >= 0 else 'after'} your run passes nearest it.\n"
           f"Go into the ring, then Enter saves and quits (no need to play the stage). Esc twice quits without saving.",
           flush=True)
     t0 = time.time()
