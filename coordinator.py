@@ -228,6 +228,11 @@ REWARD_SCALE   = 0.01
 # Matching the demo from a start point = clearing within this much time.
 MATCH_SLACK    = 0.25      # x (demo frames from there) ...
 MATCH_ADD      = 60        # ... + 1 s
+# Fight bar (mg2, 2026-10-15 ~18:15; Tyler: "maybe we should loosen the boss fights", after AIZ2/HCZ2/MGZ2's
+# pointers sat in their fights all day, MGZ2's 18M steps: they clear, too slowly for the bar). An episode
+# that starts inside his boss fight (the start point's Boss_flag) matches him if it clears within
+# (1 + MG_FIGHT_SLACK) x his frames from there + MATCH_ADD; 0 = MATCH_SLACK as everywhere else.
+MG_FIGHT_SLACK = float(os.environ.get('MG_FIGHT_SLACK', '0'))
 TIMEOUT_MULT   = 2.0       # an episode is cut (truncated) at 2x the demo's
 TIMEOUT_ADD    = 1200      # time from its start point + 20 s
 STUCK_FRAMES   = 600       # ... or after 10 s with no new route progress. The
@@ -1539,6 +1544,10 @@ class SonicCoordinator(gym.Env):
         rec['info'] = info
         return rec
 
+    def _slack(self):
+        """The match bar's slack: MG_FIGHT_SLACK for a start inside his boss fight, else MATCH_SLACK."""
+        return MG_FIGHT_SLACK if MG_FIGHT_SLACK > 0 and self._ck.get('boss') else MATCH_SLACK
+
     def _result(self, outcome, info):
         cleared = outcome == 'clear'
         res = dict(
@@ -1546,7 +1555,7 @@ class SonicCoordinator(gym.Env):
             frames=self.frames, target=self._target,
             margin=(self._target - self.frames) if cleared else None,
             success=cleared and (self.frames - (self._forgiven if MG_BAR_FORGIVE else 0)
-                                 <= self._target * (1 + MATCH_SLACK) + MATCH_ADD),
+                                 <= self._target * (1 + self._slack()) + MATCH_ADD),
             progress=round((self._route.best - self._ck['t']) / max(1, self._target), 4))
         if self._clip:
             res['clip'] = True                  # off his route: the curriculum's at-pointer rule must skip it

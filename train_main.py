@@ -44,6 +44,7 @@ import shutil
 import signal
 import argparse
 import collections
+import time
 
 import numpy as np
 from stable_baselines3.common.callbacks import (BaseCallback, CheckpointCallback,
@@ -138,7 +139,7 @@ RUNS = {
         ring_compass=True,
         # floor 0.3 from ~19:30 (the pull reaching 0 at 3M steps collapsed every act: rolled
         # back to the 2,261,000-step checkpoint, logs/archive_mg2_collapse/)
-        imitation=dict(data='datasets/bc_v4', floor=0.3),
+        imitation=dict(data='datasets/bc_v4', floor=0.3, front=True),   # front: from ~60.3M (see fight_slack)
         # from its resume at 6,241,416 steps (2026-10-14 ~20:55; Tyler: "let's add 2 and 3 as well",
         # after the boss hit counter was found): the boss bar drawn in (bc_v4 = bar + compass + boss
         # bar; its imitation fade carried over from bc_v3's, so the pull stays at the floor), each
@@ -173,6 +174,12 @@ RUNS = {
         # last 30 s before he went in), not on his route, where 43 of 44 probe tries never got closer;
         # check_ring_clips.py
         ring_clips='demos/clips',
+        # from its resume at ~60.3M steps (2026-10-15 ~18:20; Tyler: "yes" to aiming the imitation pull at the
+        # stuck openings, "and maybe we should loosen the boss fights"): AIZ2/HCZ2/MGZ2's pointers sat in their
+        # fights all day (MGZ2 18M steps), clearing at ~1.4-1.7x his time; a start inside his fight now matches
+        # him within 2.5x (MG_FIGHT_SLACK), as proposed 13:20 and declined then; and imitation 'front' adds his
+        # frames at each act's fresh-start frontier (HCZ2: frames 0-581, his spin dash and roll up the curve)
+        fight_slack=1.5,
         # from its resume at ~56.6M steps (2026-10-15 ~15:30; Tyler, after HCZ2's opening was measured:
         # "Yes, it's probably a good use of time"): its fresh starts all stopped at 3.4% (a curve that must
         # be rolled up; the agent hops in the corridor and lands running), then at a sliding wall, and the
@@ -313,6 +320,8 @@ def configure_env(run):
     # a share of resets started just before where an act's fresh starts get stuck, so its opening
     # is practised from his states while the curriculum is still at its end (coordinator, "Front share")
     os.environ['MG_FRONT_SHARE'] = str(cfg.get('front_share', 0))
+    # a looser match bar for starts inside his boss fights (coordinator, "Fight bar")
+    os.environ['MG_FIGHT_SLACK'] = str(cfg.get('fight_slack', 0))
     # ring-share starts along Tyler's detour clips into giant rings (coordinator, "Ring clips"): the clips
     # in RUNS 'ring_clips' (a directory) that went into their ring, so a resume picks up new ones
     os.environ['MG_RING_CLIPS'] = ','.join(ring_clip_files(cfg.get('ring_clips')))
@@ -394,15 +403,20 @@ class ImitationCallback(BaseCallback):
     `behind` before it to `ahead` after it: the hard spot the pointer is
     stuck at), half from the run's whole acts (not to forget the rest). The
     value head is left alone. Logged under imitation/ (loss, weight,
-    accuracy on the batch)."""
+    accuracy on the batch). With cfg 'front' (mg2, 2026-10-15; Tyler: "yes" to pointing it at HCZ2's
+    opening, whose fresh starts all stop at a curve he rolls up and the agent hops into), the focused half
+    also covers each act's fresh-start frontier: his frames in the front share's window, FRONT_BACK up to
+    where the median fresh start gets (coordinator.fresh_frontier, re-read every FRONT_EVERY_S), for
+    acts whose frontier is short of the pointer."""
 
     def __init__(self, cfg, run, curriculum_path):
         super().__init__()
         self.cfg, self.run, self.curriculum_path = dict(cfg), run, curriculum_path
         self.start = None
+        self._front, self._front_at = None, 0.0     # cfg 'front': act key -> fresh-start frontier; when read
 
-    def _on_training_start(self):
-        import torch
+    def load_data(self):
+        """His frames and samples for the run's acts (no model needed: check_imitation_front.py)."""
         import coordinator as C                     # imported by main() after configure_env
         self.C = C
         c = self.cfg
@@ -429,6 +443,12 @@ class ImitationCallback(BaseCallback):
         self.S, self.all = S, np.flatnonzero(keep)
         self.offs = np.arange(-(C.STACK - 1) * C.FRAME_SKIP, 1, C.FRAME_SKIP)
         self.w = (S['agree'] / C.FRAME_SKIP).astype(np.float32)
+        return meta
+
+    def _on_training_start(self):
+        import torch
+        meta = self.load_data()
+        c = self.cfg
         lr = self.model.learning_rate
         self.base_lr = lr(1.0) if callable(lr) else float(lr)
         self.opt = torch.optim.Adam(self.model.policy.parameters(), lr=self.base_lr)
@@ -451,7 +471,8 @@ class ImitationCallback(BaseCallback):
                                  f"{env}={os.environ.get(env)}: the frames would differ")
         print(f"[imitation] {len(self.all):,} of his frames in {len(self.keys)} acts ({c['data']}); "
               f"weight {c['weight']} -> {c.get('floor', 0.0)} over {c['decay_steps']:,} steps from {self.start:,}; "
-              f"{c['steps']} steps of {c['batch']} per update", flush=True)
+              f"{c['steps']} steps of {c['batch']} per update"
+              + ("; the focused half also at each act's fresh-start frontier" if c.get('front') else ''), flush=True)
 
     def weight(self):
         """Falls linearly to `floor` (default 0) over decay_steps. mg2 (2026-10-12) showed why a
@@ -476,8 +497,31 @@ class ImitationCallback(BaseCallback):
             t = self.S['t'][idx]
             near = idx[(t >= t0 - self.cfg['behind']) & (t <= t0 + self.cfg['ahead'])]
             out.append(near)
+        if self.cfg.get('front'):
+            out += self.front_windows(cur)
         out = np.concatenate(out) if out else np.array([], dtype=int)
         return out if len(out) else self.all
+
+    def front_windows(self, cur):
+        """cfg 'front': [sample indices] of his frames in each act's front-share window (the FRONT_BACK
+        frames up to its fresh-start frontier), for acts whose frontier is short of the pointer."""
+        C = self.C
+        if self._front is None or time.time() - self._front_at >= C.FRONT_EVERY_S:
+            by = collections.defaultdict(list)
+            for r in C.log_tail(C.FRONT_TAIL_BYTES):
+                by[f"{r.get('demo')}:{r.get('act')}"].append(r)
+            self._front = {k: C.fresh_frontier(by[k]) for k in self.keys}
+            self._front_at = time.time()
+        out = []
+        for key, idx in self.keys.items():
+            f = self._front.get(key)
+            if f is None or key not in cur:
+                continue
+            if f >= cur[key]['frac'] * int(self.S['T'][idx[0]]):
+                continue                                # it reaches the pointer: the pointer window covers it
+            t = self.S['t'][idx]
+            out.append(idx[(t >= f - C.FRONT_BACK) & (t <= f)])
+        return out
 
     def _on_rollout_start(self):
         import torch
