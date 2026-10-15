@@ -10,6 +10,7 @@ can resume near those areas and don't have to replay the whole level").
   python3 ring_clips.py 4 --back -10         # ... from 10 s LATER on your route (the way in may come after)
   python3 ring_clips.py 4 --speed 100        # anything else goes to record_play.py (speed, --no-sound)
   python3 ring_clips.py --export             # (once) build the start states from your recordings
+  python3 ring_clips.py --export --acts CNZ1,CNZ2   # ... and for acts beyond the run's (added as new rings)
 
 Why: the ring share starts the agent where your route passes nearest each ring, but 12 of the 14 rings in
 mg2's acts sit 200-360 px off your route, under a floor or behind a wall and off screen, and in 43 of 44
@@ -67,19 +68,28 @@ def ring_record(log_path):
     return out
 
 
-def export():
+def export(extra_acts=()):
+    """extra_acts: act names beyond the run's (e.g. CNZ1, from his full-game recording). A ring already
+    in the index keeps its number and its files; new rings get the next numbers."""
     sys.path.insert(0, HOME)
     import train_main
     train_main.configure_env(RUN)
     os.environ.update(MG_LOG=os.devnull, CUDA_VISIBLE_DEVICES='')
     import numpy as np
     import coordinator as C
-    env = C.SonicCoordinator(demo_prob=0.0)
+    old = {}
+    if os.path.exists(os.path.join(HOME, INDEX)):
+        old = {tuple(g['ring']): g for g in json.load(open(os.path.join(HOME, INDEX)))['rings']}
+    env = C.SonicCoordinator(acts=list(train_main.RUNS[RUN]['acts']) + list(extra_acts), demo_prob=0.0)
     env.demo_info()
     rec = ring_record(os.path.join(HOME, f'mg_log_{RUN}.jsonl'))
     os.makedirs(os.path.join(HOME, OUT_DIR), exist_ok=True)
-    rings = []
-    for n, (seg, k, ring) in enumerate(env.ring_starts(), 1):
+    rings, nxt = [], max([g['n'] for g in old.values()] + [0]) + 1
+    for seg, k, ring in env.ring_starts():
+        if tuple(ring) in old:
+            n = old.pop(tuple(ring))['n']
+        else:
+            n, nxt = nxt, nxt + 1
         z, a, rx, ry = ring
         r = seg['route']
         m = (r['zone'] == z) & (r['act'] == a)
@@ -107,6 +117,7 @@ def export():
                                            px=round(float(d[i]))),
                           ring_start_point=k, tries=tries, took=took, starts=starts))
         print(f"  ring {n:2d} {seg['name']} ({rx},{ry}): {len(starts)} starts", flush=True)
+    rings = sorted(rings + list(old.values()), key=lambda g: g['n'])     # rings of acts not built this time: kept
     with open(os.path.join(HOME, INDEX) + '.tmp', 'w') as f:
         json.dump(dict(run=RUN, made=time.strftime('%Y-%m-%d %H:%M:%S'), rings=rings), f, indent=1)
     os.replace(os.path.join(HOME, INDEX) + '.tmp', os.path.join(HOME, INDEX))
@@ -214,10 +225,11 @@ def main():
     ap.add_argument('--back', type=int, default=0, help=f'start this many seconds earlier on your route (negative: '
                                                         f'later); one of {BACKS}')
     ap.add_argument('--export', action='store_true', help='build the start states (once)')
+    ap.add_argument('--acts', default='', help='with --export: more acts beyond the run\'s, comma-separated (CNZ1,CNZ2)')
     args, extra = ap.parse_known_args()
     os.chdir(HOME)
     if args.export:
-        return export()
+        return export([a for a in args.acts.split(',') if a])
     rings = load_index()
     if args.ring is None:
         return show(rings)
