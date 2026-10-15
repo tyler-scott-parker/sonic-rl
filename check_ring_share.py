@@ -44,6 +44,7 @@ def main():
     train_main.configure_env(run)
     os.environ.update(MG_LOG=os.devnull, CUDA_VISIBLE_DEVICES='')
     import coordinator as C
+    C.MG_BALANCE_TIME = False                           # the episode draws; check_balance_time.py does the time
     import mg_stones
     cfg = train_main.RUNS[run]
     check(C.MG_RING_SHARE == cfg.get('ring_share', 0) > 0, f'MG_RING_SHARE {C.MG_RING_SHARE}')

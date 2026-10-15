@@ -74,6 +74,16 @@ def main():
     now, last_look = time.time(), st.get('checked', 0)
     print(f'{a.run}: {steps:,} steps, {sum(map(len, eps.values())):,} episodes'
           + (f'; policy entropy {entropy:.2f}' if entropy is not None else ''))
+    tail = sorted((r for rs in eps.values() for r in rs[-3000:]), key=lambda r: r['t'])[-3000:]
+    steps_of_ep = lambda r: max(1, -(-(r['frames'] - sum(x.get('cost', 0) for x in r.get('stages', []))) // 4))
+    tot = sum(map(steps_of_ep, tail)) or 1
+    by_act = collections.Counter()
+    for r in tail:
+        by_act[r['act']] += steps_of_ep(r)
+    print(f'  training time, last {len(tail):,} episodes: '
+          + ', '.join(f'{a} {100 * v / tot:.0f}%' for a, v in sorted(by_act.items()))
+          + f" (boss share {100 * sum(steps_of_ep(r) for r in tail if r.get('boss_share')) / tot:.0f}%,"
+          f" ring share {100 * sum(steps_of_ep(r) for r in tail if r.get('ring_share')) / tot:.0f}%)")
     alerts = []
     if entropy is not None and entropy > ENTROPY_MAX and not st.get('entropy_reported'):
         alerts.append(f'ALERT entropy: the policy is flattening ({entropy:.2f} > {ENTROPY_MAX}; '
