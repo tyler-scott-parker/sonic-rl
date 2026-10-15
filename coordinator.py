@@ -164,6 +164,10 @@ Environment variables (the trainer sets them before workers import this):
                         curriculum is stuck in (Boss share); 0 = off
   MG_ACT_WEIGHTS=AIZ1:0.3;DEMO:ACT:w   how often each act is drawn for the
                         other resets (default 1 each)
+  MG_RING_SHARE=p       share of resets started where his route passes nearest a
+                        giant ring (Ring share); 0 = off
+  MG_BAR_FORGIVE=1      the curriculum's time bar leaves out the frames the
+                        reward forgives (a won stage and its refunded trip)
   MG_LOG=path           episode log (JSON lines)
   MG_TEST_GOAL_X=x      TEST FIXTURE ONLY (smoke_main.py): spawn a signpost
                         when Sonic first passes x, making a short fake act
@@ -254,6 +258,14 @@ DEMO_BAND      = 4         # a start is drawn from [pointer, pointer + band]
 MG_BOSS_SHARE  = float(os.environ.get('MG_BOSS_SHARE', '0'))
 MG_ACT_WEIGHTS = {name: float(w) for name, w in (part.rsplit(':', 1) for part in
                   os.environ.get('MG_ACT_WEIGHTS', '').split(';') if part)}
+# Ring share (mg2, 2026-10-15; Tyler: "i think the goal is to encourage sonic to grab all 14 giant
+# rings. speed can come afterwards", then "let's try it out"): this share of resets starts at the
+# start point where his route passes nearest a giant ring (rings within RING_SHARE_PX of it; one
+# drawn evenly), the compass pointing the way. His recordings take no giant ring, and the time bar
+# failed every run that did: MG_BAR_FORGIVE leaves out of the bar what the reward forgives.
+MG_RING_SHARE  = float(os.environ.get('MG_RING_SHARE', '0'))
+MG_BAR_FORGIVE = os.environ.get('MG_BAR_FORGIVE', '0') == '1'
+RING_SHARE_PX  = 400       # 14 of the 19 giant rings in mg2's acts are within ~360 px of his route
 
 DEMO_FILES  = [p for p in os.environ.get('MG_DEMOS', '').split(',') if p.strip()]
 ACTS        = [a for a in os.environ.get('MG_ACTS', '').split(',') if a.strip()]
@@ -843,6 +855,7 @@ class SonicCoordinator(gym.Env):
             low=0, high=255, shape=(OBS_SIZE, OBS_SIZE, STACK), dtype=np.uint8)
         self._segs = None            # built from the demos at the first reset
         self._ptr = {}               # segment key -> start checkpoint (trainer-set)
+        self._ring_starts = None     # MG_RING_SHARE: built from the routes on first use
         self._log_warned = False
         self._last_raw = None
         self._stack = collections.deque(maxlen=STACK)
@@ -975,20 +988,43 @@ class SonicCoordinator(gym.Env):
                     break
         return out
 
+    def ring_starts(self):
+        """MG_RING_SHARE: [(seg, start point, ring key (zone, act, x, y))] for each giant ring
+        within RING_SHARE_PX of his route: the start point at or before where he passes nearest."""
+        if self._ring_starts is None:
+            rings = GIANT_RINGS or giant_rings()
+            self._ring_starts = []
+            for s in self._segs:
+                r, ts = s['route'], np.array([c['t'] for c in s['ckpts']])
+                for za in sorted(set(zip(r['zone'].tolist(), r['act'].tolist()))):
+                    m = (r['zone'] == za[0]) & (r['act'] == za[1])
+                    for rx, ry in rings.get(za, ()):
+                        d = np.hypot(r['x'][m] - rx, r['y'][m] - ry)
+                        i = int(d.argmin())
+                        if d[i] <= RING_SHARE_PX:
+                            k = max(0, int(np.searchsorted(ts, r['t'][m][i], side='right')) - 1)
+                            self._ring_starts.append((s, k, za + (rx, ry)))
+        return self._ring_starts
+
     def act_weight(self, seg):
         return MG_ACT_WEIGHTS.get(seg['key'], MG_ACT_WEIGHTS.get(seg['name'], 1.0))
 
     # ── Episodes ─────────────────────────────────────────────────────────
 
     def _pick(self, opts):
-        """(seg, start point, drawn by the boss share?) for a reset."""
-        boss = None
+        """(seg, start point, drawn by the boss share?, the ring key if drawn by the ring share)
+        for a reset."""
+        boss = ring = None
         if 'key' in opts:
             seg = next(s for s in self._segs if s['key'] == opts['key'])
         else:
             ranges = self.boss_ranges() if MG_BOSS_SHARE > 0 and 'ckpt' not in opts else []
-            if ranges and random.random() < MG_BOSS_SHARE:
+            rings = self.ring_starts() if MG_RING_SHARE > 0 and 'ckpt' not in opts else []
+            u = random.random()
+            if ranges and u < MG_BOSS_SHARE:
                 seg, *boss = random.choice(ranges)
+            elif rings and MG_BOSS_SHARE <= u < MG_BOSS_SHARE + MG_RING_SHARE:
+                seg, k_ring, ring = random.choice(rings)
             else:
                 seg = random.choices(self._segs, weights=[self.act_weight(s) for s in self._segs])[0]
         last = len(seg['ckpts']) - 1
@@ -996,18 +1032,20 @@ class SonicCoordinator(gym.Env):
             k = min(int(opts['ckpt']), last)
         elif boss:
             k = random.randint(*boss)
+        elif ring:
+            k = random.randint(max(0, k_ring - 1), k_ring)     # 1-2 s before he passes nearest
         elif random.random() < self.demo_prob:
             ptr = min(self._ptr.get(seg['key'], last), last)
             k = random.randint(ptr, min(last, ptr + DEMO_BAND))
         else:
             k = 0                                   # the start of the act
-        return seg, k, bool(boss)
+        return seg, k, bool(boss), ring
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         if self._segs is None:
             self._build()
-        seg, k, boss = self._pick(options or {})
+        seg, k, boss, ring = self._pick(options or {})
         ck = seg['ckpts'][k]
 
         self.base_env.reset()
@@ -1019,6 +1057,8 @@ class SonicCoordinator(gym.Env):
 
         self._seg, self._k, self._ck = seg, k, ck
         self._boss_start = boss
+        self._ring_target = ring
+        self._forgiven = 0            # MG_BAR_FORGIVE: frames the reward forgave (won stages, refunded trips)
         self._ddz = int(seg['route']['zone'][0]) == ZONE_DDZ
         self._route = RouteProgress(seg['route'], ck['t'], ck['boss'])
         self._target = seg['T'] - ck['t']
@@ -1104,9 +1144,12 @@ class SonicCoordinator(gym.Env):
                 self._owed -= booked
                 r += there - booked                 # the rest were charged: pay them back
                 self._stages[-1]['trip_there'] = there
+                self._forgiven += there
                 won_trip = True
             self.frames += stage['cost']
             self._stage_frames += stage['cost']
+            if MG_SS_TIME == 'refund' and stage['emeralds'] > 0:
+                self._forgiven += stage['cost']     # a won stage's time is free
             r += stage['paid'] - stage['cost']
             self._moved_at = self.frames            # a fresh stuck clock at the ring
             if MG_EMERALD_PAY == 'return' and stage['emeralds'] > 0:
@@ -1132,6 +1175,7 @@ class SonicCoordinator(gym.Env):
                     back = min(self._back, DETOUR_CAP)   # NOT getting back (camping at the ring) is not
                     r += back
                     self._stages[-1]['trip_back'] = back
+                    self._forgiven += back
                     self._back = None
                 else:
                     self._back += n
@@ -1262,7 +1306,8 @@ class SonicCoordinator(gym.Env):
             key=self._seg['key'], start=self._k, outcome=outcome,
             frames=self.frames, target=self._target,
             margin=(self._target - self.frames) if cleared else None,
-            success=cleared and self.frames <= self._target * (1 + MATCH_SLACK) + MATCH_ADD,
+            success=cleared and (self.frames - (self._forgiven if MG_BAR_FORGIVE else 0)
+                                 <= self._target * (1 + MATCH_SLACK) + MATCH_ADD),
             progress=round((self._route.best - self._ck['t']) / max(1, self._target), 4))
         if outcome == 'death':
             res['cause'] = getattr(self, '_death_cause', 'other')
@@ -1284,6 +1329,12 @@ class SonicCoordinator(gym.Env):
             entry['boss_share'] = True                   # MG_BOSS_SHARE drew this start
         if self._hurt:
             entry['hurt'] = self._hurt                   # [frame, rings held, rings left] per hit survived
+        if self._ring_target:
+            entry['ring_share'] = list(self._ring_target)    # MG_RING_SHARE drew this start, for this ring
+        if self._used_rings:
+            entry['giant_rings'] = sorted(list(k) for k in self._used_rings)
+        if self._forgiven:
+            entry['forgiven'] = self._forgiven
         if 'cause' in res:
             entry['cause'] = res['cause']                # 'drown' or 'other'
         if MG_BOSS:

@@ -86,9 +86,10 @@ def main():
         act = key.split(':')[-1]
         rs = eps.get(act, [])
         bs = [r for r in rs if r.get('boss_share')]            # MG_BOSS_SHARE (from 2026-10-15)
-        last = [r for r in rs if not r.get('boss_share')][-500:]   # comparable with before it
+        rg = [r for r in rs if r.get('ring_share')]             # MG_RING_SHARE (from 2026-10-15)
+        last = [r for r in rs if not r.get('boss_share') and not r.get('ring_share')][-500:]   # comparable with before
         out = collections.Counter(r['outcome'] for r in last)
-        fresh = [r for r in rs if r['start'] == 0]
+        fresh = [r for r in rs if r['start'] == 0 and not r.get('ring_share')]
         fc = [r for r in fresh if r['outcome'] == 'clear']
         recent_f = fresh[-100:]
         target = fresh[0]['target'] if fresh else None
@@ -108,6 +109,13 @@ def main():
             lost = [h[1] - h[2] for h in hurt if h[2] < h[1]]
             print(f"    hits survived: {len(hurt)} in the last {len(last)} episodes, {len(lost)} lost rings"
                   + (f" (median {sorted(lost)[len(lost) // 2]})" if lost else ''))
+        for ring in sorted({tuple(r['ring_share']) for r in rg}):
+            tries = [r for r in rg if tuple(r['ring_share']) == ring]
+            took = [r for r in tries if list(ring) in r.get('giant_rings', [])]
+            back = [r for r in took if any('bonus_paid_at' in x for x in r.get('stages', []))]
+            print(f"    ring share, giant ring at ({ring[2]},{ring[3]}): {len(tries)} tries, took it {len(took)}"
+                  f" (last 100: {sum(list(ring) in r.get('giant_rings', []) for r in tries[-100:])}),"
+                  f" got back after {len(back)}")
         drowned = sum(r.get('cause') == 'drown' for r in last)
         if drowned:
             print(f"    drowned: {drowned} of the last {len(last)} episodes")

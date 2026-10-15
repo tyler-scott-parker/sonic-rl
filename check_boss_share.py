@@ -43,6 +43,7 @@ def main():
     os.environ.update(MG_LOG=os.devnull, CUDA_VISIBLE_DEVICES='')
     import coordinator as C
     import mg_stones
+    C.MG_RING_SHARE = 0.0                               # the ring share has its own check (check_ring_share.py)
     cfg = train_main.RUNS[run]
     check(C.MG_BOSS_SHARE == cfg.get('boss_share', 0) > 0,
           f"MG_BOSS_SHARE {C.MG_BOSS_SHARE} (RUNS {cfg.get('boss_share')})")
@@ -79,7 +80,7 @@ def main():
 
     print(f'\n2. {N:,} drawn starts')
     random.seed(1)
-    draws = [env._pick({}) for _ in range(N)]
+    draws = [env._pick({})[:3] for _ in range(N)]
     boss = [(s['key'], k) for s, k, b in draws if b]
     check(abs(len(boss) / N - C.MG_BOSS_SHARE) < 0.01 if allowed else not boss,
           f'boss share {len(boss) / N:.1%} of starts (set {C.MG_BOSS_SHARE:.0%})')
@@ -114,14 +115,14 @@ def main():
         check(key not in left and left == set(allowed) - {key},
               f"{segs[key]['name']} at {max(0, lo - 1)} (just before its fight): drops out, the others stay")
         env.set_demo_pointers({k: 0 for k in ptrs})
-        none = [b for _, _, b in (env._pick({}) for _ in range(5000))]
+        none = [b for _, _, b, _ in (env._pick({}) for _ in range(5000))]
         check(not env.boss_ranges() and not any(none), 'every pointer at 0: no boss-share starts')
         env.set_demo_pointers(ptrs)
 
     print('\n4. MG_BOSS_SHARE=0, no weights (the old draws)')
     share, weights = C.MG_BOSS_SHARE, C.MG_ACT_WEIGHTS
     C.MG_BOSS_SHARE, C.MG_ACT_WEIGHTS = 0.0, {}
-    old = [env._pick({}) for _ in range(N)]
+    old = [env._pick({})[:3] for _ in range(N)]
     check(not any(b for _, _, b in old), 'no boss-share starts')
     n_old = collections.Counter(s['key'] for s, _, _ in old)
     check(all(abs(n / N - 1 / len(segs)) < 0.01 for n in n_old.values()), 'acts uniform')

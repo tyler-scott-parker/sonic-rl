@@ -130,7 +130,7 @@ RUNS = {
         # imitation pull teaches the five new acts instead. mg1bc's curriculum file copied at
         # launch (AIZ1 starts at 63). First attempt from bc4: logs/archive_mg2_from_bc4/
         init='mg1bc', air_bar=True,
-        ss='pilot', ss_detour='refund', emerald_bonus=1200,   # 300 until 2026-10-15 (emerald_pay below)
+        ss='pilot', ss_detour='refund', emerald_bonus=3600,   # 300, then 1200 (emerald_pay below), then 3600 (ring_share below)
         curr_at_pointer=True, curr_min_n=32, curr_successes=8,
         extra_starts={'play_20260930-153946:AIZ1': [4095, 4110, 4125, 4335, 4350, 4365]},
         # from its resume after 2026-10-12 ~14:25 (Tyler: "Let's try the compass"): the ring
@@ -158,6 +158,12 @@ RUNS = {
         # pointer band), and AIZ1 is drawn at 0.3 the rate of the others for the rest (~6% of
         # the frames; the imitation pull keeps his AIZ1 frames too); check_boss_share.py
         boss_share=0.25, act_weights={'play_20260930-153946:AIZ1': 0.3},
+        # from the same day's next resume (Tyler: "i think the goal is to encourage sonic to grab all
+        # 14 giant rings. speed can come afterwards"; "let's try it out"): 15% of resets start where
+        # his route passes nearest a giant ring (14 within 400 px in these acts), each emerald pays
+        # 3,600 frames (60 s, two deaths; was 1,200) on getting back, and the curriculum's time bar
+        # leaves out a won stage and its refunded trip; check_ring_share.py
+        ring_share=0.15, bar_forgive=True,
         result='STARTED 2026-10-12 ~13:50 from bc4, criteria AGREED (Tyler: "let\'s do it!" after '
                'mg1bc cleared AIZ1 from the start); RESTARTED ~16:25 from mg1bc (bc4 had lost AIZ1 '
                'from the start: 0/20 vs mg1bc 5/20). Six acts at once: do the five new acts learn, '
@@ -269,6 +275,10 @@ def configure_env(run):
     # often each act is drawn for the rest (coordinator, "Boss share")
     os.environ['MG_BOSS_SHARE'] = str(cfg.get('boss_share', 0))
     os.environ['MG_ACT_WEIGHTS'] = ';'.join(f'{k}:{w}' for k, w in cfg.get('act_weights', {}).items())
+    # a share of resets started where his route passes nearest a giant ring, and the time bar
+    # leaving out what the reward forgives (coordinator, "Ring share")
+    os.environ['MG_RING_SHARE'] = str(cfg.get('ring_share', 0))
+    os.environ['MG_BAR_FORGIVE'] = '1' if cfg.get('bar_forgive') else '0'
     # extra start points: the RUNS entry's plus the stepping stones mg_stones.py added
     # automatically when a start point stalled (main_<run>_stones.json)
     os.environ['MG_EXTRA_STARTS'] = ';'.join(f"{a}:{','.join(map(str, ts))}"
