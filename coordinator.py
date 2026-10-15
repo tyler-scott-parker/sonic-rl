@@ -395,9 +395,13 @@ def integration_state(name):
     """The bytes of one of the integration's save states ('HydrocityZone.Act1'),
     or of a raw em.get_state() file in the repo ('states/doomsday_start.state':
     Doomsday Zone, reached by granting all 14 emeralds at the start of Tyler's
-    DEZ3, which nobody's playthrough reaches otherwise)."""
+    DEZ3, which nobody's playthrough reaches otherwise), or of a gzipped one
+    ('states/ring_clips/....state.gz': ring_clips.py's starts on his route)."""
     if name.endswith('.state'):
         with open(os.path.join(PROJECT_DIR, name), 'rb') as f:
+            return f.read()
+    if name.endswith('.state.gz'):
+        with gzip.open(os.path.join(PROJECT_DIR, name), 'rb') as f:
             return f.read()
     path = stable_retro.data.get_file_path(GAME, name + '.state')
     if path is None:
