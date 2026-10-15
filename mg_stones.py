@@ -35,8 +35,9 @@ def since_arrival(rows, p, floor=0):
     moved the pointer forward again: an episode that began below p marks that, so only those after
     the last one below p count. floor: none earlier than this (unix time; mg_status.py's look before
     the move, which also covers stones renumbering the start points). Until 2026-10-15 this was the
-    curriculum file's last write, which any act's move rewrites: in a six-act run it hardly fired."""
-    lo = max([floor] + [r['t'] for r in rows if 0 < r['start'] < p])
+    curriculum file's last write, which any act's move rewrites: in a six-act run it hardly fired.
+    Boss-share starts (MG_BOSS_SHARE) begin below p on purpose and don't mark a rollback."""
+    lo = max([floor] + [r['t'] for r in rows if 0 < r['start'] < p and not r.get('boss_share')])
     return [r for r in rows if r['start'] == p and r['t'] >= lo]
 
 

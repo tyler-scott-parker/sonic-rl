@@ -85,7 +85,8 @@ def main():
     for key, c in sorted(cur.items()):
         act = key.split(':')[-1]
         rs = eps.get(act, [])
-        last = rs[-500:]
+        bs = [r for r in rs if r.get('boss_share')]            # MG_BOSS_SHARE (from 2026-10-15)
+        last = [r for r in rs if not r.get('boss_share')][-500:]   # comparable with before it
         out = collections.Counter(r['outcome'] for r in last)
         fresh = [r for r in rs if r['start'] == 0]
         fc = [r for r in fresh if r['outcome'] == 'clear']
@@ -97,6 +98,11 @@ def main():
         owed = [st for r in played for st in r['stages'] if 'bonus' in st]    # MG_EMERALD_PAY=return
         print(f"  {act}: start point {c['ptr']} ({c['frac']:.1%}); last {len(last)}: "
               + ', '.join(f'{k} {v}' for k, v in out.most_common()))
+        if bs:
+            bo = collections.Counter(r['outcome'] for r in bs[-500:])
+            print(f"    boss share: {len(bs)} episodes; last {len(bs[-500:])}: "
+                  + ', '.join(f'{k} {v}' for k, v in bo.most_common())
+                  + f"; matched him {sum(r['success'] for r in bs[-500:])}")
         drowned = sum(r.get('cause') == 'drown' for r in last)
         if drowned:
             print(f"    drowned: {drowned} of the last {len(last)} episodes")

@@ -151,6 +151,13 @@ RUNS = {
         # rings (AIZ1 fresh starts with the ring cleared 28% vs 63%, stuck in its pocket; took it
         # 8% -> <1%); check_emerald_pay.py
         emerald_pay='return',
+        # from its resume at ~50M steps (2026-10-15; Tyler: "lets go with the boss share inside
+        # mg2"): AIZ2, HCZ2 and MGZ2 were parked inside their end-of-act boss fights while AIZ1,
+        # cleared from the start (best 3,986 frames vs his 5,060), took 25% of the frames and AIZ2
+        # 7%. A quarter of resets now start inside a fight an act is stuck in (fight start ..
+        # pointer band), and AIZ1 is drawn at 0.3 the rate of the others for the rest (~6% of
+        # the frames; the imitation pull keeps his AIZ1 frames too); check_boss_share.py
+        boss_share=0.25, act_weights={'play_20260930-153946:AIZ1': 0.3},
         result='STARTED 2026-10-12 ~13:50 from bc4, criteria AGREED (Tyler: "let\'s do it!" after '
                'mg1bc cleared AIZ1 from the start); RESTARTED ~16:25 from mg1bc (bc4 had lost AIZ1 '
                'from the start: 0/20 vs mg1bc 5/20). Six acts at once: do the five new acts learn, '
@@ -258,6 +265,10 @@ def configure_env(run):
     # (coordinator, "Boss hits")
     os.environ['MG_BOSS_BAR'] = '1' if cfg.get('boss_bar') else '0'
     os.environ['MG_BOSS_PAY'] = str(cfg.get('boss_pay', 0))
+    # a share of resets started inside the boss fight an act's curriculum is stuck in, and how
+    # often each act is drawn for the rest (coordinator, "Boss share")
+    os.environ['MG_BOSS_SHARE'] = str(cfg.get('boss_share', 0))
+    os.environ['MG_ACT_WEIGHTS'] = ';'.join(f'{k}:{w}' for k, w in cfg.get('act_weights', {}).items())
     # extra start points: the RUNS entry's plus the stepping stones mg_stones.py added
     # automatically when a start point stalled (main_<run>_stones.json)
     os.environ['MG_EXTRA_STARTS'] = ';'.join(f"{a}:{','.join(map(str, ts))}"

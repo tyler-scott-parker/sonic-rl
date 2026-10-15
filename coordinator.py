@@ -160,6 +160,10 @@ Environment variables (the trainer sets them before workers import this):
                         them ('AIZ1', 'LRZ3', 'LBZ2b'); empty = every cleared act
   MG_DEMO_PROB=p        share of resets that start on the curriculum's start
                         point; the rest start at the beginning of the act
+  MG_BOSS_SHARE=p       share of resets started inside the boss fight an act's
+                        curriculum is stuck in (Boss share); 0 = off
+  MG_ACT_WEIGHTS=AIZ1:0.3;DEMO:ACT:w   how often each act is drawn for the
+                        other resets (default 1 each)
   MG_LOG=path           episode log (JSON lines)
   MG_TEST_GOAL_X=x      TEST FIXTURE ONLY (smoke_main.py): spawn a signpost
                         when Sonic first passes x, making a short fake act
@@ -241,6 +245,15 @@ MG_EXTRA_STARTS = {name: sorted(int(t) for t in ts.split(','))
                    for name, ts in (part.rsplit(':', 1) for part in
                                     os.environ.get('MG_EXTRA_STARTS', '').split(';') if part)}
 DEMO_BAND      = 4         # a start is drawn from [pointer, pointer + band]
+
+# Boss share (mg2, 2026-10-15; Tyler: "lets go with the boss share inside mg2"): three of mg2's
+# acts had their curriculum parked inside an end-of-act boss fight while AIZ1, already cleared from
+# the start, took 25% of the frames. This share of resets goes to the acts whose start point sits
+# inside one of his fights, at a start point from the fight's first to the pointer's band; an act
+# drops out once its pointer leaves the fight. The other resets draw acts by MG_ACT_WEIGHTS.
+MG_BOSS_SHARE  = float(os.environ.get('MG_BOSS_SHARE', '0'))
+MG_ACT_WEIGHTS = {name: float(w) for name, w in (part.rsplit(':', 1) for part in
+                  os.environ.get('MG_ACT_WEIGHTS', '').split(';') if part)}
 
 DEMO_FILES  = [p for p in os.environ.get('MG_DEMOS', '').split(',') if p.strip()]
 ACTS        = [a for a in os.environ.get('MG_ACTS', '').split(',') if a.strip()]
@@ -943,25 +956,57 @@ class SonicCoordinator(gym.Env):
         """Called by the trainer (VecEnv.env_method) as the curriculum moves."""
         self._ptr.update({k: int(v) for k, v in pointers.items()})
 
+    def boss_ranges(self):
+        """MG_BOSS_SHARE: [(seg, lo, hi)] for each act whose start point sits inside one of his
+        boss fights: start points lo (the fight's first) .. hi (the pointer's band)."""
+        out = []
+        for s in self._segs:
+            p = self._ptr.get(s['key'])
+            if p is None:                           # the trainer hasn't set it yet
+                continue
+            last = len(s['ckpts']) - 1
+            p = min(p, last)
+            t = s['ckpts'][p]['t']
+            for a, b in s['route']['fights']:
+                if a <= t < b:
+                    lo = next(k for k, c in enumerate(s['ckpts']) if c['t'] >= a)
+                    out.append((s, lo, min(last, p + DEMO_BAND)))
+                    break
+        return out
+
+    def act_weight(self, seg):
+        return MG_ACT_WEIGHTS.get(seg['key'], MG_ACT_WEIGHTS.get(seg['name'], 1.0))
+
     # ── Episodes ─────────────────────────────────────────────────────────
 
-    def reset(self, seed=None, options=None):
-        super().reset(seed=seed)
-        if self._segs is None:
-            self._build()
-        opts = options or {}
+    def _pick(self, opts):
+        """(seg, start point, drawn by the boss share?) for a reset."""
+        boss = None
         if 'key' in opts:
             seg = next(s for s in self._segs if s['key'] == opts['key'])
         else:
-            seg = random.choice(self._segs)
+            ranges = self.boss_ranges() if MG_BOSS_SHARE > 0 and 'ckpt' not in opts else []
+            if ranges and random.random() < MG_BOSS_SHARE:
+                seg, *boss = random.choice(ranges)
+            else:
+                seg = random.choices(self._segs, weights=[self.act_weight(s) for s in self._segs])[0]
         last = len(seg['ckpts']) - 1
         if 'ckpt' in opts:
             k = min(int(opts['ckpt']), last)
+        elif boss:
+            k = random.randint(*boss)
         elif random.random() < self.demo_prob:
             ptr = min(self._ptr.get(seg['key'], last), last)
             k = random.randint(ptr, min(last, ptr + DEMO_BAND))
         else:
             k = 0                                   # the start of the act
+        return seg, k, bool(boss)
+
+    def reset(self, seed=None, options=None):
+        super().reset(seed=seed)
+        if self._segs is None:
+            self._build()
+        seg, k, boss = self._pick(options or {})
         ck = seg['ckpts'][k]
 
         self.base_env.reset()
@@ -972,6 +1017,7 @@ class SonicCoordinator(gym.Env):
         self._last_raw = None
 
         self._seg, self._k, self._ck = seg, k, ck
+        self._boss_start = boss
         self._ddz = int(seg['route']['zone'][0]) == ZONE_DDZ
         self._route = RouteProgress(seg['route'], ck['t'], ck['boss'])
         self._target = seg['T'] - ck['t']
@@ -1225,6 +1271,8 @@ class SonicCoordinator(gym.Env):
             rings=int(info['rings']), duration=round(time.time() - self._t0, 1))
         if MG_V2:
             entry['off_route'] = self._off
+        if self._boss_start:
+            entry['boss_share'] = True                   # MG_BOSS_SHARE drew this start
         if 'cause' in res:
             entry['cause'] = res['cause']                # 'drown' or 'other'
         if MG_BOSS:
