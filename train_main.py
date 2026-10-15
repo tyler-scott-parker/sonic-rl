@@ -168,6 +168,11 @@ RUNS = {
         # by episode count HCZ2 + MGZ2 took 58% of the steps and AIZ2 10%. Now the shares are of
         # steps, each split evenly in steps (AIZ1 at 0.3); check_balance_time.py
         balance_time=True,
+        # from its resume at ~58.2M steps (2026-10-15 ~17:30; Tyler: "yes" to building the clip training):
+        # rings with a detour clip (ring_clips.py) start their ring-share episodes at a point along it (the
+        # last 30 s before he went in), not on his route, where 43 of 44 probe tries never got closer;
+        # check_ring_clips.py
+        ring_clips='demos/clips',
         # from its resume at ~56.6M steps (2026-10-15 ~15:30; Tyler, after HCZ2's opening was measured:
         # "Yes, it's probably a good use of time"): its fresh starts all stopped at 3.4% (a curve that must
         # be rolled up; the agent hops in the corridor and lands running), then at a sliding wall, and the
@@ -250,6 +255,21 @@ def extra_starts(run):
     return {k: sorted(v) for k, v in out.items()}
 
 
+def ring_clip_files(where):
+    """The clip files (ring_clips.py) under directory `where` that went into their ring, sorted; [] if none."""
+    if not where:
+        return []
+    import demos
+    out = []
+    for p in sorted(glob.glob(os.path.join(HOME, where, '*.npz'))):
+        try:
+            if (demos.load_play(p)[1].get('clip') or {}).get('entered_at') is not None:
+                out.append(p)
+        except ValueError:
+            pass
+    return out
+
+
 def configure_env(run):
     """Point coordinator.py at a run's acts and recordings. Must happen before
     anything imports coordinator (it reads MG_* at import, and SubprocVecEnv
@@ -293,6 +313,9 @@ def configure_env(run):
     # a share of resets started just before where an act's fresh starts get stuck, so its opening
     # is practised from his states while the curriculum is still at its end (coordinator, "Front share")
     os.environ['MG_FRONT_SHARE'] = str(cfg.get('front_share', 0))
+    # ring-share starts along Tyler's detour clips into giant rings (coordinator, "Ring clips"): the clips
+    # in RUNS 'ring_clips' (a directory) that went into their ring, so a resume picks up new ones
+    os.environ['MG_RING_CLIPS'] = ','.join(ring_clip_files(cfg.get('ring_clips')))
     # the shares and act weights as shares of training time (steps), not episodes (coordinator,
     # "Time balance")
     os.environ['MG_BALANCE_TIME'] = '1' if cfg.get('balance_time') else '0'
@@ -566,8 +589,8 @@ class ActCurriculumCallback(BaseCallback):
         moved = False
         for info in self.locals.get('infos', []):
             r = info.get('mg_result')
-            if not r or r['key'] not in self.ptr:
-                continue
+            if not r or r['key'] not in self.ptr or r.get('clip'):
+                continue                        # a ring clip's start isn't on his route (coordinator MG_RING_CLIPS)
             p = self.ptr[r['key']]
             if not p <= r['start'] <= (p if self.at_pointer else p + self.band):
                 continue                    # began before the pointer moved (or, at_pointer, past it)

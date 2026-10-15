@@ -268,6 +268,15 @@ MG_ACT_WEIGHTS = {name: float(w) for name, w in (part.rsplit(':', 1) for part in
 MG_RING_SHARE  = float(os.environ.get('MG_RING_SHARE', '0'))
 MG_BAR_FORGIVE = os.environ.get('MG_BAR_FORGIVE', '0') == '1'
 RING_SHARE_PX  = 400       # 14 of the 19 giant rings in mg2's acts are within ~360 px of his route
+# Ring clips (mg2, 2026-10-15; Tyler recorded detours from his route into the giant rings the agent never
+# found, ring_clips.py: in 43 of 44 probe tries it never got closer than its first frame, the rings being
+# off screen under floors and behind walls). MG_RING_CLIPS: clip files (demos/clips/, each into one ring).
+# A ring-share reset for a ring with a clip starts at a point along the clip instead of on his route, drawn
+# evenly over its points: every CLIP_EVERY frames of its last CLIP_SPAN before he entered, up to
+# CLIP_BEFORE frames before. Each point's route progress is what the env's own tracker measured replaying
+# the clip to there, so a late point is not paid for ground covered before it.
+MG_RING_CLIPS = [p for p in os.environ.get('MG_RING_CLIPS', '').split(',') if p.strip()]
+CLIP_EVERY, CLIP_SPAN, CLIP_BEFORE = 30, 1800, 15
 # Time balance (mg2, 2026-10-15; Tyler: "yes, balance it by time"): the draws above spread episodes,
 # but episodes differ ~3x in length (HCZ2/MGZ2 fights ~60 s, AIZ2's ~20 s), so HCZ2 + MGZ2 took 58% of
 # the steps and AIZ2, the act furthest behind, 10%. With this, each share is that share of the steps
@@ -931,6 +940,9 @@ class SonicCoordinator(gym.Env):
         self._ring_starts = None     # MG_RING_SHARE: built from the routes on first use
         self._lens = None            # MG_BALANCE_TIME: draw -> recent episode length (steps)
         self._front, self._front_read = None, 0.0  # MG_FRONT_SHARE: act key -> frontier (his frames); when read
+        self._clips = {}               # MG_RING_CLIPS: ring key -> [clip] (_build_clips)
+        self._clip_pick = None         # ... (clip, point index) the next reset starts from
+        self._clip = None              # ... this episode's, for the log
         self._log_warned = False
         self._last_raw = None
         self._stack = collections.deque(maxlen=STACK)
@@ -1013,6 +1025,48 @@ class SonicCoordinator(gym.Env):
         if not self._segs:
             raise ValueError(f'no cleared act in {self.demo_files} matches '
                              f'MG_ACTS={self.acts}')
+        self._clips = self._build_clips() if MG_RING_CLIPS else {}
+
+    def _build_clips(self):
+        """MG_RING_CLIPS: {ring key (zone, act, x, y): [clip]}, a clip = dict(name, seg, k, pts): its start
+        points (like an act's: state, stack, t, boss, frame, bt), every CLIP_EVERY frames of its last
+        CLIP_SPAN up to CLIP_BEFORE before he entered the ring, t = the route progress the env's tracker
+        measured replaying the clip to there. Clips of acts not in this run, or that never went in, are
+        left out; one that doesn't enter its ring on the recorded frame raises."""
+        import demos as demo_io
+        out = collections.defaultdict(list)
+        segs = {s['key']: s for s in self._segs}
+        for path in MG_RING_CLIPS:
+            actions, meta = demo_io.load_play(path)
+            c = meta.get('clip') or {}
+            seg, end = segs.get(c.get('act_key')), c.get('entered_at')
+            if seg is None or end is None:
+                continue
+            table = meta['action_table']
+            self.base_env.reset()
+            self.base_env.em.set_state(demo_io.play_start_state(meta))
+            rp = RouteProgress(seg['route'], c['start_t'], False)
+            procs = collections.deque(maxlen=(STACK - 1) * FRAME_SKIP + 1)
+            prev_raw, pts, info = None, [], None
+            first = max(CLIP_EVERY, end - CLIP_SPAN)
+            for i, a in enumerate(actions[:end + 1]):
+                raw, info = emu_frame(self.base_env, table[a])
+                if i == end:
+                    break
+                procs.append(obs_frame(prev_raw, raw, info))         # his play: no ring used
+                prev_raw = raw
+                rp.update(info['zone'], info['act'], int(info['x']), int(info['y']), int(info['mg_boss']) != 0)
+                if i >= first and i % CLIP_EVERY == 0 and i <= end - CLIP_BEFORE:
+                    frames = [procs[0]] * (procs.maxlen - len(procs)) + list(procs)
+                    pts.append(dict(state=zlib.compress(self.base_env.em.get_state(), 6),
+                                    stack=np.stack(frames[::FRAME_SKIP], -1), t=int(rp.best), boss=False,
+                                    frame=i, bt=None, x=int(info['x']), y=int(info['y'])))
+            if not frame_flags(info)[1]:
+                raise ValueError(f'{path}: replay did not enter a stage at frame {end}, as recorded')
+            if pts:
+                out[tuple(c['ring'])].append(dict(name=demo_io.demo_id(path), seg=seg, k=int(c['start_point']),
+                                                  pts=pts, entered_at=end))
+        return dict(out)
 
     def _finish_seg(self, seg, act, recorded):
         if (act['start'], act['clear'], act['name']) != (
@@ -1195,6 +1249,11 @@ class SonicCoordinator(gym.Env):
             k = random.randint(*boss)
         elif front:
             k = random.randint(*front)
+        elif ring and self._clips.get(tuple(ring)):         # MG_RING_CLIPS: a point along his way in
+            clip = random.choice(self._clips[tuple(ring)])
+            self._clip_pick = (clip, random.randrange(len(clip['pts'])))
+            seg = clip['seg']
+            k = min(clip['k'], len(seg['ckpts']) - 1)     # his route start the clip began from (the log's 'start')
         elif ring:
             k = random.randint(max(0, k_ring - 1), k_ring)     # 1-2 s before he passes nearest
         elif random.random() < self.demo_prob:
@@ -1209,8 +1268,15 @@ class SonicCoordinator(gym.Env):
         if self._segs is None:
             self._build()
         opts = options or {}
+        self._clip_pick = None
         seg, k, boss, ring, front = self._pick(opts)
         ck = seg['ckpts'][k]
+        self._clip = None
+        if self._clip_pick is not None:                # MG_RING_CLIPS: start at that point of the clip
+            clip, j = self._clip_pick
+            ck = clip['pts'][j]
+            self._clip = (clip['name'], j, len(clip['pts']))
+            self._clip_pick = None
 
         self.base_env.reset()
         self.base_env.em.set_state(zlib.decompress(ck['state']))
@@ -1482,6 +1548,8 @@ class SonicCoordinator(gym.Env):
             success=cleared and (self.frames - (self._forgiven if MG_BAR_FORGIVE else 0)
                                  <= self._target * (1 + MATCH_SLACK) + MATCH_ADD),
             progress=round((self._route.best - self._ck['t']) / max(1, self._target), 4))
+        if self._clip:
+            res['clip'] = True                  # off his route: the curriculum's at-pointer rule must skip it
         if outcome == 'death':
             res['cause'] = getattr(self, '_death_cause', 'other')
         self._log(res, info)
@@ -1506,6 +1574,8 @@ class SonicCoordinator(gym.Env):
             entry['ring_share'] = list(self._ring_target)    # MG_RING_SHARE drew this start, for this ring
         if self._front_start:
             entry['front_share'] = True                  # MG_FRONT_SHARE drew this start
+        if self._clip:
+            entry['ring_clip'] = list(self._clip)        # MG_RING_CLIPS: [clip, point, of points]
         if self._used_rings:
             entry['giant_rings'] = sorted(list(k) for k in self._used_rings)
         if self._forgiven:

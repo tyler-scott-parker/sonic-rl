@@ -54,6 +54,7 @@ def main():
     C.LOG_FILE = log
     env = C.SonicCoordinator()
     env.demo_info()
+    env._clips = {}                                   # starts on his route; check_ring_clips.py does the clips
     cur = json.load(open(os.path.join(HOME, f'main_{run}_curriculum.json')))
     ptrs = {k: v['ptr'] for k, v in cur.items()}
     env.set_demo_pointers(ptrs)

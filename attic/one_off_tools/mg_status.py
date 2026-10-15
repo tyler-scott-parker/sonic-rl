@@ -142,9 +142,12 @@ def main():
             tries = [r for r in rg if tuple(r['ring_share']) == ring]
             took = [r for r in tries if list(ring) in r.get('giant_rings', [])]
             back = [r for r in took if any('bonus_paid_at' in x for x in r.get('stages', []))]
+            clip = [r for r in tries if r.get('ring_clip')]       # MG_RING_CLIPS (from 2026-10-15 ~17:30)
             print(f"    ring share, giant ring at ({ring[2]},{ring[3]}): {len(tries)} tries, took it {len(took)}"
                   f" (last 100: {sum(list(ring) in r.get('giant_rings', []) for r in tries[-100:])}),"
-                  f" got back after {len(back)}")
+                  f" got back after {len(back)}"
+                  + (f"; from his clip: {len(clip)} tries, took it {sum(list(ring) in r.get('giant_rings', []) for r in clip)}"
+                     f" (last 100: {sum(list(ring) in r.get('giant_rings', []) for r in clip[-100:])})" if clip else ''))
         drowned = sum(r.get('cause') == 'drown' for r in last)
         if drowned:
             print(f"    drowned: {drowned} of the last {len(last)} episodes")

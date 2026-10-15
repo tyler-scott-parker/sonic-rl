@@ -127,7 +127,7 @@ def main():
     s = segs[key]
     ts = [c['t'] for c in s['ckpts']]
     p = min(ptrs[key], len(ts) - 1)
-    new_f = min(ts[p] - 1, ts[got[key][1]] + 900)                # 15 s further
+    new_f = min(ts[p] - 1, ts[got[key][1]] + 907)                # 15 s further, off a start point (float)
     with open(tail, 'a') as f:
         for _ in range(C.FRONT_N):
             f.write(json.dumps(dict(t=0, act=s['name'], demo=s['demo'], start=0, start_frac=0.0,
