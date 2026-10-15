@@ -116,7 +116,7 @@ def main():
         check(key not in left and left == set(allowed) - {key},
               f"{segs[key]['name']} at {max(0, lo - 1)} (just before its fight): drops out, the others stay")
         env.set_demo_pointers({k: 0 for k in ptrs})
-        none = [b for _, _, b, _ in (env._pick({}) for _ in range(5000))]
+        none = [b for _, _, b, *_ in (env._pick({}) for _ in range(5000))]
         check(not env.boss_ranges() and not any(none), 'every pointer at 0: no boss-share starts')
         env.set_demo_pointers(ptrs)
 

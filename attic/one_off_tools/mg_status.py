@@ -47,6 +47,13 @@ def s_get(st, key, name):
     return st.get(key, {}).get(name)
 
 
+def fresh_frontier(fresh, n=32, min_n=8):
+    """coordinator.fresh_frontier's rule (FRONT_N, FRONT_MIN_N; importing it would load the emulator):
+    how far into the act (his frames) the median of the last n fresh starts got; None under min_n."""
+    reach = sorted(r['progress'] * r['target'] for r in fresh[-n:])
+    return reach[len(reach) // 2] if len(reach) >= min_n else None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('run', nargs='?', default='mg1')
@@ -83,7 +90,8 @@ def main():
     print(f'  training time, last {len(tail):,} episodes: '
           + ', '.join(f'{a} {100 * v / tot:.0f}%' for a, v in sorted(by_act.items()))
           + f" (boss share {100 * sum(steps_of_ep(r) for r in tail if r.get('boss_share')) / tot:.0f}%,"
-          f" ring share {100 * sum(steps_of_ep(r) for r in tail if r.get('ring_share')) / tot:.0f}%)")
+          f" ring share {100 * sum(steps_of_ep(r) for r in tail if r.get('ring_share')) / tot:.0f}%,"
+          f" front share {100 * sum(steps_of_ep(r) for r in tail if r.get('front_share')) / tot:.0f}%)")
     alerts = []
     if entropy is not None and entropy > ENTROPY_MAX and not st.get('entropy_reported'):
         alerts.append(f'ALERT entropy: the policy is flattening ({entropy:.2f} > {ENTROPY_MAX}; '
@@ -97,9 +105,11 @@ def main():
         rs = eps.get(act, [])
         bs = [r for r in rs if r.get('boss_share')]            # MG_BOSS_SHARE (from 2026-10-15)
         rg = [r for r in rs if r.get('ring_share')]             # MG_RING_SHARE (from 2026-10-15)
-        last = [r for r in rs if not r.get('boss_share') and not r.get('ring_share')][-500:]   # comparable with before
+        fr = [r for r in rs if r.get('front_share')]            # MG_FRONT_SHARE (from 2026-10-15 ~15:30)
+        last = [r for r in rs if not r.get('boss_share') and not r.get('ring_share')
+                and not r.get('front_share')][-500:]           # comparable with before
         out = collections.Counter(r['outcome'] for r in last)
-        fresh = [r for r in rs if r['start'] == 0 and not r.get('ring_share')]
+        fresh = [r for r in rs if r['start'] == 0 and not r.get('ring_share') and not r.get('front_share')]
         fc = [r for r in fresh if r['outcome'] == 'clear']
         recent_f = fresh[-100:]
         target = fresh[0]['target'] if fresh else None
@@ -114,6 +124,15 @@ def main():
             print(f"    boss share: {len(bs)} episodes; last {len(bs[-500:])}: "
                   + ', '.join(f'{k} {v}' for k, v in bo.most_common())
                   + f"; matched him {sum(r['success'] for r in bs[-500:])}")
+        front = fresh_frontier(fresh)                            # coordinator.fresh_frontier's rule
+        if front is not None and target:
+            line = f"    fresh-start frontier: {front / target:.1%} into the act (median of the last 32)"
+            if fr:
+                past = [r for r in fr[-100:] if r['start_frac'] * target + r['progress'] * r['target'] > front + 60]
+                line += (f"; front share {len(fr)} episodes, last {len(fr[-100:])}: got 1 s past it "
+                         f"{len(past)}, " + ', '.join(f'{k} {v}' for k, v in
+                                                 collections.Counter(r['outcome'] for r in fr[-100:]).most_common()))
+            print(line)
         hurt = [h for r in last for h in r.get('hurt', [])]      # logged from 2026-10-15
         if hurt:
             lost = [h[1] - h[2] for h in hurt if h[2] < h[1]]

@@ -84,12 +84,12 @@ def main():
     print(f'\n2. {N:,} drawn starts (boss share {C.MG_BOSS_SHARE:.0%} on too)')
     random.seed(2)
     draws = [env._pick({}) for _ in range(N)]
-    ring_d = [(s, k, ring) for s, k, b, ring in draws if ring]
-    boss_d = [1 for _, _, b, _ in draws if b]
+    ring_d = [(s, k, ring) for s, k, b, ring, *_ in draws if ring]
+    boss_d = [1 for _, _, b, *_ in draws if b]
     expect_boss = C.MG_BOSS_SHARE if env.boss_ranges() else 0.0
     check(abs(len(ring_d) / N - C.MG_RING_SHARE) < 0.01, f'ring share {len(ring_d) / N:.1%} (set {C.MG_RING_SHARE:.0%})')
     check(abs(len(boss_d) / N - expect_boss) < 0.01, f'boss share {len(boss_d) / N:.1%} (set {expect_boss:.0%})')
-    check(not any(b and ring for _, _, b, ring in draws), 'no start drawn by both')
+    check(not any(b and ring for _, _, b, ring, *_ in draws), 'no start drawn by both')
     per = collections.Counter((s['key'],) + tuple(ring) for s, _, ring in ring_d)
     even = len(ring_d) / max(1, len(got))
     check(all(abs(n - even) < 0.2 * even for n in per.values()) and len(per) == len(got),
@@ -100,7 +100,7 @@ def main():
     print('\n3. MG_RING_SHARE=0')
     share = C.MG_RING_SHARE
     C.MG_RING_SHARE = 0.0
-    check(not any(ring for *_, ring in (env._pick({}) for _ in range(5000))), 'no ring starts')
+    check(not any(ring for _, _, _, ring, *_ in (env._pick({}) for _ in range(5000))), 'no ring starts')
 
     print('\n4. a ring-share reset')
     C.MG_RING_SHARE, boss = 1.0, C.MG_BOSS_SHARE

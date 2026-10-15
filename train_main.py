@@ -168,6 +168,13 @@ RUNS = {
         # by episode count HCZ2 + MGZ2 took 58% of the steps and AIZ2 10%. Now the shares are of
         # steps, each split evenly in steps (AIZ1 at 0.3); check_balance_time.py
         balance_time=True,
+        # from its resume at ~56.6M steps (2026-10-15 ~15:30; Tyler, after HCZ2's opening was measured:
+        # "Yes, it's probably a good use of time"): its fresh starts all stopped at 3.4% (a curve that must
+        # be rolled up; the agent hops in the corridor and lands running), then at a sliding wall, and the
+        # curriculum, at 81%, wouldn't reach the opening for a long time. 15% of the steps start in the
+        # 10 s of his route up to each act's fresh-start frontier (the median of its last 32 fresh starts),
+        # practice following the frontier as it moves; check_front_share.py
+        front_share=0.15,
         result='STARTED 2026-10-12 ~13:50 from bc4, criteria AGREED (Tyler: "let\'s do it!" after '
                'mg1bc cleared AIZ1 from the start); RESTARTED ~16:25 from mg1bc (bc4 had lost AIZ1 '
                'from the start: 0/20 vs mg1bc 5/20). Six acts at once: do the five new acts learn, '
@@ -283,6 +290,9 @@ def configure_env(run):
     # leaving out what the reward forgives (coordinator, "Ring share")
     os.environ['MG_RING_SHARE'] = str(cfg.get('ring_share', 0))
     os.environ['MG_BAR_FORGIVE'] = '1' if cfg.get('bar_forgive') else '0'
+    # a share of resets started just before where an act's fresh starts get stuck, so its opening
+    # is practised from his states while the curriculum is still at its end (coordinator, "Front share")
+    os.environ['MG_FRONT_SHARE'] = str(cfg.get('front_share', 0))
     # the shares and act weights as shares of training time (steps), not episodes (coordinator,
     # "Time balance")
     os.environ['MG_BALANCE_TIME'] = '1' if cfg.get('balance_time') else '0'

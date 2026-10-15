@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""check_balance_time.py — with MG_BALANCE_TIME, are the boss share, the ring share and the act
-weights shares of training TIME (env steps) instead of episodes?
+"""check_balance_time.py — with MG_BALANCE_TIME, are the boss share, the ring share, the front share and
+the act weights shares of training TIME (env steps) instead of episodes?
 
     python3 check_balance_time.py [RUN]          # default mg2; reads a copy of mg_log_<run>.jsonl's tail
 
@@ -35,10 +35,11 @@ def check(ok, what):
 
 
 def shares(env, C, draws, lens):
-    """Steps per source and per (source, option) for draws [(seg, k, boss, ring)]."""
+    """Steps per source and per (source, option) for draws [(seg, k, boss, ring, front)]."""
     src, opt = collections.Counter(), collections.Counter()
-    for seg, _, boss, ring in draws:
-        key = ('boss', seg['key']) if boss else ('ring',) + tuple(ring) if ring else ('main', seg['key'])
+    for seg, _, boss, ring, front in draws:
+        key = (('boss', seg['key']) if boss else ('ring',) + tuple(ring) if ring else
+               ('front', seg['key']) if front else ('main', seg['key']))
         L = lens(key)
         src[key[0]] += L
         opt[key] += L
@@ -67,7 +68,7 @@ def main():
     cur = json.load(open(os.path.join(HOME, f'main_{run}_curriculum.json')))
     env.set_demo_pointers({k: v['ptr'] for k, v in cur.items()})
     segs = {s['key']: s for s in env._segs}
-    ranges, rings = env.boss_ranges(), env.ring_starts()
+    ranges, rings, fronts = env.boss_ranges(), env.ring_starts(), env.front_ranges()
 
     print('\n1. the lengths a worker starts from')
     env._load_lens()
@@ -82,7 +83,7 @@ def main():
         if key not in segs:
             continue
         k = (('boss', key) if r.get('boss_share') else ('ring',) + tuple(r['ring_share'])
-             if r.get('ring_share') else ('main', key))
+             if r.get('ring_share') else ('front', key) if r.get('front_share') else ('main', key))
         st = sum(x.get('cost', 0) for x in r.get('stages', []))
         by[k].append(max(1, -(-(r['frames'] - st) // C.FRAME_SKIP)))
     want = {k: float(np.mean(v[-C.LEN_N:])) for k, v in by.items()}
@@ -99,6 +100,8 @@ def main():
         fake[('boss', it[0]['key'])] = rnd.choice([80, 250, 800])
     for it in rings:
         fake[('ring',) + tuple(it[2])] = rnd.choice([100, 300, 1000])
+    for it in fronts:
+        fake[('front', it[0]['key'])] = rnd.choice([120, 360, 1200])
     for s in env._segs:
         fake[('main', s['key'])] = rnd.choice([150, 450, 1500])
     env._lens = dict(fake)
@@ -106,7 +109,8 @@ def main():
     draws = [env._pick({}) for _ in range(N)]
     src, opt = shares(env, C, draws, lambda k: fake[k])
     tot = sum(src.values())
-    exp_src = {'boss': C.MG_BOSS_SHARE if ranges else 0, 'ring': C.MG_RING_SHARE if rings else 0}
+    exp_src = {'boss': C.MG_BOSS_SHARE if ranges else 0, 'ring': C.MG_RING_SHARE if rings else 0,
+               'front': C.MG_FRONT_SHARE if fronts else 0}
     exp_src['main'] = 1 - sum(exp_src.values())
     for kind, e in exp_src.items():
         check(abs(src[kind] / tot - e) < 0.01, f'{kind}: {src[kind] / tot:.1%} of the steps (set {e:.0%})')
@@ -134,7 +138,8 @@ def main():
         acts[segs[k[1]]['name'] if k[0] != 'ring' else
              next(it[0]['name'] for it in rings if ('ring',) + tuple(it[2]) == k)] += v
     print('    ' + ', '.join(f'{a} {100 * v / tot:.0f}%' for a, v in sorted(acts.items()))
-          + f" (boss {100 * src['boss'] / tot:.0f}%, ring {100 * src['ring'] / tot:.0f}%)")
+          + f" (boss {100 * src['boss'] / tot:.0f}%, ring {100 * src['ring'] / tot:.0f}%,"
+            f" front {100 * src['front'] / tot:.0f}%)")
     stuck = [it[0]['name'] for it in ranges]
     bs = {it[0]['name']: opt[('boss', it[0]['key'])] for it in ranges}
     if bs:
@@ -162,7 +167,7 @@ def main():
     env._lens = {k: (5.0 if k[0] == 'main' and segs[k[1]]['name'] == 'MGZ1' else 5000.0) for k in fake}
     random.seed(9)
     draws = [env._pick({}) for _ in range(60_000)]
-    main = [s for s, _, b, r in draws if not b and not r]
+    main = [s for s, _, b, r, f in draws if not (b or r or f)]
     w = {k: env.act_weight(s) for k, s in segs.items()}
     worst = max(abs(sum(1 for s in main if s['key'] == k) / len(main) - w[k] / sum(w.values())) for k in segs)
     check(worst < 0.01, f'act shares of episodes as the weights whatever the lengths (worst {worst:.1%} off)')

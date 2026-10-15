@@ -277,6 +277,18 @@ RING_SHARE_PX  = 400       # 14 of the 19 giant rings in mg2's acts are within ~
 MG_BALANCE_TIME = os.environ.get('MG_BALANCE_TIME', '0') == '1'
 LEN_ALPHA, LEN_N, LEN_MIN = 0.05, 200, 25      # per-episode update; episodes read per option; floor (steps)
 LEN_TAIL_BYTES = 8 << 20                        # of the episode log read at start (~20k episodes)
+# Front share (mg2, 2026-10-15; Tyler, after HCZ2's opening was measured: "Yes, it's probably a good
+# use of time"): the curriculum walks each act back from its end, so an act's opening is only played
+# by fresh starts, and in HCZ2 those all stopped at the same curve (it must be rolled up; the agent
+# hops in the corridor and lands running), then at a sliding wall that crushes. This share of resets
+# starts on his route in the FRONT_BACK frames up to an act's fresh-start frontier: how far into the
+# act (his frames) the median of its last FRONT_N fresh starts got, from the episode log's tail,
+# re-read every FRONT_EVERY_S seconds, so practice follows the frontier as it moves (by time, not
+# resets: a check's tight loop of draws re-read it ~25k times). An act drops out
+# while its frontier is at or past its pointer (or under one start point in).
+MG_FRONT_SHARE = float(os.environ.get('MG_FRONT_SHARE', '0'))
+FRONT_N, FRONT_MIN_N, FRONT_BACK, FRONT_EVERY_S = 32, 8, 600, 60
+FRONT_TAIL_BYTES = 2 << 20                      # ~6k episodes: ~200 fresh starts per act in mg2
 
 DEMO_FILES  = [p for p in os.environ.get('MG_DEMOS', '').split(',') if p.strip()]
 ACTS        = [a for a in os.environ.get('MG_ACTS', '').split(',') if a.strip()]
@@ -460,10 +472,43 @@ GIANT_RINGS = giant_rings() if MG_RING_COMPASS else {}
 
 
 def draw_key(r, key):
-    """MG_BALANCE_TIME: an episode log line's draw: ('boss', act key), ('ring', zone, act, x, y)
-    or ('main', act key)."""
+    """MG_BALANCE_TIME: an episode log line's draw: ('boss', act key), ('ring', zone, act, x, y),
+    ('front', act key) or ('main', act key)."""
     return (('boss', key) if r.get('boss_share') else
-            ('ring',) + tuple(r['ring_share']) if r.get('ring_share') else ('main', key))
+            ('ring',) + tuple(r['ring_share']) if r.get('ring_share') else
+            ('front', key) if r.get('front_share') else ('main', key))
+
+
+def is_fresh(r):
+    """An episode log line that started at the act's start drawn as a fresh start (a share can
+    draw start point 0 too: the ring share for a ring near the start)."""
+    return r['start'] == 0 and not (r.get('boss_share') or r.get('ring_share') or r.get('front_share'))
+
+
+def fresh_frontier(rows):
+    """MG_FRONT_SHARE: how far into the act (his frames) the median of the last FRONT_N fresh starts
+    in rows (one act's log lines, in order) got, or None under FRONT_MIN_N. A fresh start's target is
+    his whole act, so progress x target is his frame reached."""
+    reach = sorted(r['progress'] * r['target'] for r in [r for r in rows if is_fresh(r)][-FRONT_N:])
+    return reach[len(reach) // 2] if len(reach) >= FRONT_MIN_N else None
+
+
+def log_tail(nbytes):
+    """The episode log's last nbytes as parsed lines (the first, maybe cut, dropped); [] if none."""
+    try:
+        with open(LOG_FILE, 'rb') as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - nbytes))
+            lines = f.read().decode(errors='replace').splitlines()[1:]
+    except OSError:
+        return []
+    out = []
+    for line in lines:
+        try:
+            out.append(json.loads(line))
+        except ValueError:
+            continue
+    return out
 
 
 def log_steps(r):
@@ -881,6 +926,7 @@ class SonicCoordinator(gym.Env):
         self._ptr = {}               # segment key -> start checkpoint (trainer-set)
         self._ring_starts = None     # MG_RING_SHARE: built from the routes on first use
         self._lens = None            # MG_BALANCE_TIME: draw -> recent episode length (steps)
+        self._front, self._front_read = None, 0.0  # MG_FRONT_SHARE: act key -> frontier (his frames); when read
         self._log_warned = False
         self._last_raw = None
         self._stack = collections.deque(maxlen=STACK)
@@ -1031,11 +1077,35 @@ class SonicCoordinator(gym.Env):
                             self._ring_starts.append((s, k, za + (rx, ry)))
         return self._ring_starts
 
-    def _draw_by_time(self, ranges, rings):
-        """MG_BALANCE_TIME: (kind, item) for a reset. Each source (boss share, ring share, the
-        rest) takes its share of the steps, split evenly in steps between its options (the rest by
-        act weight): option i is drawn in proportion to w_i / L_i (L = its recent episode length),
-        a source in proportion to share / its expected episode length under those draws."""
+    def front_ranges(self):
+        """MG_FRONT_SHARE: [(seg, lo, hi)] for each act whose fresh starts stop short of its pointer:
+        start points lo .. hi, those in the FRONT_BACK frames up to the frontier (hi the last at or
+        before it), from start point 1 and below the pointer."""
+        if self._front is None or time.time() - self._front_read >= FRONT_EVERY_S:
+            by = collections.defaultdict(list)
+            for r in log_tail(FRONT_TAIL_BYTES):
+                by[f"{r.get('demo')}:{r.get('act')}"].append(r)
+            self._front = {s['key']: fresh_frontier(by[s['key']]) for s in self._segs}
+            self._front_read = time.time()
+        out = []
+        for s in self._segs:
+            p, f = self._ptr.get(s['key']), self._front.get(s['key'])
+            if p is None or f is None:
+                continue
+            ts = [c['t'] for c in s['ckpts']]
+            p = min(p, len(ts) - 1)
+            hi = min(p - 1, sum(t <= f for t in ts) - 1)
+            lo = max(1, sum(t < f - FRONT_BACK for t in ts))
+            if lo <= hi:
+                out.append((s, lo, hi))
+        return out
+
+    def _draw_by_time(self, ranges, rings, fronts=()):
+        """MG_BALANCE_TIME: (kind, item) for a reset. Each source (boss share, ring share, front
+        share, the rest) takes its share of the steps, split evenly in steps between its options
+        (the rest by act weight): option i is drawn in proportion to w_i / L_i (L = its recent
+        episode length), a source in proportion to share / its expected episode length under those
+        draws."""
         if self._lens is None:
             self._load_lens()
         rest = 1.0
@@ -1048,6 +1118,10 @@ class SonicCoordinator(gym.Env):
             srcs.append(('ring', rings, [1.0] * len(rings), [('ring',) + tuple(it[2]) for it in rings],
                          MG_RING_SHARE))
             rest -= MG_RING_SHARE
+        if fronts:
+            srcs.append(('front', fronts, [1.0] * len(fronts), [('front', it[0]['key']) for it in fronts],
+                         MG_FRONT_SHARE))
+            rest -= MG_FRONT_SHARE
         srcs.append(('main', self._segs, [self.act_weight(s) for s in self._segs],
                      [('main', s['key']) for s in self._segs], max(0.0, rest)))
         per, probs = [], []
@@ -1071,18 +1145,7 @@ class SonicCoordinator(gym.Env):
         self._lens = {}
         by = collections.defaultdict(list)
         keys = {s['key'] for s in self._segs}
-        try:
-            with open(LOG_FILE, 'rb') as f:
-                f.seek(0, 2)
-                f.seek(max(0, f.tell() - LEN_TAIL_BYTES))
-                lines = f.read().decode(errors='replace').splitlines()[1:]    # the first may be cut
-        except OSError:
-            return
-        for line in lines:
-            try:
-                r = json.loads(line)
-            except ValueError:
-                continue
+        for r in log_tail(LEN_TAIL_BYTES):
             key = f"{r.get('demo')}:{r.get('act')}"
             if key in keys:
                 by[draw_key(r, key)].append(log_steps(r))
@@ -1094,26 +1157,31 @@ class SonicCoordinator(gym.Env):
     # ── Episodes ─────────────────────────────────────────────────────────
 
     def _pick(self, opts):
-        """(seg, start point, drawn by the boss share?, the ring key if drawn by the ring share)
-        for a reset."""
-        boss = ring = None
+        """(seg, start point, drawn by the boss share?, the ring key if drawn by the ring share,
+        drawn by the front share?) for a reset."""
+        boss = ring = front = None
         if 'key' in opts:
             seg = next(s for s in self._segs if s['key'] == opts['key'])
         else:
             ranges = self.boss_ranges() if MG_BOSS_SHARE > 0 and 'ckpt' not in opts else []
             rings = self.ring_starts() if MG_RING_SHARE > 0 and 'ckpt' not in opts else []
+            fronts = self.front_ranges() if MG_FRONT_SHARE > 0 and 'ckpt' not in opts else []
             if MG_BALANCE_TIME and 'ckpt' not in opts:
-                kind, item = self._draw_by_time(ranges, rings)
+                kind, item = self._draw_by_time(ranges, rings, fronts)
             else:
                 u = random.random()
+                b, rg = MG_BOSS_SHARE, MG_BOSS_SHARE + MG_RING_SHARE
                 kind, item = (
-                    ('boss', random.choice(ranges)) if ranges and u < MG_BOSS_SHARE else
-                    ('ring', random.choice(rings)) if rings and MG_BOSS_SHARE <= u < MG_BOSS_SHARE + MG_RING_SHARE
+                    ('boss', random.choice(ranges)) if ranges and u < b else
+                    ('ring', random.choice(rings)) if rings and b <= u < rg else
+                    ('front', random.choice(fronts)) if fronts and rg <= u < rg + MG_FRONT_SHARE
                     else ('main', random.choices(self._segs, weights=[self.act_weight(s) for s in self._segs])[0]))
             if kind == 'boss':
                 seg, *boss = item
             elif kind == 'ring':
                 seg, k_ring, ring = item
+            elif kind == 'front':
+                seg, *front = item
             else:
                 seg = item
         last = len(seg['ckpts']) - 1
@@ -1121,6 +1189,8 @@ class SonicCoordinator(gym.Env):
             k = min(int(opts['ckpt']), last)
         elif boss:
             k = random.randint(*boss)
+        elif front:
+            k = random.randint(*front)
         elif ring:
             k = random.randint(max(0, k_ring - 1), k_ring)     # 1-2 s before he passes nearest
         elif random.random() < self.demo_prob:
@@ -1128,14 +1198,14 @@ class SonicCoordinator(gym.Env):
             k = random.randint(ptr, min(last, ptr + DEMO_BAND))
         else:
             k = 0                                   # the start of the act
-        return seg, k, bool(boss), ring
+        return seg, k, bool(boss), ring, bool(front)
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         if self._segs is None:
             self._build()
         opts = options or {}
-        seg, k, boss, ring = self._pick(opts)
+        seg, k, boss, ring, front = self._pick(opts)
         ck = seg['ckpts'][k]
 
         self.base_env.reset()
@@ -1148,8 +1218,10 @@ class SonicCoordinator(gym.Env):
         self._seg, self._k, self._ck = seg, k, ck
         self._boss_start = boss
         self._ring_target = ring
+        self._front_start = front
         self._src = (None if 'key' in opts or 'ckpt' in opts else      # MG_BALANCE_TIME: which draw
-                     ('boss', seg['key']) if boss else ('ring',) + tuple(ring) if ring else ('main', seg['key']))
+                     ('boss', seg['key']) if boss else ('ring',) + tuple(ring) if ring else
+                     ('front', seg['key']) if front else ('main', seg['key']))
         self._nsteps = 0
         self._forgiven = 0            # MG_BAR_FORGIVE: frames the reward forgave (won stages, refunded trips)
         self._ddz = int(seg['route']['zone'][0]) == ZONE_DDZ
@@ -1428,6 +1500,8 @@ class SonicCoordinator(gym.Env):
             entry['hurt'] = self._hurt                   # [frame, rings held, rings left] per hit survived
         if self._ring_target:
             entry['ring_share'] = list(self._ring_target)    # MG_RING_SHARE drew this start, for this ring
+        if self._front_start:
+            entry['front_share'] = True                  # MG_FRONT_SHARE drew this start
         if self._used_rings:
             entry['giant_rings'] = sorted(list(k) for k in self._used_rings)
         if self._forgiven:
