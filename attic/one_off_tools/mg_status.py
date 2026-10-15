@@ -15,8 +15,12 @@ import collections
 import json
 import os
 import re
+import sys
+import time
 
 REPO = '/home/tyler/Projects/sonic-rl'
+sys.path.insert(0, REPO)
+from mg_stones import since_arrival, next_point_works        # noqa: E402  (one rule for both tools)
 STALL_STEPS = 3_000_000
 STONES_AT = 200          # episodes started AT one start point without moving it: stepping stones (mg2)
 ENTROPY_MAX = 1.2        # policy entropy (max ln 9 = 2.2): mg2 collapsed as it rose 0.6 -> 1.8
@@ -51,10 +55,9 @@ def main():
     steps, entropy = steps_of(a.run)
     steps = steps or 0
     try:
-        cpath = os.path.join(REPO, f'main_{a.run}_curriculum.json')
-        cur, since = json.load(open(cpath)), os.path.getmtime(cpath)
+        cur = json.load(open(os.path.join(REPO, f'main_{a.run}_curriculum.json')))
     except FileNotFoundError:
-        cur, since = {}, 0
+        cur = {}
     eps = collections.defaultdict(list)
     try:
         for line in open(os.path.join(REPO, f'mg_log_{a.run}.jsonl')):
@@ -68,6 +71,7 @@ def main():
     st = {}
     if a.state and os.path.exists(a.state):
         st = json.load(open(a.state))
+    now, last_look = time.time(), st.get('checked', 0)
     print(f'{a.run}: {steps:,} steps, {sum(map(len, eps.values())):,} episodes'
           + (f'; policy entropy {entropy:.2f}' if entropy is not None else ''))
     alerts = []
@@ -99,12 +103,22 @@ def main():
         bh = [r['boss_hits'] for r in last if 'boss_hits' in r]   # MG_BOSS (from 2026-10-14)
         if any(bh):
             print(f"    boss hits: {sum(bh)} in the last {len(bh)} episodes ({sum(h > 0 for h in bh)} with any)")
-        at_all = [r for r in rs if r['start'] == c['ptr'] and r['t'] >= since]   # since it moved here
-        at = at_all[-32:]                                    # (the trainer rewrites the file on each move)
+        s = st.setdefault(key, {'ptr': c['ptr'], 'since': steps})
+        if s['since'] > steps:                               # a rollback (mg2 2026-10-12) left it in the future
+            s['since'] = steps
+        if c['ptr'] != s['ptr']:                             # moved back: no start was at it before our last
+            s.update(ptr=c['ptr'], since=steps, stall_reported=False,     # look; forward (stones renumber,
+                     floor=last_look if c['ptr'] < s['ptr'] else now)     # a rollback): only from now
+        at_all = since_arrival(rs, c['ptr'], s.get('floor', 0))          # began AT it since it moved here
+        at = at_all[-32:]
         if at:                                               # what the at-pointer rule judges (mg1, mg2)
             print(f"    at the start point itself: {sum(r['success'] for r in at)} of the last {len(at)} matched him"
                   f" ({len(at_all)} started there)")
-        if len(at_all) >= STONES_AT and c['ptr'] > 0 and s_get(st, key, 'stones_reported') != c['ptr']:
+        works, rate, n = next_point_works(rs, c['ptr'], at_all)
+        if len(at_all) >= STONES_AT and c['ptr'] > 0 and not works:     # the whole stretch is hard
+            print(f"    stalled but hard throughout: start point {c['ptr'] + 1} matched {rate:.0%} of {n}"
+                  f" (stones need the next one to work)")
+        elif len(at_all) >= STONES_AT and c['ptr'] > 0 and s_get(st, key, 'stones_reported') != c['ptr']:
             alerts.append(f"ALERT stepping stones: {act} start point {c['ptr']}: {len(at_all)} starts there, "
                           f"{sum(r['success'] for r in at)} of the last {len(at)} matched")
             st.setdefault(key, {})['stones_reported'] = c['ptr']
@@ -117,11 +131,6 @@ def main():
                  f"{sum(bool(r.get('stages')) for r in last)}), emeralds won {won}" if played else '')
               + (f"; got back after {sum('bonus_paid_at' in st for st in owed)} of the {len(owed)} "
                  f"paid on return" if owed else ''))
-        s = st.setdefault(key, {'ptr': c['ptr'], 'since': steps})
-        if s['since'] > steps:                               # a rollback (mg2 2026-10-12) left it in the future
-            s['since'] = steps
-        if c['ptr'] != s['ptr']:
-            s.update(ptr=c['ptr'], since=steps, stall_reported=False)
         if steps - s['since'] >= STALL_STEPS * n_acts and c['ptr'] > 0:
             line = f"stall: {act} start point {c['ptr']} unmoved for {steps - s['since']:,} steps"
             if s.get('stall_reported'):
@@ -140,6 +149,7 @@ def main():
             print(f"    NEWS: first fresh clear of {act} ({fc[0]['frames']} frames)")
     for x in alerts:
         print(x)
+    st['checked'] = now
     if a.state:
         with open(a.state + '.tmp', 'w') as f:
             json.dump(st, f, indent=1)

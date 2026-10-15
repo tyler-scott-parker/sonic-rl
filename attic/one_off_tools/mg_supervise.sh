@@ -23,7 +23,9 @@ while true; do
     while running; do sleep 5; done
     stones=$(nice -n 10 python3 mg_stones.py $RUN 2>&1 | grep -v -i "warn\|pkg_res")
     { echo "=== $(date '+%F %T') mg_stones"; echo "$stones"; } >> logs/${RUN}_watch.log
-    nohup python3 train_main.py $RUN --resume >> logs/main_$RUN.log 2>&1 &
+    # the trainer gets the GPU back: the export above is for the tools (until 2026-10-15 it
+    # leaked into this restart, and device='auto' would have resumed the run on the CPU)
+    env -u CUDA_VISIBLE_DEVICES nohup python3 train_main.py $RUN --resume >> logs/main_$RUN.log 2>&1 &
     if echo "$stones" | grep -q "^wrote"; then
       echo "$(date +%T) stepping stones added, $RUN restarted (re-arm this, and a window following"
       echo "the training start point needs a restart: the start points were renumbered):"; echo "$stones"
