@@ -35,15 +35,16 @@ Sound plays at 100% speed (game_audio.py, as in the recorders); M mutes,
 --no-sound starts muted.
 
 A run with several acts (mg2: six): A goes to the next act, Shift+A the one
-before (--act picks the first shown; the phone stream has a Next act button).
+before (--act picks the first shown; the phone stream has Previous / Next act
+buttons).
 Every act of the run is built at launch from the recordings (mg2: ~75 s,
 ~800 MB, in this process and in watch_tries.py's); the window says so meanwhile.
 
 --focus: what the agent is paying attention to (focus.py: blur one patch of
 its view at a time and see how much that moves it), drawn over the picture:
 orange = what moves its decision, cyan = what moves its expectation of how
-it'll go (--focus decision / value: just one). V cycles off / decision /
-value / both. The inset bottom right is what it actually sees: 84 x 84 gray,
+it'll go (--focus decision / value: just one). V (the phone stream's Focus
+button) cycles off / decision / value / both. The inset bottom right is what it actually sees: 84 x 84 gray,
 with its air bar and ring compass. It runs on the GPU (a few ms a step; ~300
 MB of VRAM), or without one on a CPU thread, trailing the picture a little.
   python3 watch_main.py mg2 --live --fresh --best 20 --ring --focus
@@ -103,7 +104,19 @@ import demos                                        # noqa: E402
 env = C.SonicCoordinator(acts=cfg['acts'], demo_prob=0.0)   # every act of the run: A switches
 segs = seg = key = None                             # built once the window is up (build_acts)
 ai, k = 0, 0                                        # the act shown (index into segs); its --frac start point
-act_req = {'n': 0}                                  # the stream's Next act button (a server thread)
+act_req = {'n': 0}                                  # the stream's act buttons (a server thread): acts to move
+focus_req = {'n': 0}                                # V and the stream's Focus button: modes to cycle
+
+
+def act_label():
+    """The act the stream's page shows: the one on screen plus the button
+    presses the main loop hasn't done yet, so a tap shows where it lands."""
+    if not segs:
+        return 'preparing the acts'
+    i = (ai + act_req['n']) % len(segs)
+    return f"{segs[i]['name']} {i + 1}/{len(segs)}"
+
+
 model, model_mtime, path = None, None, None
 if not args.you:
     import torch
@@ -199,11 +212,16 @@ try:
 
         def switch(name):
             return (lambda: globals()[name]), (lambda v: globals().__setitem__(name, v))
+
+        def request(req, step):                     # done by the main loop's next frame
+            return lambda v: req.__setitem__('n', req['n'] + step)
+        switches = {**{n: switch(n) for n in ('skip_ss', 'ring', 'fresh')},
+                    'act': (act_label, request(act_req, 1)),                # the page shows the act
+                    'act_back': ((lambda: False), request(act_req, -1))}
+        if not args.you:
+            switches['focus'] = ((lambda: focus_mode), request(focus_req, 1))   # the page shows the mode
         audio = stream_out.StreamOut(os.path.join(train_main.HOME, 'logs', f'stream_{args.run}'),
-                                     (PIC[0], PIC[1] + PANEL), args.stream,
-                                     {**{n: switch(n) for n in ('skip_ss', 'ring', 'fresh')},
-                                      'act': (lambda: False,      # Next act: a request, never "on"
-                                              lambda v: act_req.__setitem__('n', act_req['n'] + 1))},
+                                     (PIC[0], PIC[1] + PANEL), args.stream, switches,
                                      rate=env.base_env.em.get_audio_rate())
         print(f'streaming at {audio.url}', flush=True)
     else:
@@ -491,10 +509,15 @@ def episode():
     ck = env._ck
     step, outcome, msg = 0, None, ''
     while True:
-        if act_req['n']:                            # the stream's Next act
+        if act_req['n']:                            # the stream's act buttons
             n, act_req['n'] = act_req['n'], 0
             set_act(ai + n)
             return True
+        if focus_req['n']:                          # V or the stream's Focus button
+            n, focus_req['n'] = focus_req['n'], 0
+            focus_mode = F.MODES[(F.MODES.index(focus_mode) + n) % len(F.MODES)]
+            focus_clear()
+            focus_request(obs)
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT or (ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE):
                 return False
@@ -512,9 +535,7 @@ def episode():
                     ring = not ring
                     return True
                 elif ev.key == pygame.K_v and not args.you:
-                    focus_mode = F.MODES[(F.MODES.index(focus_mode) + 1) % len(F.MODES)]
-                    focus_clear()
-                    focus_request(obs)
+                    focus_req['n'] += 1
                 elif ev.key == pygame.K_a and len(segs) > 1:
                     set_act(ai + (-1 if ev.mod & pygame.KMOD_SHIFT else 1))
                     return True

@@ -38,15 +38,26 @@ PAGE = """<!doctype html>
   button { font: inherit; padding: 8px 12px; border-radius: 8px; border: 1px solid #555;
            background: #222; color: #ddd; }
   button.on { background: #2a5; border-color: #2a5; color: #fff; }
+  button.tap { background: #666; border-color: #999; }
+  .acts { align-items: center; flex-wrap: nowrap; }
+  .act { flex: 1; text-align: center; font-size: 17px; font-weight: 600; color: #fff; }
+  .act.moving { color: #fc3; }
   p { margin: 4px 12px; color: #999; font-size: 13px; }
+  p.note { min-height: 1.3em; margin-top: 0; color: #fc3; text-align: center; }
 </style></head>
 <body>
 <video id="v" controls playsinline autoplay muted></video>
+<div class="bar acts">
+  <button id="act_back" onclick="flip('act_back')">&#9664; Previous</button>
+  <div id="act_name" class="act"></div>
+  <button id="act" onclick="flip('act')">Next &#9654;</button>
+</div>
+<p id="act_note" class="note"></p>
 <div class="bar">
   <button id="skip_ss" onclick="flip('skip_ss')">Skip special stages</button>
   <button id="ring" onclick="flip('ring')">Giant-ring tries</button>
   <button id="fresh" onclick="flip('fresh')">From the act start</button>
-  <button id="act" onclick="flip('act')">Next act</button>
+  <button id="focus" onclick="flip('focus')">Focus</button>
 </div>
 <p>Tap the video for sound. It runs a few seconds behind live; switches apply from the next run.</p>
 <script src="HLS_JS"></script>
@@ -54,13 +65,33 @@ PAGE = """<!doctype html>
 const v = document.getElementById('v'), src = 'live.m3u8';
 if (v.canPlayType('application/vnd.apple.mpegurl')) v.src = src;
 else if (window.Hls && Hls.isSupported()) { const h = new Hls({liveSyncDurationCount: 2}); h.loadSource(src); h.attachMedia(v); }
+const LAG_MS = 8000;                                 // about how far the video runs behind the viewer
+let moved = 0;                                       // when an act button was last tapped
 async function state() {
   try {
     const s = await (await fetch('state', {cache: 'no-store'})).json();
     for (const k of ['skip_ss', 'ring', 'fresh']) document.getElementById(k).classList.toggle('on', !!s[k]);
+    const f = document.getElementById('focus');      // a mode, not on/off; gone when watching his recording
+    f.hidden = s.focus === undefined;
+    f.textContent = 'Focus: ' + s.focus;
+    f.classList.toggle('on', s.focus !== 'off');
+    // the act the viewer is on now, at once; the video shows it a few seconds later
+    const a = document.getElementById('act_name'), moving = Date.now() - moved < LAG_MS;
+    a.textContent = (moving ? '\\u2192 ' : '') + s.act;
+    a.classList.toggle('moving', moving);
+    document.getElementById('act_note').textContent = moving ? 'Switching: the video catches up in a few seconds' : '';
   } catch (e) {}
 }
-async function flip(k) { await fetch('flip?' + k, {method: 'POST'}); state(); }
+// a request (act, focus) is done by the viewer's next frame: look again shortly after
+async function flip(k) {
+  const b = document.getElementById(k);
+  b.classList.add('tap');
+  setTimeout(() => b.classList.remove('tap'), 250);
+  if (k.startsWith('act')) { moved = Date.now(); setTimeout(state, LAG_MS + 100); }
+  await fetch('flip?' + k, {method: 'POST'});
+  state();
+  setTimeout(state, 400);
+}
 state(); setInterval(state, 3000);
 </script>
 </body></html>
@@ -76,10 +107,15 @@ def tailnet_ip():
         return None
 
 
+def shown(value):
+    """A switch's state for the page: on / off, or a mode's name (focus)."""
+    return value if isinstance(value, str) else bool(value)
+
+
 class StreamOut:
     def __init__(self, out_dir, size, port, switches, rate=44100, host=None):
         """size: (width, height) of the frames given to frame(), RGB. switches:
-        {name: (get, set)} the page's buttons flip."""
+        {name: (get, set)} the page's buttons flip; get may return a mode's name."""
         self.rate = int(round(rate))
         self.chunk = self.rate // FPS * 4                    # bytes of 16-bit stereo per tick
         self.w, self.h = size
@@ -199,7 +235,7 @@ class StreamOut:
 
             def do_GET(self):
                 if self.path.split('?')[0] == '/state':
-                    return self._json({k: bool(g()) for k, (g, _) in switches.items()})
+                    return self._json({k: shown(g()) for k, (g, _) in switches.items()})
                 return super().do_GET()
 
             def do_POST(self):
@@ -207,7 +243,7 @@ class StreamOut:
                 if path == '/flip' and name in switches:
                     get, put = switches[name]
                     put(not get())
-                    return self._json({name: bool(get())})
+                    return self._json({name: shown(get())})
                 self.send_error(404)
 
             def _json(self, obj):
