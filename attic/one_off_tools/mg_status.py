@@ -95,6 +95,9 @@ def main():
         drowned = sum(r.get('cause') == 'drown' for r in last)
         if drowned:
             print(f"    drowned: {drowned} of the last {len(last)} episodes")
+        bh = [r['boss_hits'] for r in last if 'boss_hits' in r]   # MG_BOSS (from 2026-10-14)
+        if any(bh):
+            print(f"    boss hits: {sum(bh)} in the last {len(bh)} episodes ({sum(h > 0 for h in bh)} with any)")
         at_all = [r for r in rs if r['start'] == c['ptr'] and r['t'] >= since]   # since it moved here
         at = at_all[-32:]                                    # (the trainer rewrites the file on each move)
         if at:                                               # what the at-pointer rule judges (mg1, mg2)

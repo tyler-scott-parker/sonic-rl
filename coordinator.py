@@ -364,10 +364,11 @@ AIR_FULL = 30                  # air_left out of water; drowned at 0
 AIR_ROWS, AIR_X0 = 2, OBS_SIZE - AIR_FULL      # the bar: top 2 rows, the rightmost 30 columns
 
 
-def obs_frame(prev_raw, raw, info, used=frozenset()):
+def obs_frame(prev_raw, raw, info, used=frozenset(), boss=None):
     """process_frame, plus (MG_AIR_BAR) Sonic's air as a bar: one white
     pixel per second of air left, black for the rest (the strip covers
-    2 x 30 of the 84 x 84), and (MG_RING_COMPASS) the ring compass."""
+    2 x 30 of the 84 x 84), (MG_RING_COMPASS) the ring compass, and
+    (MG_BOSS_BAR) the boss's hits left, `boss` = BossTracker.bar()."""
     f = process_frame(prev_raw, raw)
     if MG_AIR_BAR:
         air = min(max(int(info['mg_air']), 0), AIR_FULL)
@@ -375,6 +376,8 @@ def obs_frame(prev_raw, raw, info, used=frozenset()):
         f[:AIR_ROWS, AIR_X0:AIR_X0 + air] = 255
     if MG_RING_COMPASS:
         draw_compass(f, info, used)
+    if MG_BOSS_BAR and boss is not None:
+        draw_boss_bar(f, *boss)
     return f
 
 
@@ -440,6 +443,127 @@ def draw_compass(f, info, used=frozenset()):
     reach = COMPASS_R * math.sqrt(min(dist, COMPASS_RANGE) / COMPASS_RANGE)
     px, py = (dx / dist * reach, dy / dist * reach) if dist else (0.0, 0.0)
     f[c[0] + int(round(py)), c[1] + int(round(px))] = 255
+
+
+# ── Boss hits ────────────────────────────────────────────────────────────────
+# Tyler 2026-10-14: "are boss hits rewarded? i noticed that the agent pays
+# essentially no attention to enemies ... it may be an issue for boss fights".
+# A fight paid nothing until the kill (one lump, the demo's fight time), and
+# S3K shows no boss health, so the agent couldn't see a fight progress.
+# A boss's hits left = collision_property, +$29 of its object: the touch code
+# decrements it instead of destroying an enemy that has one. Found and checked
+# on his whole-game recording (attic/one_off_tools/find_boss_hits.py,
+# check_boss_hits.py): 24 fights; mg2's six exact (AIZ1 6, AIZ2 8, HCZ1 6,
+# HCZ2 8, MGZ1 6 without Boss_flag, MGZ2 8), each last hit on the frame his
+# clock stopped; 157 of 183 hits game-wide (FBZ1, HPZ1, DEZ2 take hits on a
+# child object; CNZ1's miniboss counts at +$45).
+#   MG_BOSS_BAR=1 (RUNS boss_bar): while a boss is tracked, a strip left of
+#     the air bar: 2 px per hit, white = hits left, gray = taken.
+#   MG_BOSS_PAY=F (RUNS boss_pay): each hit pays F frames at once, taken back
+#     when the fight's lump arrives (Boss_flag drops) or the episode ends
+#     (a clear's own lump included), so no episode's return changes: the time
+#     a kill saves arrives sooner, not bigger (check_boss.py).
+# Either one turns tracking on, and then a hit also counts as progress for
+# `stuck` (MGZ1's miniboss raises no Boss_flag, so its arena was cut as stuck).
+MG_BOSS_BAR = os.environ.get('MG_BOSS_BAR', '0') == '1'
+MG_BOSS_PAY = float(os.environ.get('MG_BOSS_PAY', '0'))
+MG_BOSS = MG_BOSS_BAR or MG_BOSS_PAY > 0
+OBJ_TABLE, OBJ_SLOTS, OBJ_LEN = 0xB000, 110, 0x4A
+BOSS_SLOT0 = 2                      # 0 and 1: Sonic and Tails
+BOSS_MIN, BOSS_MAX = 5, 16          # a boss's count: 6, 8, 9, 14 (3-hit badniks 3; unkillable drill car 255)
+BOSS_TOUCH = 64                     # frames: touchable this recently (a hit boss flashes untouchable)
+BOSS_GAP = 16                       # frames: never two hits of one boss closer (the flash is 32)
+BOSS_BAR_MAX = 16
+BOSS_X0 = AIR_X0 - 1 - 2 * BOSS_BAR_MAX     # the strip: top 2 rows, 32 columns left of the air bar
+_NEVER = -10 ** 9
+_RAM_SWAP = []                      # the core's byte order, found once per process (_ram_words)
+
+
+def object_table(env, info=None):
+    """The object slots (BOSS_SLOT0..109) as a (108, $4A) uint8 array, or None
+    while the byte order is unknown and Sonic can't be found to settle it."""
+    raw = np.frombuffer(bytes(env.get_ram()), dtype=np.uint8)
+    if not _RAM_SWAP:
+        if info is None:
+            return None
+        try:
+            _RAM_SWAP.append(not np.array_equal(_ram_words(env, info), raw))
+        except RuntimeError:
+            return None
+    ram = raw.reshape(-1, 2)[:, ::-1].reshape(-1) if _RAM_SWAP[0] else raw
+    return ram[OBJ_TABLE:OBJ_TABLE + OBJ_SLOTS * OBJ_LEN].reshape(OBJ_SLOTS, OBJ_LEN)[BOSS_SLOT0:].copy()
+
+
+class BossTracker:
+    """Boss hits from object RAM, no slot known in advance: update() after
+    each agent step (or each frame) returns the hits since the last one. A
+    hit = an occupied slot whose +$29 dropped by exactly 1, whose count since
+    the object appeared peaked at BOSS_MIN..BOSS_MAX, touchable (+$28 nonzero)
+    within BOSS_TOUCH frames, and BOSS_GAP frames since that slot's last hit.
+    Per-slot memory rides with each start point (snapshot / restore), so an
+    episode starting mid-fight knows the boss had 8 hits, not the 3 it shows."""
+
+    def __init__(self):
+        n = OBJ_SLOTS - BOSS_SLOT0
+        self.prev, self.frame = None, 0
+        self.maxseen = np.zeros(n, int)
+        self.touch = np.full(n, _NEVER)
+        self.last = np.full(n, _NEVER)
+
+    def snapshot(self):
+        """For a start point: the per-slot memory, its times relative to now."""
+        return dict(maxseen=self.maxseen.copy(), touch=self.touch - self.frame, last=self.last - self.frame)
+
+    @classmethod
+    def restore(cls, snap, env):
+        bt = cls()
+        if snap is not None:
+            bt.maxseen, bt.touch, bt.last = snap['maxseen'].copy(), snap['touch'].copy(), snap['last'].copy()
+        bt.prev = object_table(env)                 # the state just loaded (byte order known by then)
+        return bt
+
+    def update(self, env, info, frames):
+        self.frame += frames
+        cur = object_table(env, info)
+        if cur is None:
+            return 0
+        prev, self.prev = self.prev, cur
+        occ = cur[:, :4].any(1)
+        if prev is None:
+            self.maxseen = np.where(occ, np.maximum(self.maxseen, cur[:, 0x29]), 0)
+            return 0
+        gone = ~occ | ~prev[:, :4].any(1)           # emptied (or emptied and refilled unseen: rare)
+        self.maxseen[gone] = 0
+        self.touch[gone] = _NEVER
+        self.last[gone] = _NEVER
+        v = cur[:, 0x29].astype(int)
+        self.maxseen = np.maximum(self.maxseen, np.where(occ, v, 0))
+        self.touch[(prev[:, 0x28] != 0) | (cur[:, 0x28] != 0)] = self.frame
+        hit = (occ & ~gone & (v == prev[:, 0x29].astype(int) - 1)
+               & (self.maxseen >= BOSS_MIN) & (self.maxseen <= BOSS_MAX)
+               & (self.frame - self.touch <= BOSS_TOUCH) & (self.frame - self.last >= BOSS_GAP))
+        self.last[hit] = self.frame
+        return int(hit.sum())
+
+    def bar(self):
+        """(hits left, its starting count) of the boss being fought, or None."""
+        if self.prev is None:
+            return None
+        live = (self.prev[:, :4].any(1) & (self.maxseen >= BOSS_MIN) & (self.maxseen <= BOSS_MAX)
+                & (self.frame - self.touch <= BOSS_TOUCH))
+        if not live.any():
+            return None
+        i = int(np.flatnonzero(live)[np.argmax(self.maxseen[live])])
+        return int(self.prev[i, 0x29]), int(self.maxseen[i])
+
+
+def draw_boss_bar(f, left, total):
+    """2 px per hit: white for each left, gray for each taken, black beyond."""
+    total = min(total, BOSS_BAR_MAX)
+    left = min(max(left, 0), total)
+    f[:AIR_ROWS, BOSS_X0:BOSS_X0 + 2 * BOSS_BAR_MAX] = 0
+    f[:AIR_ROWS, BOSS_X0:BOSS_X0 + 2 * left] = 255
+    f[:AIR_ROWS, BOSS_X0 + 2 * left:BOSS_X0 + 2 * total] = 96
 
 
 # ── Test fixture: a fake act end ─────────────────────────────────────────────
@@ -728,9 +852,13 @@ class SonicCoordinator(gym.Env):
             procs = collections.deque(maxlen=(STACK - 1) * FRAME_SKIP + 1)
             prev_raw = None
             seg = None
+            bt = BossTracker() if MG_BOSS else None     # his fights, so a start point knows its boss
             for i, a in enumerate(actions[:last + 1]):
                 raw, info = emu_frame(self.base_env, table[a])
-                procs.append(obs_frame(prev_raw, raw, info))       # his play: no ring used
+                if bt is not None:
+                    bt.update(self.base_env, info, 1)
+                procs.append(obs_frame(prev_raw, raw, info,         # his play: no ring used
+                                       boss=bt.bar() if bt is not None else None))
                 prev_raw = raw
                 event = split.feed(i, info)
                 if event == 'start' and len(split.acts) in want:
@@ -768,7 +896,8 @@ class SonicCoordinator(gym.Env):
                     seg['ckpts'].append(dict(
                         state=zlib.compress(self.base_env.em.get_state(), 6),
                         stack=np.stack(frames[::FRAME_SKIP], -1),
-                        t=t, boss=int(info['mg_boss']) != 0, frame=i))
+                        t=t, boss=int(info['mg_boss']) != 0, frame=i,
+                        bt=bt.snapshot() if bt is not None else None))
         if not self._segs:
             raise ValueError(f'no cleared act in {self.demo_files} matches '
                              f'MG_ACTS={self.acts}')
@@ -846,6 +975,9 @@ class SonicCoordinator(gym.Env):
         self._seen = set()            # v2: blocks of the level visited this episode
         self._stages = []             # pilot: the special stages played this episode
         self._used_rings = set()      # MG_RING_COMPASS: giant rings entered this episode
+        self._bt = BossTracker.restore(ck.get('bt'), self.base_env) if MG_BOSS else None
+        self._hit_paid = 0.0          # MG_BOSS_PAY: paid for hits, not yet taken back
+        self._boss_hits = 0
         self._stage_frames = 0        # pilot: frames charged for them (not on the timeout clock)
         self.ret = 0.0
         self._t0 = time.time()
@@ -878,15 +1010,26 @@ class SonicCoordinator(gym.Env):
             stage = self._special_stage(info)       # None: it couldn't; truncate as before
             if stage is not None:
                 info, event = stage.pop('info'), None
+        hits = 0
+        if self._bt is not None:
+            if stage is not None:                   # a special stage: the act's objects were reloaded
+                self._bt = BossTracker.restore(None, self.base_env)
+            else:
+                hits = self._bt.update(self.base_env, info, n)
+                self._boss_hits += hits
         if stage is None:
             prev = raws[-2] if len(raws) > 1 else self._last_raw
-            self._stack.append(obs_frame(prev, raws[-1], info, self._used_rings))
+            self._stack.append(obs_frame(prev, raws[-1], info, self._used_rings,
+                                         self._bt.bar() if self._bt is not None else None))
             self._last_raw = raws[-1]
         self.frames += n
         x = int(info['x'])
         self._xmax = x if self._xmax is None else max(self._xmax, x)
 
         r = -float(n)
+        if hits and MG_BOSS_PAY:                    # paid now, taken back when the lump comes
+            r += hits * MG_BOSS_PAY
+            self._hit_paid += hits * MG_BOSS_PAY
         won_trip = False
         if stage is not None:
             if MG_SS_DETOUR == 'refund' and stage['emeralds'] > 0:
@@ -905,8 +1048,12 @@ class SonicCoordinator(gym.Env):
         elif event == 'death':
             r -= DEATH_PENALTY
         elif event is None:
+            in_fight = self._route.fight is not None
             gain = self._route.update(info['zone'], info['act'], x, int(info['y']),
                                       int(info['mg_boss']) != 0)
+            if in_fight and self._route.fight is None and self._hit_paid:
+                r -= self._hit_paid                 # the fight's lump arrived (in gain): take the hits back
+                self._hit_paid = 0.0
             if gain > 0:
                 self._gain_at = self.frames
             if self._back is not None:              # MG_SS_DETOUR: the way back from a won ring is
@@ -924,13 +1071,16 @@ class SonicCoordinator(gym.Env):
                 new_ground = blk not in self._seen
                 self._seen.add(blk)
             if MG_V2 and not self._route.on and self._route.fight is None:
-                r += n                          # off the route: book it
+                # off the route: book the frames. Gain off the route can only be a fight's
+                # lump (progress jumps to the demo's fight end as Boss_flag drops): paid here,
+                # it was dropped until 2026-10-14 (check_boss.py: AIZ1's fire scene lost 373)
+                r += n + gain
                 self._owed += n
                 self._off += n
             else:
                 r += gain - self._owed          # back on it: settle
                 self._owed = 0
-            if gain > 0 or self._route.fight is not None or new_ground:
+            if gain > 0 or self._route.fight is not None or new_ground or hits:
                 self._moved_at = self.frames
             elif self.frames - self._moved_at >= STUCK_FRAMES:
                 event = 'stuck'
@@ -944,6 +1094,10 @@ class SonicCoordinator(gym.Env):
             r -= self._owed                     # v2: the episode ends: settle
             self.ret -= self._owed
             self._owed = 0
+        if (terminated or truncated) and self._hit_paid:
+            r -= self._hit_paid                 # MG_BOSS_PAY: a clear's lump came, or none will
+            self.ret -= self._hit_paid
+            self._hit_paid = 0.0
         if terminated or truncated:
             outcome = event or 'timeout'
             info = dict(info)
@@ -1046,6 +1200,8 @@ class SonicCoordinator(gym.Env):
             entry['off_route'] = self._off
         if 'cause' in res:
             entry['cause'] = res['cause']                # 'drown' or 'other'
+        if MG_BOSS:
+            entry['boss_hits'] = self._boss_hits
         if self._stages:
             entry['stages'] = self._stages
         try:

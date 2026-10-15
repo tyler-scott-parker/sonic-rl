@@ -26,6 +26,7 @@ roms/
 # ── Base game (train_main.py) run outputs ──────────────────────────────────────
 mg_log*.jsonl
 main_*_curriculum.json
+main_*_imitation.json
 logs_main/
 demos/_synthetic_*
 demos/.cache/

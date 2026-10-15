@@ -138,7 +138,13 @@ RUNS = {
         ring_compass=True,
         # floor 0.3 from ~19:30 (the pull reaching 0 at 3M steps collapsed every act: rolled
         # back to the 2,261,000-step checkpoint, logs/archive_mg2_collapse/)
-        imitation=dict(data='datasets/bc_v3', floor=0.3),
+        imitation=dict(data='datasets/bc_v4', floor=0.3),
+        # from its resume at 6,241,416 steps (2026-10-14 ~20:55; Tyler: "let's add 2 and 3 as well",
+        # after the boss hit counter was found): the boss bar drawn in (bc_v4 = bar + compass + boss
+        # bar; its imitation fade carried over from bc_v3's, so the pull stays at the floor), each
+        # hit paid 120 frames up front and taken back with the fight's lump, and a hit counts as
+        # progress for `stuck` (coordinator "Boss hits"; check_boss.py)
+        boss_bar=True, boss_pay=120,
         result='STARTED 2026-10-12 ~13:50 from bc4, criteria AGREED (Tyler: "let\'s do it!" after '
                'mg1bc cleared AIZ1 from the start); RESTARTED ~16:25 from mg1bc (bc4 had lost AIZ1 '
                'from the start: 0/20 vs mg1bc 5/20). Six acts at once: do the five new acts learn, '
@@ -239,6 +245,11 @@ def configure_env(run):
     os.environ['MG_AIR_BAR'] = '1' if cfg.get('air_bar') else '0'
     # the nearest unused giant ring drawn into the observation (coordinator.draw_compass)
     os.environ['MG_RING_COMPASS'] = '1' if cfg.get('ring_compass') else '0'
+    # the boss's hits left drawn into the observation, each hit paid up front (frames, taken
+    # back with the fight's lump); either one also lets a hit count as progress for `stuck`
+    # (coordinator, "Boss hits")
+    os.environ['MG_BOSS_BAR'] = '1' if cfg.get('boss_bar') else '0'
+    os.environ['MG_BOSS_PAY'] = str(cfg.get('boss_pay', 0))
     # extra start points: the RUNS entry's plus the stepping stones mg_stones.py added
     # automatically when a start point stalled (main_<run>_stones.json)
     os.environ['MG_EXTRA_STARTS'] = ';'.join(f"{a}:{','.join(map(str, ts))}"
@@ -364,7 +375,8 @@ class ImitationCallback(BaseCallback):
         with open(state + '.tmp', 'w') as f:
             json.dump(starts, f)
         os.replace(state + '.tmp', state)
-        for flag, env in (('air_bar', 'MG_AIR_BAR'), ('ring_compass', 'MG_RING_COMPASS')):
+        for flag, env in (('air_bar', 'MG_AIR_BAR'), ('ring_compass', 'MG_RING_COMPASS'),
+                          ('boss_bar', 'MG_BOSS_BAR')):
             if bool(meta.get(flag)) != (os.environ.get(env) == '1'):
                 raise ValueError(f"imitation data {c['data']} {flag}={meta.get(flag)} but the run's "
                                  f"{env}={os.environ.get(env)}: the frames would differ")

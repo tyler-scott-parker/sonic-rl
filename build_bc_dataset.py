@@ -33,9 +33,11 @@ def main():
     ap.add_argument('--demos', default=DEFAULT_DEMOS)
     ap.add_argument('--air-bar', action='store_true', help="draw Sonic's air into the frames (MG_AIR_BAR)")
     ap.add_argument('--compass', action='store_true', help='draw the ring compass into the frames (MG_RING_COMPASS)')
+    ap.add_argument('--boss-bar', action='store_true', help="draw the boss's hits left into the frames (MG_BOSS_BAR)")
     a = ap.parse_args()
     os.environ['MG_AIR_BAR'] = '1' if a.air_bar else '0'
     os.environ['MG_RING_COMPASS'] = '1' if a.compass else '0'
+    os.environ['MG_BOSS_BAR'] = '1' if a.boss_bar else '0'
     os.environ.setdefault('MG_ENV_VERSION', '2')
     os.environ['CUDA_VISIBLE_DEVICES'] = ''
     os.environ['MG_LOG'] = os.devnull
@@ -50,6 +52,7 @@ def main():
     base = C.make_retro()                                   # an emulator to replay with
     cols = {k: [] for k in ('demo', 'frame', 'action', 'agree', 'act', 't', 'T', 'timer_on')}
     acts_names, meta = [], {'demos': [], 'air_bar': C.MG_AIR_BAR, 'ring_compass': C.MG_RING_COMPASS,
+                            'boss_bar': C.MG_BOSS_BAR,
                             'actions': C.ACTION_NAMES, 'frame_skip': C.FRAME_SKIP,
                             'stack': C.STACK, 'obs_size': C.OBS_SIZE}
     t0 = time.time()
@@ -64,9 +67,12 @@ def main():
         base.reset()
         base.em.set_state(demo_io.play_start_state(m))
         split, prev, rows, cur = C.ActSplitter(), None, [], None
+        bt = C.BossTracker() if C.MG_BOSS_BAR else None   # the boss bar as the env draws it
         for i, act in enumerate(actions):
             raw, info = C.emu_frame(base, table[act])
-            frames[i] = C.obs_frame(prev, raw, info)
+            if bt is not None:
+                bt.update(base, info, 1)
+            frames[i] = C.obs_frame(prev, raw, info, boss=bt.bar() if bt is not None else None)
             prev = raw
             event = split.feed(i, info)
             if event == 'start':
