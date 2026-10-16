@@ -282,6 +282,12 @@ RUNS = {
         demos='book',                       # the route book's current route per board, kept current
         demo_prob=0.75,
         demo_mix=0.3,                       # SS_DEMO_MIX, from the 2026-10-11 ~20:30 resume
+        # from its resume at ~7.45M steps (2026-10-16 ~08:30; Tyler: "Pin route, keep d10 going"): the harvest
+        # loop's faster board-14 route (2,889 frames, adopted at ~5.08M steps) put the start point at frame 1,351
+        # of a route the agent never practised (it goes up a cell and turns back there): no move in 2.4M steps,
+        # 0 of 40 probe tries cleared from there. On the old route (2,921) it had been moving back steadily.
+        # The finish line is a fresh clear, not the fastest route; the book keeps 2,889 for the main game.
+        book_pin={14: 'board14_2921_96f1dc25'},
         ppo=dict(gamma=0.99),
         init='d9',                          # first launch starts from d9's save
         result='DEFINED 2026-10-11 ~15:45 (Tyler: "Yes that sounds great" to starting '
@@ -351,15 +357,23 @@ def paths(run):
     )
 
 
-def book_demos(stages):
+def book_demos(stages, pins=None):
     """demos='book': the route book's current route for each board
     (route_book.py), copied to routes/curriculum/board{NN}_{frames}_{hash}.npz
     so that a demo's id names one exact route: the curriculum's start points
-    belong to a route, and the book's file for a board changes as it improves."""
+    belong to a route, and the book's file for a board changes as it improves.
+    pins: {board: curriculum demo id} (RUNS 'book_pin'): train that board on
+    that route whatever the book holds (the book itself is left alone)."""
     import hashlib
     import route_book
     out = []
     for b in stages:
+        if pins and b in pins:
+            pinned = os.path.join(HOME, 'routes', 'curriculum', f'{pins[b]}.npz')
+            if not os.path.exists(pinned):
+                raise FileNotFoundError(f'book_pin for board {b}: no {pinned}')
+            out.append(pinned)
+            continue
         src = route_book.book_path(b)
         with open(src, 'rb') as f:
             h = hashlib.sha1(f.read()).hexdigest()[:8]
@@ -378,7 +392,7 @@ def demo_paths(cfg):
     """A run's demo files: its `demos` patterns, matched under demos/, or
     'book' (book_demos)."""
     if cfg.get('demos') == 'book':
-        return book_demos(cfg['stages'])
+        return book_demos(cfg['stages'], cfg.get('book_pin'))
     found = []
     for pat in cfg.get('demos', []):
         found += sorted(glob.glob(os.path.join(HOME, 'demos', f'{pat}.npz')))
@@ -663,7 +677,7 @@ class DemoCurriculumCallback(BaseCallback):
         book's current set at their next reset."""
         self._book_t = time.time()
         try:
-            new = book_demos(self.book_stages)
+            new = book_demos(self.book_stages, CFG.get('book_pin'))
         except Exception as e:
             print(f'[demo] route book unreadable ({e!r}); keeping the current routes', flush=True)
             return
