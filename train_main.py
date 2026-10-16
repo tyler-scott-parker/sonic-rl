@@ -187,6 +187,9 @@ RUNS = {
         # from its next resume (2026-10-16; Tyler: "Yes that sounds great" to a passive main-game route book):
         # fresh clears faster than an act's book entry are saved for main_book.py harvest; training unchanged
         book='routes_main',
+        # from its next resume (2026-10-16; Tyler: "You can turn those both on"): MGZ1's end boss (no Boss_flag)
+        # becomes a fight by its object code; check_fight_codes.py
+        fight_codes=True,
         # from its resume at ~56.6M steps (2026-10-15 ~15:30; Tyler, after HCZ2's opening was measured:
         # "Yes, it's probably a good use of time"): its fresh starts all stopped at 3.4% (a curve that must
         # be rolled up; the agent hops in the corridor and lands running), then at a sliding wall, and the
@@ -329,6 +332,8 @@ def configure_env(run):
     os.environ['MG_FRONT_SHARE'] = str(cfg.get('front_share', 0))
     # a looser match bar for starts inside his boss fights (coordinator, "Fight bar")
     os.environ['MG_FIGHT_SLACK'] = str(cfg.get('fight_slack', 0))
+    # fights recognized by the boss's object code too, not only Boss_flag (coordinator, "Fights by object code")
+    os.environ['MG_FIGHT_CODES'] = '1' if cfg.get('fight_codes') else '0'
     # the passive main-game route book: fresh clears faster than an act's best are kept for main_book.py
     # (coordinator, "Main-game route book")
     os.environ['MG_BOOK'] = os.path.join(HOME, cfg['book']) if cfg.get('book') else ''

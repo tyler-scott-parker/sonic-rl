@@ -360,6 +360,12 @@ NUM_RAM_FEATURES = ((11 if DROP_POSITION else 15) - (1 if V2 else 0) + (3 if POI
 _STAGE_IDS    = [s for s in os.environ.get('SS_STAGES', '').split(',') if s.strip()]
 
 
+def stage_number(path):
+    """The board number in a stage state file's name (curriculum_stage_NN.state), 0 if none."""
+    m = re.search(r'curriculum_stage_(\d+)', path)
+    return int(m.group(1)) if m else 0
+
+
 def stage_file(stage):
     return os.path.join(STATES_DIR, f'curriculum_stage_{stage}.state')
 
@@ -403,6 +409,11 @@ DEMO_BAND       = 4     # starts are drawn from checkpoints [pointer, pointer + 
 # 0/30 from 70-80% of its route, board 13 0/30, while 4, 6, 7 rose to 90-100%
 # near the end). The curriculum ignores those episodes (outside its band).
 DEMO_MIX        = float(os.environ.get('SS_DEMO_MIX', '0'))
+# SS_STAGE_WEIGHTS=14:6 (2026-10-16, d10): how often each board is drawn, relative to 1 for boards not
+# listed, for both fresh starts and demo starts. Boards were drawn evenly by episode, so board 14 (the last
+# without a fresh clear, its start point halfway in so its episodes short) got ~2.7% of d10's frames.
+STAGE_WEIGHTS   = {int(k): float(v) for k, v in (p.split(':') for p in
+                   os.environ.get('SS_STAGE_WEIGHTS', '').split(',') if p.strip())}
 if DEMO_FILES and not V2:
     raise ValueError('demos need SS_ENV_VERSION=2')
 
@@ -721,7 +732,8 @@ class SpecialStageEnv(gym.Env):
             self._replaying = False
 
     def _reset_from_demo(self):
-        demo = random.choice(self._demos)
+        demo = (random.choices(self._demos, weights=[STAGE_WEIGHTS.get(int(d['stage']), 1.0) for d in self._demos])[0]
+                if STAGE_WEIGHTS else random.choice(self._demos))
         last = len(demo['ckpts']) - 1
         ptr = min(self._demo_ptr.get(demo['id'], last), last)
         if DEMO_MIX and random.random() < DEMO_MIX:
@@ -987,7 +999,9 @@ class SpecialStageEnv(gym.Env):
         elif not restart_file:
             # Multi-stage: pick a stage at random for this fresh episode.
             # Falls back to the single state_path when SS_STAGES is unset.
-            load_path = forced or (random.choice(STAGE_FILES) if STAGE_FILES
+            load_path = forced or ((random.choices(STAGE_FILES, weights=[STAGE_WEIGHTS.get(stage_number(f), 1.0)
+                                                                         for f in STAGE_FILES])[0]
+                                    if STAGE_WEIGHTS else random.choice(STAGE_FILES)) if STAGE_FILES
                                    else self.state_path)
             # remember which stage this fresh episode is on, for per-stage logging
             m = re.search(r'curriculum_stage_(\d+)', load_path)

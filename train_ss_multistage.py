@@ -278,7 +278,11 @@ RUNS = {
         obs=dict(SS_ENV_VERSION='7',
                  SS_USE_PIXELS='0', SS_PATCH_R='7', SS_DROP_POSITION='1',
                  SS_POINTER='1',
-                 SS_SPEED_BONUS='7'),       # d8's speed term: a clear pays 7 x (18,000 - frames)
+                 SS_SPEED_BONUS='7',        # d8's speed term: a clear pays 7 x (18,000 - frames)
+                 # from its next resume (2026-10-16; Tyler: "You can turn those both on"): board 14, the last
+                 # without a fresh clear, drawn 6x as often as each other board (~32% of episodes, was ~7%;
+                 # 2.7% of the frames); check_stage_weights.py
+                 SS_STAGE_WEIGHTS='14:6'),
         demos='book',                       # the route book's current route per board, kept current
         demo_prob=0.75,
         demo_mix=0.3,                       # SS_DEMO_MIX, from the 2026-10-11 ~20:30 resume

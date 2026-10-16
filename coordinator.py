@@ -233,6 +233,15 @@ MATCH_ADD      = 60        # ... + 1 s
 # that starts inside his boss fight (the start point's Boss_flag) matches him if it clears within
 # (1 + MG_FIGHT_SLACK) x his frames from there + MATCH_ADD; 0 = MATCH_SLACK as everywhere else.
 MG_FIGHT_SLACK = float(os.environ.get('MG_FIGHT_SLACK', '0'))
+# Fights by object code (2026-10-16; Tyler picked it from a list of CPU jobs, then "You can turn those both
+# on": RUNS mg2 fight_codes=True from its next start): fights come from Boss_flag, and MGZ1's end boss (also SOZ2's, SSZ1's last, DEZ3's) never sets it,
+# so to the env it's level, not a fight (stuck can fire mid-fight; walking the arena pays route progress).
+# With MG_FIGHT_CODES=1, a boss object that took >= FIGHT_CODE_HITS hits in his run (BossTracker's rule, so
+# boss-sized counts only) makes a fight of the stretch it was present in, where no flag stretch overlaps; at
+# run time a fight is on while the flag is up OR one of the act's fight objects is present. Props are safe:
+# in his runs each unflagged boss's object code appears only in its real fight (boss_presence.py).
+MG_FIGHT_CODES = os.environ.get('MG_FIGHT_CODES', '0') == '1'
+FIGHT_CODE_HITS = 3
 TIMEOUT_MULT   = 2.0       # an episode is cut (truncated) at 2x the demo's
 TIMEOUT_ADD    = 1200      # time from its start point + 20 s
 STUCK_FRAMES   = 600       # ... or after 10 s with no new route progress. The
@@ -674,6 +683,7 @@ class BossTracker:
                & (self.maxseen >= BOSS_MIN) & (self.maxseen <= BOSS_MAX)
                & (self.frame - self.touch <= BOSS_TOUCH) & (self.frame - self.last >= BOSS_GAP))
         self.last[hit] = self.frame
+        self.hit_slots = np.flatnonzero(hit)            # MG_FIGHT_CODES: which objects were hit
         return int(hit.sum())
 
     def bar(self):
@@ -686,6 +696,18 @@ class BossTracker:
             return None
         i = int(np.flatnonzero(live)[np.argmax(self.maxseen[live])])
         return int(self.prev[i, 0x29]), int(self.maxseen[i])
+
+
+def slot_code(row):
+    """An object slot's code pointer (its first 4 bytes) as an int: which object it is."""
+    return int(row[0]) << 24 | int(row[1]) << 16 | int(row[2]) << 8 | int(row[3])
+
+
+def table_codes(table):
+    """The set of object codes in an object table's occupied slots."""
+    t = table[:, :4].astype(np.int64)
+    c = t[:, 0] << 24 | t[:, 1] << 16 | t[:, 2] << 8 | t[:, 3]
+    return set(c[c != 0].tolist())
 
 
 def draw_boss_bar(f, left, total):
@@ -1016,6 +1038,16 @@ class SonicCoordinator(gym.Env):
                 in_level, _, dead, timer_on = frame_flags(info)
                 if not in_level or dead:
                     continue
+                if MG_FIGHT_CODES and bt is not None and bt.prev is not None:
+                    fc = seg.setdefault('fc', dict(iv=collections.defaultdict(list), hits=collections.defaultdict(list)))
+                    for code in table_codes(bt.prev):
+                        ivs = fc['iv'][code]
+                        if ivs and ivs[-1][1] >= t - 2:
+                            ivs[-1][1] = t
+                        else:
+                            ivs.append([t, t])
+                    for sl in getattr(bt, 'hit_slots', ()):
+                        fc['hits'][slot_code(bt.prev[sl])].append(t)
                 p = seg['path']
                 p['t'].append(t)
                 p['zone'].append(int(info['zone']))
@@ -1096,6 +1128,21 @@ class SonicCoordinator(gym.Env):
         seg.pop('regular'), seg.pop('extra')
         route = {k: np.asarray(v, dtype=np.int64) for k, v in seg.pop('path').items()}
         route['fights'] = _fights(route['t'], route.pop('boss'))
+        fc = seg.pop('fc', None)
+        if fc is not None:                       # MG_FIGHT_CODES: fights the flag missed
+            flag, extra, codes = list(route['fights']), [], set()
+            for code, hts in fc['hits'].items():
+                if len(hts) < FIGHT_CODE_HITS:
+                    continue
+                for a, b in fc['iv'][code]:
+                    if any(a <= h <= b for h in hts) and not any(fa <= b and a < fb for fa, fb in flag):
+                        extra.append((a, min(T, b + 1)))
+                        codes.add(code)
+            route['fights'] = sorted(flag + extra)
+            seg['fight_codes'] = codes
+            for ck in seg['ckpts']:
+                if any(a <= ck['t'] < b for a, b in extra):
+                    ck['boss'] = True
         route['T'] = T
         seg.update(route=route, T=T, time=act['time'],
                    key=f"{seg['demo']}:{act['name']}")
@@ -1422,8 +1469,7 @@ class SonicCoordinator(gym.Env):
             r -= DEATH_PENALTY
         elif event is None:
             in_fight = self._route.fight is not None
-            gain = self._route.update(info['zone'], info['act'], x, int(info['y']),
-                                      int(info['mg_boss']) != 0)
+            gain = self._route.update(info['zone'], info['act'], x, int(info['y']), self._boss_on(info))
             if in_fight and self._route.fight is None and self._hit_paid:
                 r -= self._hit_paid                 # the fight's lump arrived (in gain): take the hits back
                 self._hit_paid = 0.0
@@ -1585,6 +1631,15 @@ class SonicCoordinator(gym.Env):
         tmp = os.path.join(d, name + '.tmp.npz')
         np.savez(tmp, actions=np.asarray(self._book_frames, dtype=np.uint8), meta=np.array(json.dumps(meta)))
         os.replace(tmp, os.path.join(d, name + '.npz'))
+
+    def _boss_on(self, info):
+        """In a boss fight: Boss_flag, or (MG_FIGHT_CODES) one of this act's fight objects present."""
+        if int(info['mg_boss']) != 0:
+            return True
+        codes = self._seg.get('fight_codes')
+        if not codes or self._bt is None or self._bt.prev is None:
+            return False
+        return not codes.isdisjoint(table_codes(self._bt.prev))
 
     def _slack(self):
         """The match bar's slack: MG_FIGHT_SLACK for a start inside his boss fight, else MATCH_SLACK."""
