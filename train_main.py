@@ -158,7 +158,11 @@ RUNS = {
         # 7%. A quarter of resets now start inside a fight an act is stuck in (fight start ..
         # pointer band), and AIZ1 is drawn at 0.3 the rate of the others for the rest (~6% of
         # the frames; the imitation pull keeps his AIZ1 frames too); check_boss_share.py
-        boss_share=0.25, act_weights={'play_20260930-153946:AIZ1': 0.3},
+        # AIZ1 weight 0.3 -> 1.0 from its resume at ~64.2M steps (2026-10-15 ~22:40; Tyler: "Make the change"):
+        # at 0.3, once the boss/ring/front shares and the time balance went in, AIZ1 got ~4% of the steps and
+        # ~20-60 main episodes an hour (was ~1,000), and forgot: clears 60-74% (overnight) -> 14-20% from ~15:00,
+        # stuck at his climb (x ~10,500-11,600) and the burnt part's wall
+        boss_share=0.25, act_weights={'play_20260930-153946:AIZ1': 1.0},
         # from the same day's next resume (Tyler: "i think the goal is to encourage sonic to grab all
         # 14 giant rings. speed can come afterwards"; "let's try it out"): 15% of resets start where
         # his route passes nearest a giant ring (14 within 400 px in these acts), each emerald pays
