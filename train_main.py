@@ -184,6 +184,9 @@ RUNS = {
         # him within 2.5x (MG_FIGHT_SLACK), as proposed 13:20 and declined then; and imitation 'front' adds his
         # frames at each act's fresh-start frontier (HCZ2: frames 0-581, his spin dash and roll up the curve)
         fight_slack=1.5,
+        # from its next resume (2026-10-16; Tyler: "Yes that sounds great" to a passive main-game route book):
+        # fresh clears faster than an act's book entry are saved for main_book.py harvest; training unchanged
+        book='routes_main',
         # from its resume at ~56.6M steps (2026-10-15 ~15:30; Tyler, after HCZ2's opening was measured:
         # "Yes, it's probably a good use of time"): its fresh starts all stopped at 3.4% (a curve that must
         # be rolled up; the agent hops in the corridor and lands running), then at a sliding wall, and the
@@ -326,6 +329,9 @@ def configure_env(run):
     os.environ['MG_FRONT_SHARE'] = str(cfg.get('front_share', 0))
     # a looser match bar for starts inside his boss fights (coordinator, "Fight bar")
     os.environ['MG_FIGHT_SLACK'] = str(cfg.get('fight_slack', 0))
+    # the passive main-game route book: fresh clears faster than an act's best are kept for main_book.py
+    # (coordinator, "Main-game route book")
+    os.environ['MG_BOOK'] = os.path.join(HOME, cfg['book']) if cfg.get('book') else ''
     # ring-share starts along Tyler's detour clips into giant rings (coordinator, "Ring clips"): the clips
     # in RUNS 'ring_clips' (a directory) that went into their ring, so a resume picks up new ones
     os.environ['MG_RING_CLIPS'] = ','.join(ring_clip_files(cfg.get('ring_clips')))

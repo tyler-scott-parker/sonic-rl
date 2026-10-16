@@ -281,6 +281,14 @@ RING_SHARE_PX  = 400       # 14 of the 19 giant rings in mg2's acts are within ~
 # CLIP_BEFORE frames before. Each point's route progress is what the env's own tracker measured replaying
 # the clip to there, so a late point is not paid for ground covered before it.
 MG_RING_CLIPS = [p for p in os.environ.get('MG_RING_CLIPS', '').split(',') if p.strip()]
+# Main-game route book, passive (2026-10-16; Tyler: "Would a route book be useful for the main game?" ...
+# "Yes that sounds great"): MG_BOOK = a directory (RUNS 'book'). A fresh start (an act's first start point,
+# drawn as such: no share, no clip) records the button set it played each frame; if it clears faster than the
+# act's best in MG_BOOK/index.json (his own time until something beats it) the frames go to
+# MG_BOOK/candidates/ for main_book.py to verify by replay and promote. Training is unchanged. Episodes that
+# played a special stage aren't recorded (the pilot plays those with its own inputs).
+MG_BOOK = os.environ.get('MG_BOOK', '')
+BOOK_READ_S = 60                                # the index is re-read this often (seconds)
 CLIP_EVERY, CLIP_SPAN, CLIP_BEFORE = 30, 1800, 15
 # Time balance (mg2, 2026-10-15; Tyler: "yes, balance it by time"): the draws above spread episodes,
 # but episodes differ ~3x in length (HCZ2/MGZ2 fights ~60 s, AIZ2's ~20 s), so HCZ2 + MGZ2 took 58% of
@@ -948,6 +956,8 @@ class SonicCoordinator(gym.Env):
         self._clips = {}               # MG_RING_CLIPS: ring key -> [clip] (_build_clips)
         self._clip_pick = None         # ... (clip, point index) the next reset starts from
         self._clip = None              # ... this episode's, for the log
+        self._book_frames = None       # MG_BOOK: this fresh start's per-frame actions (None: not recorded)
+        self._book_best, self._book_read = {}, 0.0   # MG_BOOK: act key -> best frames; when read
         self._log_warned = False
         self._last_raw = None
         self._stack = collections.deque(maxlen=STACK)
@@ -1277,6 +1287,8 @@ class SonicCoordinator(gym.Env):
         seg, k, boss, ring, front = self._pick(opts)
         ck = seg['ckpts'][k]
         self._clip = None
+        self._book_frames = ([] if MG_BOOK and k == 0 and 'key' not in opts and 'ckpt' not in opts
+                             and not (boss or ring or front) and self._clip_pick is None else None)
         if self._clip_pick is not None:                # MG_RING_CLIPS: start at that point of the clip
             clip, j = self._clip_pick
             ck = clip['pts'][j]
@@ -1370,6 +1382,11 @@ class SonicCoordinator(gym.Env):
             self._last_raw = raws[-1]
         self.frames += n
         self._nsteps += 1
+        if self._book_frames is not None:
+            if stage is not None:
+                self._book_frames = None            # MG_BOOK: a special stage played; not a book route (v1)
+            else:
+                self._book_frames.extend([int(action)] * n)
         x = int(info['x'])
         self._xmax = x if self._xmax is None else max(self._xmax, x)
 
@@ -1397,6 +1414,8 @@ class SonicCoordinator(gym.Env):
                 self._em_owed += MG_EMERALD_BONUS * stage['emeralds']
                 self._stages[-1]['bonus'] = MG_EMERALD_BONUS * stage['emeralds']
         if event == 'clear':
+            if self._book_frames is not None:
+                self._book_candidate()
             r += self._route.finish() + CLEAR_BONUS
             r += self._pay_emeralds()               # MG_EMERALD_PAY=return: a clear is back for sure
         elif event == 'death':
@@ -1543,6 +1562,29 @@ class SonicCoordinator(gym.Env):
         self._stages.append(dict(rec))
         rec['info'] = info
         return rec
+
+    def _book_candidate(self):
+        """MG_BOOK: this fresh start just cleared; keep its frames if it beat the act's best."""
+        key, n = self._seg['key'], len(self._book_frames)
+        if time.time() - self._book_read >= BOOK_READ_S:
+            try:
+                with open(os.path.join(MG_BOOK, 'index.json')) as f:
+                    self._book_best = {k: v['frames'] for k, v in json.load(f).get('acts', {}).items()}
+            except (OSError, ValueError):
+                pass
+            self._book_read = time.time()
+        if n >= self._book_best.get(key, self._seg['T']):
+            return
+        self._book_best[key] = n                    # this worker won't save a slower one meanwhile
+        d = os.path.join(MG_BOOK, 'candidates')
+        os.makedirs(d, exist_ok=True)
+        name = f"{self._seg['name']}_{n}_{os.getpid()}_{int(time.time())}"
+        meta = dict(key=key, act=self._seg['name'], demo=self._seg['demo'], start_point=0,
+                    start_frame=int(self._ck['frame']), frames=n, his_frames=int(self._seg['T']),
+                    action_table=ACTION_BUTTONS, saved=time.strftime('%Y-%m-%d %H:%M:%S'))
+        tmp = os.path.join(d, name + '.tmp.npz')
+        np.savez(tmp, actions=np.asarray(self._book_frames, dtype=np.uint8), meta=np.array(json.dumps(meta)))
+        os.replace(tmp, os.path.join(d, name + '.npz'))
 
     def _slack(self):
         """The match bar's slack: MG_FIGHT_SLACK for a start inside his boss fight, else MATCH_SLACK."""

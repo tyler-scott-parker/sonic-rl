@@ -40,3 +40,4 @@ routes/curriculum/
 
 # ── Imitation datasets (GBs; rebuilt by build_bc_dataset.py) ─────────────────
 datasets/
+routes_main/candidates/
