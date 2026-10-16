@@ -675,9 +675,14 @@ class SpecialStageEnv(gym.Env):
         emulator state before every DEMO_CKPT_EVERY-th frame (compressed, ~60 KB)
         and the bookkeeping after it. Lazy, at the first reset of each worker;
         nothing is written to disk. A replay that doesn't reproduce the recorded
-        run raises: a silently different demo would teach wrong targets."""
+        run raises: a silently different demo would teach wrong targets.
+        A demo the trainer's start-up (prebuild_demos) already replayed from
+        these same inputs comes from start_cache instead, with the stage layout
+        its replay recorded in _original_grids."""
         import demos as demo_io
+        import start_cache
         self._demos = []
+        self._demo_grids = {}         # demo id -> its stage's layout at the replay's fresh start
         self._replaying = True
         try:
             kept = getattr(self, '_demos_kept', None) or {}
@@ -685,6 +690,14 @@ class SpecialStageEnv(gym.Env):
             for path in self._demo_files:
                 if demo_io.demo_id(path) in kept:
                     self._demos.append(kept[demo_io.demo_id(path)])
+                    continue
+                got = start_cache.load('ss', demo_cache_key(path))
+                if got is not None:
+                    demo, grid = got
+                    if grid is not None:
+                        self._original_grids.setdefault(demo['stage'], grid)
+                    self._demo_grids[demo['id']] = grid
+                    self._demos.append(demo)
                     continue
                 actions, meta = demo_io.load_demo(path)
                 demo_io.check_compatible(path, meta, sys.modules[__name__])
@@ -728,6 +741,8 @@ class SpecialStageEnv(gym.Env):
                     total=float(meta['stage_total']), final=final, frames=n,
                     ckpts=ckpts, actions=np.asarray(actions, dtype=np.uint8),
                     source=meta.get('source') or f"Tyler ({demo_io.demo_id(path)})"))
+                g = self._original_grids.get(meta['stage'])
+                self._demo_grids[demo_io.demo_id(path)] = None if g is None else g.copy()
         finally:
             self._replaying = False
 
@@ -1465,3 +1480,37 @@ class SpecialStageEnv(gym.Env):
 
     def close(self):
         self.base_env.close()
+
+
+def demo_cache_key(path):
+    """start_cache key of one demo's start points (_build_demos): the demo's bytes, the stage
+    files, this module and demos.py, every SS_ setting but the demo list, the integration and the
+    versions."""
+    import start_cache
+    return start_cache.key('ss', ['special_stage_env.py', 'demos.py'], [path] + list(STAGE_FILES),
+                           'SS_', exclude=('SS_DEMOS',))
+
+
+def demo_cached(path):
+    import start_cache
+    return start_cache.exists('ss', demo_cache_key(path))
+
+
+def prebuild_demos(paths):
+    """Trainer start-up, in the main process before the workers start and after demos.replay_check
+    passed these demos: replay them here once and save each one's start points (and its stage's
+    layout) to start_cache, so the workers only load them. Returns the seconds it took."""
+    import demos as demo_io
+    import start_cache
+    t = time.time()
+    env = SpecialStageEnv()
+    try:
+        env._log_episode = lambda *a, **k: None
+        env._demo_files = list(paths)
+        env._build_demos()
+        for path, demo in zip(paths, env._demos):
+            assert demo['id'] == demo_io.demo_id(path)
+            start_cache.save('ss', demo_cache_key(path), (demo, env._demo_grids.get(demo['id'])))
+    finally:
+        env.close()
+    return time.time() - t

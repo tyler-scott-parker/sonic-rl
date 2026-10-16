@@ -798,14 +798,21 @@ if __name__ == '__main__':
                  + '\n  '.join(missing) + '\n')
 
     # Each demo must still replay into the run it recorded (same stage state,
-    # same action table); the workers would fail on it less legibly.
+    # same action table); the workers would fail on it less legibly. A demo in
+    # start_cache passed this before from these same inputs; the others are
+    # checked, then replayed once here for the workers to load (2026-10-16:
+    # every worker used to replay all of them, ~4 min start-up).
     if DEMOS:
         import demos as demo_io
-        for d in DEMOS:
+        todo = [d for d in DEMOS if not special_stage_env.demo_cached(d)]
+        for d in todo:
             ok, note = demo_io.replay_check(d)
             print(f'  demo check   : {os.path.basename(d)}: {note}')
             if not ok:
                 sys.exit(f'\nREFUSING TO LAUNCH: {d} no longer replays.\n')
+        took = special_stage_env.prebuild_demos(todo) if todo else 0
+        print(f'  start points : {len(DEMOS) - len(todo)} of {len(DEMOS)} demos from start_cache'
+              + (f', {len(todo)} replayed here in {took:.0f} s and cached' if todo else ''), flush=True)
 
     tb_dir = os.path.join(HOME, 'logs_ss')
     os.makedirs(tb_dir, exist_ok=True)

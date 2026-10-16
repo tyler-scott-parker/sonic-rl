@@ -41,3 +41,6 @@ routes/curriculum/
 # ── Imitation datasets (GBs; rebuilt by build_bc_dataset.py) ─────────────────
 datasets/
 routes_main/candidates/
+
+# start points built from recordings (start_cache.py): rebuilt on demand, never in git
+start_cache/

@@ -705,7 +705,6 @@ def main():
     from stable_baselines3 import PPO
     from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
     import coordinator
-    import demos as demo_io
 
     def make_env():
         return coordinator.SonicCoordinator()
@@ -735,12 +734,15 @@ def main():
     if args.resume and not resuming:
         sys.exit(f"\n--resume passed but no {P['zip']}.zip exists.\n")
 
-    # every recording must still replay into the run it recorded
-    for d in DEMOS:
-        ok, note = demo_io.replay_play_check(d)
-        print(f'  demo check   : {os.path.basename(d)}: {note}', flush=True)
-        if not ok:
-            sys.exit(f'\nREFUSING TO LAUNCH: {d} no longer replays.\n')
+    # every recording must still replay into the run it recorded: the start points are built here
+    # once (or taken from start_cache, built from these same inputs before), refusing if an act lands
+    # on other frames than recorded; the workers then load them instead of replaying (2026-10-16:
+    # this was a whole-recording check here plus a rebuild in every worker, ~6 min)
+    try:
+        note = coordinator.prebuild()
+    except ValueError as e:
+        sys.exit(f'\nREFUSING TO LAUNCH: the recordings no longer replay: {e}\n')
+    print(f'  start points : {note}', flush=True)
 
     os.makedirs(P['ckpt_dir'], exist_ok=True)
     tb_dir = os.path.join(HOME, 'logs_main')

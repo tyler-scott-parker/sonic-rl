@@ -997,8 +997,15 @@ class SonicCoordinator(gym.Env):
         point every CKPT_EVERY demo frames (compressed emulator state + the
         observation stack there). A replay that doesn't reproduce the
         recording raises: a silently different demo would teach wrong targets.
-        Lazy (first reset of each worker); nothing is written to disk."""
+        Lazy (first reset of each worker). Taken from start_cache when the
+        trainer's start-up (prebuild) already built it from these same inputs;
+        only prebuild writes there."""
         import demos as demo_io
+        import start_cache
+        got = start_cache.load('mg', self._cache_key())
+        if got is not None:
+            self._segs, self._clips = got
+            return
         self._segs = []
         for path in self.demo_files:
             actions, meta = demo_io.load_play(path)
@@ -1152,6 +1159,14 @@ class SonicCoordinator(gym.Env):
         seg.update(route=route, T=T, time=act['time'],
                    key=f"{seg['demo']}:{act['name']}")
         self._segs.append(seg)
+
+    def _cache_key(self):
+        """start_cache key of _build's output: the recordings and ring clips it replays, this module
+        and demos.py, every MG_ setting but the log path, the acts, the integration, the versions."""
+        import start_cache
+        return start_cache.key('mg', ['coordinator.py', 'demos.py'],
+                               list(self.demo_files) + list(MG_RING_CLIPS), 'MG_', exclude=('MG_LOG',),
+                               extra=[self.demo_files, self.acts])
 
     def demo_info(self):
         """For the trainer's curriculum: per act of each demo, its key, act
@@ -1746,3 +1761,34 @@ class SonicCoordinator(gym.Env):
 
     def close(self):
         self.base_env.close()
+
+
+def prebuild():
+    """Trainer start-up, in the main process before the workers start: this process's start points
+    (its MG_ settings) from start_cache, or built here once and saved there, so the workers only
+    load them. The build replays each recording to its last act used and raises if an act starts or
+    clears on another frame than recorded; prebuild also refuses if an act to train on never came
+    up. So it is the start-up check, and a cache file exists only for inputs that passed it.
+    Returns a note for the log."""
+    import demos as demo_io
+    import start_cache
+    env = SonicCoordinator()
+    try:
+        k = env._cache_key()
+        if start_cache.exists('mg', k):
+            return f'from start_cache ({k[:10]}): built and checked before from these same inputs'
+        t = time.time()
+        env._build()
+        want = set()
+        for path in env.demo_files:
+            did, meta = demo_io.demo_id(path), demo_io.load_play(path)[1]
+            want |= {f"{did}:{a['name']}" for a in meta['acts'] if a['clear'] is not None
+                     and (not env.acts or a['name'] in env.acts or f"{did}:{a['name']}" in env.acts)}
+        missing = sorted(want - {s['key'] for s in env._segs})
+        if missing:
+            raise ValueError(f'the replay never reached {missing}, as recorded')
+        start_cache.save('mg', k, (env._segs, env._clips))
+        return (f"built in {time.time() - t:.0f} s and cached ({k[:10]}): "
+                f"{sum(len(s['ckpts']) for s in env._segs)} start points, every act replays as recorded")
+    finally:
+        env.close()
