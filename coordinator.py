@@ -294,8 +294,10 @@ MG_RING_CLIPS = [p for p in os.environ.get('MG_RING_CLIPS', '').split(',') if p.
 # "Yes that sounds great"): MG_BOOK = a directory (RUNS 'book'). A fresh start (an act's first start point,
 # drawn as such: no share, no clip) records the button set it played each frame; if it clears faster than the
 # act's best in MG_BOOK/index.json (his own time until something beats it) the frames go to
-# MG_BOOK/candidates/ for main_book.py to verify by replay and promote. Training is unchanged. Episodes that
-# played a special stage aren't recorded (the pilot plays those with its own inputs).
+# MG_BOOK/candidates/ for main_book.py to verify by replay and promote. Training is unchanged. A fresh start
+# that took a giant ring and won an emerald is kept as a RING route instead: its per-step actions (the pilot
+# plays the stage itself, deterministically from the special-stage route book, so a replay of the steps
+# through the env reproduces it), filed by the rings it entered, if faster (real frames) than the book's.
 MG_BOOK = os.environ.get('MG_BOOK', '')
 BOOK_READ_S = 60                                # the index is re-read this often (seconds)
 CLIP_EVERY, CLIP_SPAN, CLIP_BEFORE = 30, 1800, 15
@@ -979,6 +981,9 @@ class SonicCoordinator(gym.Env):
         self._clip_pick = None         # ... (clip, point index) the next reset starts from
         self._clip = None              # ... this episode's, for the log
         self._book_frames = None       # MG_BOOK: this fresh start's per-frame actions (None: not recorded)
+        self._book_steps = None        # MG_BOOK: its per-step actions (ring routes: the pilot plays stages)
+        self._book_any_start = False   # tests only: record from any start
+        self._book_rings = {}          # MG_BOOK: ring key -> best real frames (index 'rings')
         self._book_best, self._book_read = {}, 0.0   # MG_BOOK: act key -> best frames; when read
         self._log_warned = False
         self._last_raw = None
@@ -1334,8 +1339,10 @@ class SonicCoordinator(gym.Env):
         seg, k, boss, ring, front = self._pick(opts)
         ck = seg['ckpts'][k]
         self._clip = None
-        self._book_frames = ([] if MG_BOOK and k == 0 and 'key' not in opts and 'ckpt' not in opts
-                             and not (boss or ring or front) and self._clip_pick is None else None)
+        self._book_frames = ([] if MG_BOOK and (self._book_any_start or (
+                                 k == 0 and 'key' not in opts and 'ckpt' not in opts
+                                 and not (boss or ring or front) and self._clip_pick is None)) else None)
+        self._book_steps = [] if self._book_frames is not None else None
         if self._clip_pick is not None:                # MG_RING_CLIPS: start at that point of the clip
             clip, j = self._clip_pick
             ck = clip['pts'][j]
@@ -1429,9 +1436,11 @@ class SonicCoordinator(gym.Env):
             self._last_raw = raws[-1]
         self.frames += n
         self._nsteps += 1
+        if self._book_steps is not None:
+            self._book_steps.append(int(action))
         if self._book_frames is not None:
             if stage is not None:
-                self._book_frames = None            # MG_BOOK: a special stage played; not a book route (v1)
+                self._book_frames = None            # MG_BOOK: a special stage: a ring route (steps), not frames
             else:
                 self._book_frames.extend([int(action)] * n)
         x = int(info['x'])
@@ -1463,6 +1472,8 @@ class SonicCoordinator(gym.Env):
         if event == 'clear':
             if self._book_frames is not None:
                 self._book_candidate()
+            elif self._book_steps is not None and any(st.get('emeralds', 0) > 0 for st in self._stages):
+                self._book_ring_candidate()
             r += self._route.finish() + CLEAR_BONUS
             r += self._pay_emeralds()               # MG_EMERALD_PAY=return: a clear is back for sure
         elif event == 'death':
@@ -1613,12 +1624,7 @@ class SonicCoordinator(gym.Env):
         """MG_BOOK: this fresh start just cleared; keep its frames if it beat the act's best."""
         key, n = self._seg['key'], len(self._book_frames)
         if time.time() - self._book_read >= BOOK_READ_S:
-            try:
-                with open(os.path.join(MG_BOOK, 'index.json')) as f:
-                    self._book_best = {k: v['frames'] for k, v in json.load(f).get('acts', {}).items()}
-            except (OSError, ValueError):
-                pass
-            self._book_read = time.time()
+            self._read_book()
         if n >= self._book_best.get(key, self._seg['T']):
             return
         self._book_best[key] = n                    # this worker won't save a slower one meanwhile
@@ -1640,6 +1646,40 @@ class SonicCoordinator(gym.Env):
         if not codes or self._bt is None or self._bt.prev is None:
             return False
         return not codes.isdisjoint(table_codes(self._bt.prev))
+
+    def _read_book(self):
+        try:
+            with open(os.path.join(MG_BOOK, 'index.json')) as f:
+                ix = json.load(f)
+            self._book_best = {k: v['frames'] for k, v in ix.get('acts', {}).items()}
+            self._book_rings = {k: v['frames'] for k, v in ix.get('rings', {}).items()}
+        except (OSError, ValueError):
+            pass
+        self._book_read = time.time()
+
+    def _book_ring_candidate(self):
+        """MG_BOOK: this fresh start took a giant ring, won an emerald and cleared; keep its steps if it beat
+        the book's route through those rings (real frames, stages included)."""
+        rings = sorted(list(map(int, r)) for r in self._used_rings)
+        rkey = ';'.join(','.join(map(str, r)) for r in rings)
+        if time.time() - self._book_read >= BOOK_READ_S:
+            self._read_book()
+        if not rings or self.frames >= self._book_rings.get(rkey, float('inf')):
+            return
+        self._book_rings[rkey] = self.frames
+        d = os.path.join(MG_BOOK, 'candidates')
+        os.makedirs(d, exist_ok=True)
+        name = f"ring_{self._seg['name']}_{self.frames}_{os.getpid()}_{int(time.time())}"
+        stage_frames = sum(st.get('cost', 0) for st in self._stages)
+        meta = dict(kind='ring', key=self._seg['key'], act=self._seg['name'], demo=self._seg['demo'],
+                    start_point=int(self._k), start_frame=int(self._ck['frame']), frames=int(self.frames),
+                    act_frames=int(self.frames - stage_frames), his_frames=int(self._seg['T']), rings=rings,
+                    ring_key=rkey, emeralds=int(sum(st.get('emeralds', 0) for st in self._stages)),
+                    stages=[{k: st.get(k) for k in ('board', 'outcome', 'emeralds', 'route')} for st in self._stages],
+                    steps=len(self._book_steps), saved=time.strftime('%Y-%m-%d %H:%M:%S'))
+        tmp = os.path.join(d, name + '.tmp.npz')
+        np.savez(tmp, steps=np.asarray(self._book_steps, dtype=np.uint8), meta=np.array(json.dumps(meta)))
+        os.replace(tmp, os.path.join(d, name + '.npz'))
 
     def _slack(self):
         """The match bar's slack: MG_FIGHT_SLACK for a start inside his boss fight, else MATCH_SLACK."""

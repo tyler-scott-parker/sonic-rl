@@ -14,6 +14,12 @@ recording is the route); the training env (MG_BOOK, RUNS 'book') saves fresh cle
 to BOOK/candidates/, and `harvest` replays each from the same state: one that clears on exactly its last
 frame and beats the entry becomes BOOK/<act>.npz; the rest go to candidates/rejected/ with the reason.
 
+Ring routes: a fresh start that entered a giant ring, won an emerald and cleared is saved as per-step agent
+actions (the special-stage pilot plays the stage itself, deterministically, from the special-stage route book);
+`harvest` replays the steps through the training env from the same start: it must clear on the last step,
+in the same frames, through the same rings, with the same emeralds. The fastest (real frames, stage
+included) per set of rings goes in the index's 'rings'.
+
 Bridges are the stretches between one act's clear and the next act's start in his full-game recording
 (results screens, capsule hunts, cutscenes, the walk into act 2): kept as his frames for now. A full-game run
 chained from the book needs them remade from the book's own act endings where his inputs drift; that is
@@ -39,7 +45,7 @@ def load_index():
     try:
         return json.load(open(INDEX))
     except (OSError, ValueError):
-        return dict(acts={}, bridges=[])
+        return dict(acts={}, bridges=[], rings={})
 
 
 def save_index(ix):
@@ -106,6 +112,55 @@ def verify(C, env, seg, actions):
     return False, 'never cleared', len(actions)
 
 
+def verify_steps(C, env, seg, meta, steps):
+    """Replay a ring route's per-step actions through the env from its start point: (ok, why)."""
+    env.reset(options={'key': seg['key'], 'ckpt': meta['start_point']})
+    info, term, trunc, j = {}, False, False, -1
+    for j, a in enumerate(steps):
+        _, _, term, trunc, info = env.step(int(a))
+        if term or trunc:
+            break
+    res = info.get('mg_result') or {}
+    rings = sorted(list(map(int, r)) for r in env._used_rings)
+    em = sum(st.get('emeralds', 0) for st in env._stages)
+    if res.get('outcome') != 'clear':
+        return False, f"{res.get('outcome') or 'no end'} at step {j + 1} of {len(steps)}"
+    if j != len(steps) - 1:
+        return False, f'cleared at step {j + 1}, {len(steps) - 1 - j} early'
+    if env.frames != meta['frames'] or rings != meta['rings'] or em != meta['emeralds']:
+        return False, (f"cleared, but {env.frames} frames / rings {rings} / {em} emeralds vs recorded "
+                       f"{meta['frames']} / {meta['rings']} / {meta['emeralds']}")
+    return True, f'clears on its last step through rings {rings}, {em} emerald(s), {env.frames} frames'
+
+
+def harvest_ring(C, env, segs, ix, p, steps, meta):
+    seg = segs.get(meta['key'])
+    if seg is None:
+        ok, why = False, f"act {meta['key']} not in {RUN}"
+    else:
+        ok, why = verify_steps(C, env, seg, meta, steps)
+    ix.setdefault('rings', {})
+    best = ix['rings'].get(meta['ring_key'], {}).get('frames', float('inf'))
+    if ok and meta['start_point'] == 0 and meta['frames'] < best:
+        dest = os.path.join(BOOK, f"ring_{meta['act']}_{meta['ring_key'].replace(';', '_').replace(',', '-')}_{meta['frames']}.npz")
+        shutil.copy2(p, dest)
+        ix['rings'][meta['ring_key']] = dict(act=meta['act'], key=meta['key'], demo=meta['demo'], rings=meta['rings'],
+                                             frames=meta['frames'], act_frames=meta['act_frames'],
+                                             emeralds=meta['emeralds'], file=os.path.basename(dest),
+                                             source=os.path.basename(p), added=time.strftime('%Y-%m-%d %H:%M:%S'))
+        save_index(ix)
+        print(f"PROMOTED ring route {meta['act']} {meta['ring_key']}: {meta['frames']} frames "
+              f"(act time {meta['act_frames']}, his act {meta['his_frames']}): {why}")
+        return 'verified'
+    if ok:
+        print(f"kept out {os.path.basename(p)}: {why}, but "
+              + ('not from the act start (start point %d)' % meta['start_point'] if meta['start_point'] != 0
+                 else f'not faster than the book ({best})'))
+        return 'verified'
+    print(f'REJECTED {os.path.basename(p)}: {why}')
+    return 'rejected'
+
+
 def harvest():
     cands = sorted(glob.glob(os.path.join(BOOK, 'candidates', '*.npz')))
     if not cands:
@@ -117,7 +172,14 @@ def harvest():
     segs = {s['key']: s for s in env._segs}
     for p in cands:
         with np.load(p) as d:
-            actions, meta = d['actions'], json.loads(str(d['meta']))
+            meta = json.loads(str(d['meta']))
+            actions = d['actions'] if 'actions' in d.files else None
+            steps = d['steps'] if 'steps' in d.files else None
+        if meta.get('kind') == 'ring':
+            where = harvest_ring(C, env, segs, ix, p, steps, meta)
+            os.makedirs(os.path.join(BOOK, 'candidates', where), exist_ok=True)
+            shutil.move(p, os.path.join(BOOK, 'candidates', where, os.path.basename(p)))
+            continue
         seg = segs.get(meta['key'])
         why, ok = None, False
         if seg is None:
@@ -158,6 +220,9 @@ def status():
     for k, v in ix['acts'].items():
         his = v.get('his', v['frames'])
         print(f"{v['act']:6s} {v['frames']:6d} {his:6d} {his - v['frames']:+6d}  {v['source']}")
+    for k, v in ix.get('rings', {}).items():
+        print(f"ring route {v['act']} through {k}: {v['frames']} frames (act time {v['act_frames']}), "
+              f"{v['emeralds']} emerald(s)  {v['source']}")
     n = len(glob.glob(os.path.join(BOOK, 'candidates', '*.npz')))
     print(f"bridges: {len(ix['bridges'])} (his frames); candidates waiting: {n}")
 
