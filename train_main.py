@@ -145,6 +145,12 @@ RUNS = {
         # frames on, where the agent's jump presses drop Sonic off Tails) got ~1.5% of each batch;
         # check_imitation_fights.py
         imitation=dict(data='datasets/bc_v4', floor=0.3, front=True, fights=True),   # front: from ~60.3M (see fight_slack)
+        # from its restart at ~86.6M (2026-10-17 ~10:05; Tyler: "yes, build it" to both, switched on after the MGZ2
+        # 'fights' read): fight_lead: a pointer up to 600 frames (10 s) before one of his fights counts as in it for
+        # the boss share, the fight bar and imitation 'fights' (HCZ2 sat at 224, 1 s before its fight, outside all
+        # three; check_fight_lead.py); front_ahead: the front share's window and the imitation front window run 1,500
+        # frames past each act's fresh-start frontier (HCZ2's 24-s wall chase past its curve; check_front_ahead.py)
+        fight_lead=600, front_ahead=1500,
         # from its resume at 6,241,416 steps (2026-10-14 ~20:55; Tyler: "let's add 2 and 3 as well",
         # after the boss hit counter was found): the boss bar drawn in (bc_v4 = bar + compass + boss
         # bar; its imitation fade carried over from bc_v3's, so the pull stays at the floor), each
