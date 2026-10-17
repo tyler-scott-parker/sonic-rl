@@ -1170,11 +1170,13 @@ class SonicCoordinator(gym.Env):
 
     def demo_info(self):
         """For the trainer's curriculum: per act of each demo, its key, act
-        time, and where each start point sits in it (fraction of demo time)."""
+        time, and where each start point sits in it (fraction of demo time);
+        also his boss fights in demo time (the imitation pull's 'fights')."""
         if self._segs is None:
             self._build()
         return [dict(key=s['key'], demo=s['demo'], name=s['name'], T=s['T'],
-                     time=s['time'], fracs=[c['t'] / s['T'] for c in s['ckpts']])
+                     time=s['time'], fracs=[c['t'] / s['T'] for c in s['ckpts']],
+                     fights=[tuple(f) for f in s['route']['fights']])
                 for s in self._segs]
 
     def set_demo_pointers(self, pointers):

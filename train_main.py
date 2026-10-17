@@ -139,7 +139,12 @@ RUNS = {
         ring_compass=True,
         # floor 0.3 from ~19:30 (the pull reaching 0 at 3M steps collapsed every act: rolled
         # back to the 2,261,000-step checkpoint, logs/archive_mg2_collapse/)
-        imitation=dict(data='datasets/bc_v4', floor=0.3, front=True),   # front: from ~60.3M (see fight_slack)
+        # fights: from its restart at ~84M (2026-10-17; Tyler: "yes, go ahead" after the MGZ2 dig): while an act's
+        # pointer sits inside one of his fights, the focused half covers the whole fight, not just -120..+600
+        # frames: MGZ2's pointer (270) was at the fight's ground phase and its Tails-carry phase (from ~640
+        # frames on, where the agent's jump presses drop Sonic off Tails) got ~1.5% of each batch;
+        # check_imitation_fights.py
+        imitation=dict(data='datasets/bc_v4', floor=0.3, front=True, fights=True),   # front: from ~60.3M (see fight_slack)
         # from its resume at 6,241,416 steps (2026-10-14 ~20:55; Tyler: "let's add 2 and 3 as well",
         # after the boss hit counter was found): the boss bar drawn in (bc_v4 = bar + compass + boss
         # bar; its imitation fade carried over from bc_v3's, so the pull stays at the floor), each
@@ -429,6 +434,7 @@ class ImitationCallback(BaseCallback):
         self.cfg, self.run, self.curriculum_path = dict(cfg), run, curriculum_path
         self.start = None
         self._front, self._front_at = None, 0.0     # cfg 'front': act key -> fresh-start frontier; when read
+        self._fights = {}                           # cfg 'fights': act key -> his fights [(start, end)], demo time
 
     def load_data(self):
         """His frames and samples for the run's acts (no model needed: check_imitation_front.py)."""
@@ -484,10 +490,14 @@ class ImitationCallback(BaseCallback):
             if bool(meta.get(flag)) != (os.environ.get(env) == '1'):
                 raise ValueError(f"imitation data {c['data']} {flag}={meta.get(flag)} but the run's "
                                  f"{env}={os.environ.get(env)}: the frames would differ")
+        if c.get('fights'):
+            infos = self.training_env.env_method('demo_info', indices=[0])[0]
+            self._fights = {d['key']: d['fights'] for d in infos}
         print(f"[imitation] {len(self.all):,} of his frames in {len(self.keys)} acts ({c['data']}); "
               f"weight {c['weight']} -> {c.get('floor', 0.0)} over {c['decay_steps']:,} steps from {self.start:,}; "
               f"{c['steps']} steps of {c['batch']} per update"
-              + ("; the focused half also at each act's fresh-start frontier" if c.get('front') else ''), flush=True)
+              + ("; the focused half also at each act's fresh-start frontier" if c.get('front') else '')
+              + ("; the whole fight while an act's pointer is in one of his" if c.get('fights') else ''), flush=True)
 
     def weight(self):
         """Falls linearly to `floor` (default 0) over decay_steps. mg2 (2026-10-12) showed why a
@@ -497,7 +507,7 @@ class ImitationCallback(BaseCallback):
         return max(self.cfg.get('floor', 0.0), self.cfg['weight'] * max(0.0, 1.0 - done))
 
     def frontier(self):
-        """Sample indices near each act's current start point."""
+        """Sample indices near each act's current start point (cfg 'fights': the whole fight when it's in one)."""
         try:
             with open(self.curriculum_path) as f:
                 cur = json.load(f)
@@ -510,8 +520,11 @@ class ImitationCallback(BaseCallback):
             T = int(self.S['T'][idx[0]])
             t0 = cur[key]['frac'] * T
             t = self.S['t'][idx]
-            near = idx[(t >= t0 - self.cfg['behind']) & (t <= t0 + self.cfg['ahead'])]
-            out.append(near)
+            lo, hi = t0 - self.cfg['behind'], t0 + self.cfg['ahead']
+            for a, b in self._fights.get(key, ()):      # cfg 'fights': the pointer is inside his fight,
+                if a <= t0 < b:                         # so all of it (MGZ2's Tails-carry phase starts
+                    lo, hi = min(lo, a), max(hi, b)     # ~640 frames past the pointer, beyond `ahead`)
+            out.append(idx[(t >= lo) & (t <= hi)])
         if self.cfg.get('front'):
             out += self.front_windows(cur)
         out = np.concatenate(out) if out else np.array([], dtype=int)
