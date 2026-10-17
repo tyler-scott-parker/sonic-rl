@@ -337,6 +337,9 @@ def configure_env(run):
     os.environ['MG_FRONT_SHARE'] = str(cfg.get('front_share', 0))
     # a looser match bar for starts inside his boss fights (coordinator, "Fight bar")
     os.environ['MG_FIGHT_SLACK'] = str(cfg.get('fight_slack', 0))
+    # a pointer / start point this many frames before one of his fights counts as in it for the boss share, the
+    # fight bar and the imitation pull's 'fights' (coordinator, "Fight lead"); 0 = only inside
+    os.environ['MG_FIGHT_LEAD'] = str(cfg.get('fight_lead', 0))
     # fights recognized by the boss's object code too, not only Boss_flag (coordinator, "Fights by object code")
     os.environ['MG_FIGHT_CODES'] = '1' if cfg.get('fight_codes') else '0'
     # the passive main-game route book: fresh clears faster than an act's best are kept for main_book.py
@@ -521,9 +524,9 @@ class ImitationCallback(BaseCallback):
             t0 = cur[key]['frac'] * T
             t = self.S['t'][idx]
             lo, hi = t0 - self.cfg['behind'], t0 + self.cfg['ahead']
-            for a, b in self._fights.get(key, ()):      # cfg 'fights': the pointer is inside his fight,
-                if a <= t0 < b:                         # so all of it (MGZ2's Tails-carry phase starts
-                    lo, hi = min(lo, a), max(hi, b)     # ~640 frames past the pointer, beyond `ahead`)
+            f = self.C.fight_at(self._fights.get(key, ()), t0)   # cfg 'fights': the pointer is in his fight (or
+            if f:                                       # MG_FIGHT_LEAD before it), so all of it (MGZ2's Tails-carry
+                lo, hi = min(lo, f[0]), max(hi, f[1])   # phase starts ~640 frames past the pointer, beyond `ahead`)
             out.append(idx[(t >= lo) & (t <= hi)])
         if self.cfg.get('front'):
             out += self.front_windows(cur)

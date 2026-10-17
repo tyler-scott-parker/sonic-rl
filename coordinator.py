@@ -272,6 +272,13 @@ DEMO_BAND      = 4         # a start is drawn from [pointer, pointer + band]
 # inside one of his fights, at a start point from the fight's first to the pointer's band; an act
 # drops out once its pointer leaves the fight. The other resets draw acts by MG_ACT_WEIGHTS.
 MG_BOSS_SHARE  = float(os.environ.get('MG_BOSS_SHARE', '0'))
+# Fight lead (mg2, 2026-10-17; Tyler: "yes, build it" after the HCZ2 dig): HCZ2's pointer moved to 224, one
+# second before his fight (225-279), and so fell out of all three fight rules at once while it still lost
+# the fight 62% of the time: the 1.25x bar judged a start that is nearly all fight, the boss share dropped
+# the act, and the imitation pull's 'fights' window stopped covering it. With MG_FIGHT_LEAD = n frames, a
+# pointer or start point up to n frames before one of his fights counts as in it for all three (fight_at);
+# 0 = only inside, as before.
+MG_FIGHT_LEAD  = int(os.environ.get('MG_FIGHT_LEAD', '0'))
 MG_ACT_WEIGHTS = {name: float(w) for name, w in (part.rsplit(':', 1) for part in
                   os.environ.get('MG_ACT_WEIGHTS', '').split(';') if part)}
 # Ring share (mg2, 2026-10-15; Tyler: "i think the goal is to encourage sonic to grab all 14 giant
@@ -940,6 +947,16 @@ class RouteProgress:
         return max(0, gained)
 
 
+def fight_at(fights, t, lead=None):
+    """The (start, end) of his fight that demo time t is inside, or that starts within `lead` frames after
+    t (default MG_FIGHT_LEAD); None. The one rule for the boss share, the fight bar and the imitation pull."""
+    lead = MG_FIGHT_LEAD if lead is None else lead
+    for a, b in fights:
+        if a - lead <= t < b:
+            return a, b
+    return None
+
+
 def _fights(t, boss):
     """[(start, end)] in demo time of the demo's boss fights."""
     out = []
@@ -1185,7 +1202,8 @@ class SonicCoordinator(gym.Env):
 
     def boss_ranges(self):
         """MG_BOSS_SHARE: [(seg, lo, hi)] for each act whose start point sits inside one of his
-        boss fights: start points lo (the fight's first) .. hi (the pointer's band)."""
+        boss fights (or MG_FIGHT_LEAD frames before one): start points lo (the fight's first) .. hi
+        (the pointer's band; for a pointer before the fight, the fight's first + the band)."""
         out = []
         for s in self._segs:
             p = self._ptr.get(s['key'])
@@ -1193,12 +1211,10 @@ class SonicCoordinator(gym.Env):
                 continue
             last = len(s['ckpts']) - 1
             p = min(p, last)
-            t = s['ckpts'][p]['t']
-            for a, b in s['route']['fights']:
-                if a <= t < b:
-                    lo = next(k for k, c in enumerate(s['ckpts']) if c['t'] >= a)
-                    out.append((s, lo, min(last, p + DEMO_BAND)))
-                    break
+            f = fight_at(s['route']['fights'], s['ckpts'][p]['t'])
+            if f:
+                lo = next(k for k, c in enumerate(s['ckpts']) if c['t'] >= f[0])
+                out.append((s, lo, min(last, max(p, lo) + DEMO_BAND)))
         return out
 
     def ring_starts(self):
@@ -1699,8 +1715,12 @@ class SonicCoordinator(gym.Env):
         os.replace(tmp, os.path.join(d, name + '.npz'))
 
     def _slack(self):
-        """The match bar's slack: MG_FIGHT_SLACK for a start inside his boss fight, else MATCH_SLACK."""
-        return MG_FIGHT_SLACK if MG_FIGHT_SLACK > 0 and self._ck.get('boss') else MATCH_SLACK
+        """The match bar's slack: MG_FIGHT_SLACK for a start inside his boss fight (or, MG_FIGHT_LEAD,
+        up to that many frames before one), else MATCH_SLACK."""
+        if MG_FIGHT_SLACK > 0 and (self._ck.get('boss') or (
+                MG_FIGHT_LEAD and fight_at(self._seg['route']['fights'], self._ck['t']))):
+            return MG_FIGHT_SLACK
+        return MATCH_SLACK
 
     def _result(self, outcome, info):
         cleared = outcome == 'clear'
