@@ -100,6 +100,8 @@ def main():
     for key, c in cur.items():
         act = key.split(':')[-1]
         p = c['ptr']
+        if p == 0:      # the act's own start: a stall there is beating his time from the start, not a hard
+            continue    # stretch, and stones would move the pointer forward (mg2 AIZ1, 2026-10-17 03:14)
         s = st.get(key, {})
         rs = [r for r in rows if r['act'] == act]
         at = since_arrival(rs, p, s.get('floor', 0) if s.get('ptr') == p else 0)
