@@ -207,7 +207,12 @@ RUNS = {
         # curriculum, at 81%, wouldn't reach the opening for a long time. 15% of the steps start in the
         # 10 s of his route up to each act's fresh-start frontier (the median of its last 32 fresh starts),
         # practice following the frontier as it moves; check_front_share.py
-        front_share=0.15,
+        front_share=0.20,                         # 0.15 until ~97.3M (2026-10-17), see front_weights below
+        # from its restart at ~97.3M (2026-10-17 ~16:30; Tyler: "yes, give HCZ2 more chase practice" after the corridor
+        # dig: the curve stall is a jump reflex kept by avoidance, the critic rating the chase below stalling): HCZ2
+        # weighs 3 in the front share and the share goes 0.15 -> 0.20, so HCZ2's front practice (its chase, with
+        # front_ahead) goes ~3% -> ~8.6% of the steps while the other four keep ~3% each; check_front_weights.py
+        front_weights={'play_20261010-202923:HCZ2': 3.0},
         result='STARTED 2026-10-12 ~13:50 from bc4, criteria AGREED (Tyler: "let\'s do it!" after '
                'mg1bc cleared AIZ1 from the start); RESTARTED ~16:25 from mg1bc (bc4 had lost AIZ1 '
                'from the start: 0/20 vs mg1bc 5/20). Six acts at once: do the five new acts learn, '
@@ -334,6 +339,8 @@ def configure_env(run):
     # often each act is drawn for the rest (coordinator, "Boss share")
     os.environ['MG_BOSS_SHARE'] = str(cfg.get('boss_share', 0))
     os.environ['MG_ACT_WEIGHTS'] = ';'.join(f'{k}:{w}' for k, w in cfg.get('act_weights', {}).items())
+    # an act's weight within the front share (coordinator, "Front weights"); default 1 each
+    os.environ['MG_FRONT_WEIGHTS'] = ';'.join(f'{k}:{w}' for k, w in cfg.get('front_weights', {}).items())
     # a share of resets started where his route passes nearest a giant ring, and the time bar
     # leaving out what the reward forgives (coordinator, "Ring share")
     os.environ['MG_RING_SHARE'] = str(cfg.get('ring_share', 0))

@@ -334,6 +334,11 @@ FRONT_N, FRONT_MIN_N, FRONT_BACK, FRONT_EVERY_S = 32, 8, 600, 60
 # MG_FRONT_AHEAD = n frames, the front share's window also runs n frames past the frontier (still below the
 # pointer), and so does the imitation pull's front window; 0 = only up to the frontier, as before.
 MG_FRONT_AHEAD = int(os.environ.get('MG_FRONT_AHEAD', '0'))
+# Front weights (mg2, 2026-10-17; Tyler: "yes, give HCZ2 more chase practice"): the front share split its steps
+# evenly between the acts in it (~3% each of five); HCZ2's wall chase needs more. MG_FRONT_WEIGHTS=DEMO:ACT:w;...
+# (or ACT:w) weighs an act's draws within the front share, as MG_ACT_WEIGHTS does for the main draws; default 1.
+MG_FRONT_WEIGHTS = {name: float(w) for name, w in (part.rsplit(':', 1) for part in
+                    os.environ.get('MG_FRONT_WEIGHTS', '').split(';') if part)}
 FRONT_TAIL_BYTES = 2 << 20                      # ~6k episodes: ~200 fresh starts per act in mg2
 
 DEMO_FILES  = [p for p in os.environ.get('MG_DEMOS', '').split(',') if p.strip()]
@@ -1283,8 +1288,8 @@ class SonicCoordinator(gym.Env):
                          MG_RING_SHARE))
             rest -= MG_RING_SHARE
         if fronts:
-            srcs.append(('front', fronts, [1.0] * len(fronts), [('front', it[0]['key']) for it in fronts],
-                         MG_FRONT_SHARE))
+            srcs.append(('front', fronts, [self.front_weight(it[0]) for it in fronts],
+                         [('front', it[0]['key']) for it in fronts], MG_FRONT_SHARE))
             rest -= MG_FRONT_SHARE
         srcs.append(('main', self._segs, [self.act_weight(s) for s in self._segs],
                      [('main', s['key']) for s in self._segs], max(0.0, rest)))
@@ -1318,6 +1323,10 @@ class SonicCoordinator(gym.Env):
     def act_weight(self, seg):
         return MG_ACT_WEIGHTS.get(seg['key'], MG_ACT_WEIGHTS.get(seg['name'], 1.0))
 
+    def front_weight(self, seg):
+        """MG_FRONT_WEIGHTS: this act's weight within the front share (default 1)."""
+        return MG_FRONT_WEIGHTS.get(seg['key'], MG_FRONT_WEIGHTS.get(seg['name'], 1.0))
+
     # ── Episodes ─────────────────────────────────────────────────────────
 
     def _pick(self, opts):
@@ -1338,7 +1347,8 @@ class SonicCoordinator(gym.Env):
                 kind, item = (
                     ('boss', random.choice(ranges)) if ranges and u < b else
                     ('ring', random.choice(rings)) if rings and b <= u < rg else
-                    ('front', random.choice(fronts)) if fronts and rg <= u < rg + MG_FRONT_SHARE
+                    ('front', random.choices(fronts, weights=[self.front_weight(it[0]) for it in fronts])[0])
+                    if fronts and rg <= u < rg + MG_FRONT_SHARE
                     else ('main', random.choices(self._segs, weights=[self.act_weight(s) for s in self._segs])[0]))
             if kind == 'boss':
                 seg, *boss = item
