@@ -340,6 +340,9 @@ def configure_env(run):
     # a pointer / start point this many frames before one of his fights counts as in it for the boss share, the
     # fight bar and the imitation pull's 'fights' (coordinator, "Fight lead"); 0 = only inside
     os.environ['MG_FIGHT_LEAD'] = str(cfg.get('fight_lead', 0))
+    # the front share's window (and the imitation pull's front window) also this many frames past each act's
+    # fresh-start frontier (coordinator, "Front ahead"); 0 = only up to it
+    os.environ['MG_FRONT_AHEAD'] = str(cfg.get('front_ahead', 0))
     # fights recognized by the boss's object code too, not only Boss_flag (coordinator, "Fights by object code")
     os.environ['MG_FIGHT_CODES'] = '1' if cfg.get('fight_codes') else '0'
     # the passive main-game route book: fresh clears faster than an act's best are kept for main_book.py
@@ -551,7 +554,7 @@ class ImitationCallback(BaseCallback):
             if f >= cur[key]['frac'] * int(self.S['T'][idx[0]]):
                 continue                                # it reaches the pointer: the pointer window covers it
             t = self.S['t'][idx]
-            out.append(idx[(t >= f - C.FRONT_BACK) & (t <= f)])
+            out.append(idx[(t >= f - C.FRONT_BACK) & (t <= f + C.MG_FRONT_AHEAD)])   # + MG_FRONT_AHEAD: front ahead
         return out
 
     def _on_rollout_start(self):

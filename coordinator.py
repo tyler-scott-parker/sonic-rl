@@ -328,6 +328,12 @@ LEN_TAIL_BYTES = 8 << 20                        # of the episode log read at sta
 # while its frontier is at or past its pointer (or under one start point in).
 MG_FRONT_SHARE = float(os.environ.get('MG_FRONT_SHARE', '0'))
 FRONT_N, FRONT_MIN_N, FRONT_BACK, FRONT_EVERY_S = 32, 8, 600, 60
+# Front ahead (mg2, 2026-10-17; Tyler: "yes, build it" after the HCZ2 opening dig): past HCZ2's curve (the
+# frontier) is a ~24 s wall chase (his frames ~560-2,000) that kills any try that can't run it, so the agent
+# learned to stall on the curve ('stuck': no penalty) and nothing ever practised the chase. With
+# MG_FRONT_AHEAD = n frames, the front share's window also runs n frames past the frontier (still below the
+# pointer), and so does the imitation pull's front window; 0 = only up to the frontier, as before.
+MG_FRONT_AHEAD = int(os.environ.get('MG_FRONT_AHEAD', '0'))
 FRONT_TAIL_BYTES = 2 << 20                      # ~6k episodes: ~200 fresh starts per act in mg2
 
 DEMO_FILES  = [p for p in os.environ.get('MG_DEMOS', '').split(',') if p.strip()]
@@ -1238,7 +1244,7 @@ class SonicCoordinator(gym.Env):
     def front_ranges(self):
         """MG_FRONT_SHARE: [(seg, lo, hi)] for each act whose fresh starts stop short of its pointer:
         start points lo .. hi, those in the FRONT_BACK frames up to the frontier (hi the last at or
-        before it), from start point 1 and below the pointer."""
+        before it, or MG_FRONT_AHEAD frames past it), from start point 1 and below the pointer."""
         if self._front is None or time.time() - self._front_read >= FRONT_EVERY_S:
             by = collections.defaultdict(list)
             for r in log_tail(FRONT_TAIL_BYTES):
@@ -1252,7 +1258,7 @@ class SonicCoordinator(gym.Env):
                 continue
             ts = [c['t'] for c in s['ckpts']]
             p = min(p, len(ts) - 1)
-            hi = min(p - 1, sum(t <= f for t in ts) - 1)
+            hi = min(p - 1, sum(t <= f + MG_FRONT_AHEAD for t in ts) - 1)
             lo = max(1, sum(t < f - FRONT_BACK for t in ts))
             if lo <= hi:
                 out.append((s, lo, hi))
