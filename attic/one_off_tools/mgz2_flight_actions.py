@@ -28,7 +28,7 @@ print('Tyler flight (640-2940):', hist(his[640:]))
 # his jump presses (rising edges) in flight
 jb = [i for i in range(641, 2940) if C.ACTION_BUTTONS[his[i]][0] and not C.ACTION_BUTTONS[his[i-1]][0]]
 print('Tyler fresh jump presses in flight:', len(jb), jb[:40])
-model = PPO.load('checkpoints_main_mg2_keep/main_mg2_83045392_steps.zip', device='cpu')
+model = PPO.load(sys.argv[1] if len(sys.argv) > 1 else 'checkpoints_main_mg2_keep/main_mg2_83045392_steps.zip', device='cpu')
 random.seed(0); np.random.seed(0); torch.manual_seed(0)
 hov, fl, ys, presses, eps = [], [], [], [], 0
 for ep in range(16):
