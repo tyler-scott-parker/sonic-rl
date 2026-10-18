@@ -150,7 +150,9 @@ RUNS = {
         # the boss share, the fight bar and imitation 'fights' (HCZ2 sat at 224, 1 s before its fight, outside all
         # three; check_fight_lead.py); front_ahead: the front share's window and the imitation front window run 1,500
         # frames past each act's fresh-start frontier (HCZ2's 24-s wall chase past its curve; check_front_ahead.py)
-        fight_lead=600, front_ahead=1500,
+        # fight_lead 600 -> 900 from its restart at ~00:30 2026-10-18 (Tyler: "You can move that lead to 15 seconds to help
+        # AIZ2"): AIZ2's pointer 130 sat ~830 frames before its fight and wouldn't cross the rope bridge into the arena
+        fight_lead=900, front_ahead=1500,
         # from its resume at 6,241,416 steps (2026-10-14 ~20:55; Tyler: "let's add 2 and 3 as well",
         # after the boss hit counter was found): the boss bar drawn in (bc_v4 = bar + compass + boss
         # bar; its imitation fade carried over from bc_v3's, so the pull stays at the floor), each
