@@ -164,7 +164,10 @@ RUNS = {
         # again after the stage (or clears), nothing if he never gets back: it had learned to skip
         # rings (AIZ1 fresh starts with the ring cleared 28% vs 63%, stuck in its pocket; took it
         # 8% -> <1%); check_emerald_pay.py
-        emerald_pay='return',
+        # 'return' -> 'split' from its restart at ~127M (2026-10-18 ~08:30; Tyler: "Let's split the bonus"): half of the
+        # 3,600 on getting back, the rest after 1,800 of his frames of route progress since the stage (or a clear): AIZ1/AIZ2
+        # fresh starts took the ring, collected it all on the first step back, then stalled until 'stuck'; check_emerald_split.py
+        emerald_pay='split', emerald_split=0.5, emerald_hold=1800,
         # from its resume at ~50M steps (2026-10-15; Tyler: "lets go with the boss share inside
         # mg2"): AIZ2, HCZ2 and MGZ2 were parked inside their end-of-act boss fights while AIZ1,
         # cleared from the start (best 3,986 frames vs his 5,060), took 25% of the frames and AIZ2
@@ -327,6 +330,9 @@ def configure_env(run):
     os.environ['MG_EMERALD_BONUS'] = str(cfg.get('emerald_bonus', 0))
     # when: 'stage' (at the special stage) or 'return' (once Sonic makes route progress again)
     os.environ['MG_EMERALD_PAY'] = cfg.get('emerald_pay', 'stage')
+    # emerald_pay='split': the share paid on getting back, and the route progress (his frames) before the rest
+    os.environ['MG_EMERALD_SPLIT'] = str(cfg.get('emerald_split', 0.5))
+    os.environ['MG_EMERALD_HOLD'] = str(cfg.get('emerald_hold', 1800))
     os.environ['MG_SS_DETOUR'] = cfg.get('ss_detour', 'charge')
     # Sonic's air drawn into the observation (coordinator.obs_frame)
     os.environ['MG_AIR_BAR'] = '1' if cfg.get('air_bar') else '0'

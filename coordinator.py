@@ -107,6 +107,8 @@ recommendation") on the first step of new route progress after it, or at a
 clear: an emerald pays only once Sonic is back on his way, so a ring followed
 by getting stuck earns nothing extra (mg2 had learned to skip rings: AIZ1 fresh
 starts that took the ring cleared 28% vs 63%, mostly stuck in its pocket).
+=split (Tyler 2026-10-18: "Let's split the bonus"): MG_EMERALD_SPLIT of it on getting back,
+the rest after MG_EMERALD_HOLD of his frames of route progress since the stage (or a clear).
 Not at the clear itself: gamma 0.995 per step is a ~13 s horizon, and AIZ1's
 ring is ~75 s before its clear (a bonus there is worth <1% at the ring). An
 emerald kept after a later death is the game's own rule. MG_SS_DETOUR=refund (Tyler
@@ -364,7 +366,13 @@ MG_SS_RUN    = os.environ.get('MG_SS_RUN', 'd9')      # the train_ss_multistage 
 MG_SS_MODEL  = os.environ.get('MG_SS_MODEL', '')      # its .zip (default: the run's latest save)
 MG_SS_TIME   = os.environ.get('MG_SS_TIME', 'refund')  # or 'real', 'game'
 MG_EMERALD_BONUS = float(os.environ.get('MG_EMERALD_BONUS', '0'))   # frames per emerald won, on top
-MG_EMERALD_PAY = os.environ.get('MG_EMERALD_PAY', 'stage')   # or 'return': once back on the route
+MG_EMERALD_PAY = os.environ.get('MG_EMERALD_PAY', 'stage')   # or 'return': once back on the route; or 'split'
+# 'split' (mg2, 2026-10-18; Tyler: "Let's split the bonus"): AIZ1/AIZ2 fresh starts had learned to take the giant
+# ring, collect the whole bonus on the first step back on the route, then stall until 'stuck' cut them. Now
+# MG_EMERALD_SPLIT of the bonus is paid on getting back as before, the rest once Sonic has made MG_EMERALD_HOLD of
+# his frames of route progress since the stage (or at a clear); an episode that ends before then never gets it.
+MG_EMERALD_SPLIT = float(os.environ.get('MG_EMERALD_SPLIT', '0.5'))
+MG_EMERALD_HOLD = float(os.environ.get('MG_EMERALD_HOLD', '1800'))
 MG_SS_DETOUR = os.environ.get('MG_SS_DETOUR', 'charge')    # or 'refund': a won stage's trip is free
 DETOUR_CAP = 1200                                          # frames forgiven per leg at most (20 s)
 # Hidden Palace: which gray Super Emerald to take: 'auto' (ss_pilot.choose_super:
@@ -1430,6 +1438,8 @@ class SonicCoordinator(gym.Env):
         self._bt = BossTracker.restore(ck.get('bt'), self.base_env) if MG_BOSS else None
         self._hit_paid = 0.0          # MG_BOSS_PAY: paid for hits, not yet taken back
         self._em_owed = 0.0           # MG_EMERALD_PAY=return: bonus for won emeralds, paid on getting back
+        self._em_rest = 0.0           # MG_EMERALD_PAY=split: the rest, paid after MG_EMERALD_HOLD of route progress
+        self._em_prog = 0.0           #   route progress (his frames) since the latest won stage
         self._boss_hits = 0
         self._hurt = []               # [frame, rings held, rings left] per hit survived
         self._rt_prev, self._rings_prev = None, 0
@@ -1515,9 +1525,13 @@ class SonicCoordinator(gym.Env):
                 self._forgiven += stage['cost']     # a won stage's time is free
             r += stage['paid'] - stage['cost']
             self._moved_at = self.frames            # a fresh stuck clock at the ring
-            if MG_EMERALD_PAY == 'return' and stage['emeralds'] > 0:
-                self._em_owed += MG_EMERALD_BONUS * stage['emeralds']
-                self._stages[-1]['bonus'] = MG_EMERALD_BONUS * stage['emeralds']
+            if MG_EMERALD_PAY in ('return', 'split') and stage['emeralds'] > 0:
+                bonus = MG_EMERALD_BONUS * stage['emeralds']
+                now = bonus * MG_EMERALD_SPLIT if MG_EMERALD_PAY == 'split' else bonus
+                self._em_owed += now
+                self._em_rest += bonus - now
+                self._em_prog = 0.0
+                self._stages[-1]['bonus'] = bonus
         if event == 'clear':
             if self._book_frames is not None:
                 self._book_candidate()
@@ -1525,6 +1539,7 @@ class SonicCoordinator(gym.Env):
                 self._book_ring_candidate()
             r += self._route.finish() + CLEAR_BONUS
             r += self._pay_emeralds()               # MG_EMERALD_PAY=return: a clear is back for sure
+            r += self._pay_rest()                   # MG_EMERALD_PAY=split: and far enough
         elif event == 'death':
             r -= DEATH_PENALTY
         elif event is None:
@@ -1536,6 +1551,10 @@ class SonicCoordinator(gym.Env):
             if gain > 0:
                 self._gain_at = self.frames
                 r += self._pay_emeralds()           # MG_EMERALD_PAY=return: back on his way
+                if self._em_rest:                   # MG_EMERALD_PAY=split: the rest once far enough
+                    self._em_prog += gain
+                    if self._em_prog >= MG_EMERALD_HOLD:
+                        r += self._pay_rest()
             if self._back is not None:              # MG_SS_DETOUR: the way back from a won ring is
                 if gain > 0:                        # refunded once he makes progress again; time spent
                     back = min(self._back, DETOUR_CAP)   # NOT getting back (camping at the ring) is not
@@ -1598,6 +1617,17 @@ class SonicCoordinator(gym.Env):
                 st['bonus_paid_at'] = self.frames
         owed, self._em_owed = self._em_owed, 0.0
         return owed
+
+    def _pay_rest(self):
+        """MG_EMERALD_PAY=split: the rest of the bonus, once Sonic has kept going (stage records get
+        'bonus2_paid_at')."""
+        if not self._em_rest:
+            return 0.0
+        for st in self._stages:
+            if 'bonus' in st and 'bonus2_paid_at' not in st:
+                st['bonus2_paid_at'] = self.frames
+        rest, self._em_rest = self._em_rest, 0.0
+        return rest
 
     def _special_stage(self, info):
         """MG_SS=pilot, on the frame Sonic enters a special stage (entry flag
